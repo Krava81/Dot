@@ -349,39 +349,49 @@ async function startServer() {
     
     // Start Bot asynchronously after server is listening
     (async () => {
-      try {
-        if (!process.env.TELEGRAM_BOT_TOKEN) {
-          addLog("TELEGRAM_BOT_TOKEN is not set. Bot will not start.");
-          return;
-        }
-
-        addLog("Initializing Telegram bot startup sequence...");
-        
-        // Try to stop any existing polling if possible (though this is a new instance)
-        try {
-          await bot.stop();
-        } catch (e) {
-          // Ignore errors during stop
-        }
-
-        addLog("Deleting webhooks and dropping pending updates...");
-        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-        
-        addLog("Waiting 5 seconds to avoid 409 Conflict with previous instances...");
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        addLog("Launching bot...");
-        await bot.launch();
-        addLog("Bot started successfully and is polling for updates.");
-      } catch (err: any) {
-        if (err.message?.includes("409: Conflict")) {
-          addLog("CRITICAL: Bot conflict detected (409). This usually means another instance is still running.");
-          addLog("The server will continue to run, but the bot will not respond to Telegram messages.");
-          addLog("Try restarting the dev server manually if this persists.");
-        } else {
-          addLog(`Bot failed to start: ${err.message || err}`);
-        }
+      if (!process.env.TELEGRAM_BOT_TOKEN) {
+        addLog("TELEGRAM_BOT_TOKEN is not set. Bot will not start.");
+        return;
       }
+
+      const maxRetries = 5;
+      let retryCount = 0;
+
+      const launchBot = async () => {
+        try {
+          addLog(`Initializing Telegram bot startup sequence (Attempt ${retryCount + 1}/${maxRetries})...`);
+          
+          // Try to stop any existing polling if possible
+          try {
+            await bot.stop();
+          } catch (e) {}
+
+          addLog("Deleting webhooks and dropping pending updates...");
+          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          
+          addLog("Waiting 10 seconds to ensure previous connections are closed...");
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          
+          addLog("Launching bot...");
+          await bot.launch();
+          addLog("Bot started successfully and is polling for updates.");
+        } catch (err: any) {
+          if (err.message?.includes("409: Conflict")) {
+            addLog("Bot conflict detected (409). Another instance might be shutting down.");
+            if (retryCount < maxRetries) {
+              retryCount++;
+              addLog(`Retrying in 15 seconds... (${retryCount}/${maxRetries})`);
+              setTimeout(launchBot, 15000);
+            } else {
+              addLog("CRITICAL: Max retries reached. Bot failed to start due to persistent conflict.");
+            }
+          } else {
+            addLog(`Bot failed to start: ${err.message || err}`);
+          }
+        }
+      };
+
+      launchBot();
     })();
   });
 }

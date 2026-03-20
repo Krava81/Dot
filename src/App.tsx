@@ -115,16 +115,14 @@ export default function App() {
       const logsContentType = logsRes.headers.get("content-type");
       const statusContentType = statusRes.headers.get("content-type");
 
-      if ((logsContentType && !logsContentType.includes("application/json")) || 
-          (statusContentType && !statusContentType.includes("application/json"))) {
-        const text = await logsRes.text();
-        if (text.includes("<title>Starting Server...</title>")) {
-          console.log("Server is still starting up...");
-          return;
-        }
-        throw new Error("Сервер вернул некорректный формат данных (HTML вместо JSON).");
+      // Check if we got HTML (likely the platform loading page)
+      if ((logsContentType && logsContentType.includes("text/html")) || 
+          (statusContentType && statusContentType.includes("text/html"))) {
+        console.log("Server is still starting up (received HTML)...");
+        return;
       }
 
+      // Now it's safe to parse as JSON
       const logsData = await logsRes.json();
       const statusData = await statusRes.json();
       setLogs(logsData.logs);
@@ -185,15 +183,16 @@ export default function App() {
         }
         
         const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("text/html")) {
+          console.log("Worker: Server is still starting up (received HTML)...");
+          setIsWorking(false);
+          return;
+        }
+        
         if (!contentType || !contentType.includes("application/json")) {
-          const text = await res.text();
-          if (text.includes("<title>Starting Server...</title>")) {
-            console.log("Worker: Server is still starting up...");
-            setIsWorking(false);
-            return;
-          }
-          console.error("Expected JSON but got:", text.slice(0, 200));
-          throw new Error("Сервер вернул некорректный формат данных (HTML вместо JSON). Возможно, API не готово.");
+          console.error("Worker: Expected JSON but got something else");
+          setIsWorking(false);
+          return;
         }
 
         const task = await res.json();
