@@ -1,0 +1,5 @@
+{
+  "name": "Telegram News Processor",
+  "description": "A bot that scrapes news from links sent in Telegram, processes text and images using AI, and reposts them.",
+  "requestFramePermissions": []
+}

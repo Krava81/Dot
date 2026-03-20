@@ -1,0 +1,5 @@
+{
+	"appId": "com.newsbot.manager",
+	"appName": "News Bot Manager",
+	"webDir": "dist"
+}
