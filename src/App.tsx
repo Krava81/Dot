@@ -163,6 +163,14 @@ export default function App() {
           if (res.status === 404) return;
           throw new Error(`Server responded with ${res.status}`);
         }
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          const text = await res.text();
+          console.error("Expected JSON but got:", text.slice(0, 200));
+          throw new Error("Сервер вернул некорректный формат данных (HTML вместо JSON). Возможно, API не готово.");
+        }
+
         const task = await res.json();
 
         if (task) {
@@ -588,7 +596,16 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-col gap-3 pt-2">
+                <button 
+                  onClick={() => {
+                    const defaultUrl = process.env.VITE_APP_URL || '';
+                    setBaseUrl(defaultUrl);
+                  }}
+                  className="w-full px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-medium rounded-xl transition-all border border-neutral-700"
+                >
+                  Сбросить на URL по умолчанию
+                </button>
                 <button 
                   onClick={() => {
                     fetchData();

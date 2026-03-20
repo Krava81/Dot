@@ -165,20 +165,6 @@ bot.on('text', async (ctx) => {
 });
 
 async function startServer() {
-  // Start Bot
-  try {
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    addLog("Old webhooks deleted, waiting 2 seconds to avoid conflict...");
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    await bot.launch();
-    addLog("Bot started successfully");
-  } catch (err: any) {
-    if (err.message.includes("409: Conflict")) {
-      addLog("Bot conflict detected. If this persists, check if the bot is running elsewhere.");
-    }
-    addLog(`Bot failed to start: ${err}`);
-  }
-
   // API for logs
   app.get("/api/logs", (req, res) => {
     res.json({ logs });
@@ -360,6 +346,23 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     addLog(`Server running on http://localhost:${PORT}`);
+    
+    // Start Bot asynchronously after server is listening
+    (async () => {
+      try {
+        addLog("Starting Telegram bot...");
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        addLog("Old webhooks deleted, waiting 2 seconds to avoid conflict...");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await bot.launch();
+        addLog("Bot started successfully");
+      } catch (err: any) {
+        if (err.message?.includes("409: Conflict")) {
+          addLog("Bot conflict detected. If this persists, check if the bot is running elsewhere.");
+        }
+        addLog(`Bot failed to start: ${err}`);
+      }
+    })();
   });
 }
 
