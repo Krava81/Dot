@@ -21,6 +21,7 @@ const tasks: any[] = []; // Pending AI tasks
 const DEFAULT_CHAT_ID = "-1002603084916";
 let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
+let botWaitRemaining = 0;
 let currentBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
 let bot = new Telegraf(currentBotToken);
 
@@ -180,6 +181,7 @@ async function startServer() {
     res.json({ 
       status: "running", 
       bot: botStatus, 
+      botWaitRemaining,
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
       hasDefaultChat: !!DEFAULT_CHAT_ID,
       lastChatId: lastChatId
@@ -421,8 +423,17 @@ async function startServer() {
         await bot.telegram.deleteWebhook({ drop_pending_updates: true });
         
         botStatus = 'waiting';
-        addLog("Waiting 45 seconds to ensure previous connections are closed...");
+        botWaitRemaining = 45;
+        addLog(`Waiting 45 seconds to ensure previous connections are closed...`);
+        
+        const waitInterval = setInterval(() => {
+          if (botWaitRemaining > 0) botWaitRemaining--;
+          else clearInterval(waitInterval);
+        }, 1000);
+
         await new Promise(resolve => setTimeout(resolve, 45000));
+        clearInterval(waitInterval);
+        botWaitRemaining = 0;
         
         botStatus = 'starting';
         addLog("Launching bot...");

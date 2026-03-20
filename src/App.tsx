@@ -343,7 +343,7 @@ export default function App() {
               )}
               Бот: {
                 status?.bot === 'active' ? 'Активен' : 
-                status?.bot === 'waiting' ? 'Ожидание (45с)' :
+                status?.bot === 'waiting' ? `Ожидание (${status?.botWaitRemaining}с)` :
                 status?.bot === 'starting' ? 'Запуск...' : 'Оффлайн'
               }
             </div>
