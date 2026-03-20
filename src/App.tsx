@@ -105,16 +105,36 @@ export default function App() {
   const fetchData = async () => {
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-      const [logsRes, statusRes] = await Promise.all([
-        fetch(`${currentBaseUrl}/api/logs`),
-        fetch(`${currentBaseUrl}/api/status`)
-      ]);
+      const logsRes = await fetch(`${currentBaseUrl}/api/logs`);
+      const statusRes = await fetch(`${currentBaseUrl}/api/status`);
+      
+      if (!logsRes.ok || !statusRes.ok) {
+        throw new Error(`Server responded with ${logsRes.status} / ${statusRes.status}`);
+      }
+
+      const logsContentType = logsRes.headers.get("content-type");
+      const statusContentType = statusRes.headers.get("content-type");
+
+      if ((logsContentType && !logsContentType.includes("application/json")) || 
+          (statusContentType && !statusContentType.includes("application/json"))) {
+        const text = await logsRes.text();
+        if (text.includes("<title>Starting Server...</title>")) {
+          console.log("Server is still starting up...");
+          return;
+        }
+        throw new Error("Сервер вернул некорректный формат данных (HTML вместо JSON).");
+      }
+
       const logsData = await logsRes.json();
       const statusData = await statusRes.json();
       setLogs(logsData.logs);
       setStatus(statusData);
     } catch (err) {
-      console.error("Failed to fetch data", err);
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        // Silent fail for network issues
+      } else {
+        console.error("Failed to fetch data", err);
+      }
       setStatus(null); // Ensure status is null on error to show offline
     } finally {
       setLoading(false);
@@ -167,6 +187,11 @@ export default function App() {
         const contentType = res.headers.get("content-type");
         if (!contentType || !contentType.includes("application/json")) {
           const text = await res.text();
+          if (text.includes("<title>Starting Server...</title>")) {
+            console.log("Worker: Server is still starting up...");
+            setIsWorking(false);
+            return;
+          }
           console.error("Expected JSON but got:", text.slice(0, 200));
           throw new Error("Сервер вернул некорректный формат данных (HTML вместо JSON). Возможно, API не готово.");
         }

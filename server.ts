@@ -350,17 +350,37 @@ async function startServer() {
     // Start Bot asynchronously after server is listening
     (async () => {
       try {
-        addLog("Starting Telegram bot...");
+        if (!process.env.TELEGRAM_BOT_TOKEN) {
+          addLog("TELEGRAM_BOT_TOKEN is not set. Bot will not start.");
+          return;
+        }
+
+        addLog("Initializing Telegram bot startup sequence...");
+        
+        // Try to stop any existing polling if possible (though this is a new instance)
+        try {
+          await bot.stop();
+        } catch (e) {
+          // Ignore errors during stop
+        }
+
+        addLog("Deleting webhooks and dropping pending updates...");
         await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-        addLog("Old webhooks deleted, waiting 2 seconds to avoid conflict...");
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        addLog("Waiting 5 seconds to avoid 409 Conflict with previous instances...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        addLog("Launching bot...");
         await bot.launch();
-        addLog("Bot started successfully");
+        addLog("Bot started successfully and is polling for updates.");
       } catch (err: any) {
         if (err.message?.includes("409: Conflict")) {
-          addLog("Bot conflict detected. If this persists, check if the bot is running elsewhere.");
+          addLog("CRITICAL: Bot conflict detected (409). This usually means another instance is still running.");
+          addLog("The server will continue to run, but the bot will not respond to Telegram messages.");
+          addLog("Try restarting the dev server manually if this persists.");
+        } else {
+          addLog(`Bot failed to start: ${err.message || err}`);
         }
-        addLog(`Bot failed to start: ${err}`);
       }
     })();
   });
