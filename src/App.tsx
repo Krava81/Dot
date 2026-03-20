@@ -36,6 +36,44 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [needsKey, setNeedsKey] = useState(false);
+  const [tempBotToken, setTempBotToken] = useState('');
+
+  useEffect(() => {
+    if (showSettings) {
+      setTempBotToken('');
+    }
+  }, [showSettings]);
+
+  const handleSaveSettings = async () => {
+    setIsSubmitting(true);
+    setSubmitMsg(null);
+    try {
+      if (baseUrl) {
+        localStorage.setItem('tg_bot_server_url', baseUrl);
+      }
+
+      if (tempBotToken) {
+        const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+        const res = await fetch(`${cleanBaseUrl}/api/config/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tempBotToken })
+        });
+
+        if (!res.ok) {
+          throw new Error(`Ошибка при обновлении токена: ${res.statusText}`);
+        }
+      }
+
+      setSubmitMsg({ type: 'success', text: 'Настройки успешно сохранены!' });
+      setTimeout(() => setShowSettings(false), 2000);
+    } catch (err) {
+      setSubmitMsg({ type: 'error', text: err instanceof Error ? err.message : 'Ошибка при сохранении настроек' });
+    } finally {
+      setIsSubmitting(false);
+      fetchData();
+    }
+  };
 
   useEffect(() => {
     if (baseUrl) {
@@ -251,7 +289,7 @@ export default function App() {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [baseUrl]);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans p-4 md:p-8">
@@ -284,12 +322,30 @@ export default function App() {
               </button>
             )}
             <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
+              status ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'
+            }`}>
+              {status ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+              Сервер: {status ? 'Онлайн' : 'Оффлайн'}
+            </div>
+            <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
               status?.bot === 'active' 
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                : status?.bot === 'starting' || status?.bot === 'waiting'
+                ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
                 : 'bg-red-500/10 border-red-500/20 text-red-400'
             }`}>
-              {status?.bot === 'active' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-              Бот: {status?.bot === 'active' ? 'Активен' : 'Оффлайн'}
+              {status?.bot === 'active' ? (
+                <CheckCircle2 size={16} />
+              ) : status?.bot === 'starting' || status?.bot === 'waiting' ? (
+                <RefreshCw size={16} className="animate-spin" />
+              ) : (
+                <AlertCircle size={16} />
+              )}
+              Бот: {
+                status?.bot === 'active' ? 'Активен' : 
+                status?.bot === 'waiting' ? 'Ожидание (45с)' :
+                status?.bot === 'starting' ? 'Запуск...' : 'Оффлайн'
+              }
             </div>
             <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
               isWorking ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'
@@ -615,10 +671,42 @@ export default function App() {
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                   />
                   <p className="text-[10px] text-neutral-500">
-                    Укажите адрес, по которому запущен ваш сервер в AI Studio. Без этого мобильное приложение не сможет связаться с ботом.
+                    Укажите адрес, по которому запущен ваш сервер в AI Studio.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
+                    <MessageSquare size={12} /> Telegram Bot Token
+                  </label>
+                  <input 
+                    type="password"
+                    value={tempBotToken}
+                    onChange={(e) => setTempBotToken(e.target.value)}
+                    placeholder="123456789:ABCDEF..."
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                  />
+                  <p className="text-[10px] text-neutral-500">
+                    Вставьте новый токен от @BotFather, чтобы сбросить старые соединения и перезапустить бота.
                   </p>
                 </div>
               </div>
+
+              <AnimatePresence>
+                {submitMsg && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className={`p-4 rounded-xl text-sm flex items-center gap-3 ${
+                      submitMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                    }`}
+                  >
+                    {submitMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                    {submitMsg.text}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="flex flex-col gap-3 pt-2">
                 <button 
@@ -631,14 +719,12 @@ export default function App() {
                   Сбросить на URL по умолчанию
                 </button>
                 <button 
-                  onClick={() => {
-                    fetchData();
-                    setShowSettings(false);
-                  }}
-                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/20"
+                  onClick={handleSaveSettings}
+                  disabled={isSubmitting}
+                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
                 >
-                  <CheckCircle2 size={18} />
-                  Применить
+                  {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                  {isSubmitting ? 'Сохранение...' : 'Сохранить и перезапустить'}
                 </button>
               </div>
             </motion.div>

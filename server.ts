@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { Telegraf } from "telegraf";
@@ -10,6 +11,7 @@ import { v4 as uuidv4 } from "uuid";
 dotenv.config();
 
 const app = express();
+app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 const PORT = 3000;
 
@@ -18,6 +20,9 @@ const logs: string[] = [];
 const tasks: any[] = []; // Pending AI tasks
 const DEFAULT_CHAT_ID = "-1002603084916";
 let lastChatId: string | number | null = "-1002603084916";
+let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
+let currentBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
+let bot = new Telegraf(currentBotToken);
 
 function addLog(msg: string) {
   const timestamp = new Date().toLocaleTimeString();
@@ -25,9 +30,6 @@ function addLog(msg: string) {
   if (logs.length > 50) logs.shift();
   console.log(msg);
 }
-
-// Initialize Telegram Bot
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN || "");
 
 // Helper to scrape news
 async function scrapeNews(url: string) {
@@ -177,7 +179,7 @@ async function startServer() {
   app.get("/api/status", (req, res) => {
     res.json({ 
       status: "running", 
-      bot: "active", 
+      bot: botStatus, 
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
       hasDefaultChat: !!DEFAULT_CHAT_ID,
       lastChatId: lastChatId
@@ -320,6 +322,30 @@ async function startServer() {
     }
   }
 
+  app.post("/api/config/token", async (req, res) => {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).send("Token is required");
+    }
+
+    addLog("Received new bot token. Restarting bot...");
+    currentBotToken = token;
+    
+    // Stop current bot
+    try {
+      await bot.stop();
+    } catch (e) {}
+
+    // Create new bot instance
+    bot = new Telegraf(currentBotToken);
+    setupBotHandlers(); // Re-attach handlers
+    
+    // Start bot
+    startBot();
+    
+    res.json({ status: "ok", message: "Bot token updated. Restarting..." });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     addLog("Starting Vite in middleware mode...");
@@ -344,55 +370,90 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    addLog(`Server running on http://localhost:${PORT}`);
-    
-    // Start Bot asynchronously after server is listening
-    (async () => {
-      if (!process.env.TELEGRAM_BOT_TOKEN) {
-        addLog("TELEGRAM_BOT_TOKEN is not set. Bot will not start.");
-        return;
-      }
+  // Bot handlers setup
+  function setupBotHandlers() {
+    bot.start((ctx) => {
+      lastChatId = ctx.chat.id;
+      addLog(`Bot started in chat: ${ctx.chat.id}`);
+      ctx.reply("Бот активен! Теперь я буду присылать сюда новости.");
+    });
 
-      const maxRetries = 5;
-      let retryCount = 0;
+    bot.on("text", (ctx) => {
+      lastChatId = ctx.chat.id;
+      addLog(`Message from ${ctx.chat.id}: ${ctx.message.text}`);
+    });
+  }
 
-      const launchBot = async () => {
+  // Start Bot Logic
+  async function startBot() {
+    if (!currentBotToken) {
+      addLog("TELEGRAM_BOT_TOKEN is not set. Bot will not start.");
+      return;
+    }
+
+    const maxRetries = 10;
+    let retryCount = 0;
+
+    const launchBot = async () => {
+      try {
+        botStatus = 'starting';
+        addLog(`Initializing Telegram bot startup sequence (Attempt ${retryCount + 1}/${maxRetries})...`);
+        
+        // Verify token first
         try {
-          addLog(`Initializing Telegram bot startup sequence (Attempt ${retryCount + 1}/${maxRetries})...`);
-          
-          // Try to stop any existing polling if possible
-          try {
-            await bot.stop();
-          } catch (e) {}
-
-          addLog("Deleting webhooks and dropping pending updates...");
-          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-          
-          addLog("Waiting 10 seconds to ensure previous connections are closed...");
-          await new Promise(resolve => setTimeout(resolve, 10000));
-          
-          addLog("Launching bot...");
-          await bot.launch();
-          addLog("Bot started successfully and is polling for updates.");
-        } catch (err: any) {
-          if (err.message?.includes("409: Conflict")) {
-            addLog("Bot conflict detected (409). Another instance might be shutting down.");
-            if (retryCount < maxRetries) {
-              retryCount++;
-              addLog(`Retrying in 15 seconds... (${retryCount}/${maxRetries})`);
-              setTimeout(launchBot, 15000);
-            } else {
-              addLog("CRITICAL: Max retries reached. Bot failed to start due to persistent conflict.");
-            }
-          } else {
-            addLog(`Bot failed to start: ${err.message || err}`);
+          const me = await bot.telegram.getMe();
+          addLog(`Bot token verified for: @${me.username} (${me.first_name})`);
+        } catch (tokenErr: any) {
+          botStatus = 'offline';
+          addLog(`CRITICAL: Token verification failed: ${tokenErr.message}`);
+          if (tokenErr.message?.includes("401") || tokenErr.message?.includes("404")) {
+            addLog("Please check if your TELEGRAM_BOT_TOKEN is correct.");
+            return;
           }
         }
-      };
 
-      launchBot();
-    })();
+        // Try to stop any existing polling if possible
+        try {
+          await bot.stop();
+        } catch (e) {}
+
+        addLog("Deleting webhooks and dropping pending updates...");
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        
+        botStatus = 'waiting';
+        addLog("Waiting 45 seconds to ensure previous connections are closed...");
+        await new Promise(resolve => setTimeout(resolve, 45000));
+        
+        botStatus = 'starting';
+        addLog("Launching bot...");
+        await bot.launch({ dropPendingUpdates: true });
+        botStatus = 'active';
+        addLog("Bot started successfully and is polling for updates.");
+      } catch (err: any) {
+        botStatus = 'offline';
+        if (err.message?.includes("409: Conflict")) {
+          addLog("Bot conflict detected (409). Another instance might be shutting down.");
+          if (retryCount < maxRetries) {
+            retryCount++;
+            addLog(`Retrying in 20 seconds... (${retryCount}/${maxRetries})`);
+            setTimeout(launchBot, 20000);
+          } else {
+            addLog("CRITICAL: Max retries reached. Bot failed to start due to persistent conflict.");
+          }
+        } else {
+          addLog(`Bot failed to start: ${err.message || err}`);
+        }
+      }
+    };
+
+    launchBot();
+  }
+
+  setupBotHandlers();
+
+  app.listen(PORT, "0.0.0.0", () => {
+    addLog(`Server running on http://localhost:${PORT}`);
+    startBot();
   });
 }
 
