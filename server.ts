@@ -435,10 +435,12 @@ async function startServer() {
         clearInterval(waitInterval);
         botWaitRemaining = 0;
         
-        botStatus = 'starting';
-        addLog("Launching bot...");
-        await bot.launch({ dropPendingUpdates: true });
         botStatus = 'active';
+        addLog("Launching bot...");
+        bot.launch({ dropPendingUpdates: true }).catch(err => {
+          botStatus = 'offline';
+          addLog(`Bot polling error: ${err.message}`);
+        });
         addLog("Bot started successfully and is polling for updates.");
       } catch (err: any) {
         botStatus = 'offline';
