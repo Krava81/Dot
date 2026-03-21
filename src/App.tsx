@@ -437,7 +437,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.3</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.4</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
