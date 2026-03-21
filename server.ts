@@ -238,6 +238,12 @@ async function startServer() {
     res.sendFile(filePath);
   });
 
+  app.get("/api/dev/package-json", (req, res) => {
+    const filePath = path.join(process.cwd(), 'package.json');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.sendFile(filePath);
+  });
+
   app.post("/api/process-url", async (req, res) => {
     const { url, chatId } = req.body;
     // Priority: Explicit ID > Default Env ID > Last seen ID > Hardcoded target ID
