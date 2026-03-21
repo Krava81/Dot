@@ -165,13 +165,45 @@ export default function App() {
     }
   };
 
-  const startWebViewSync = () => {
-    addClientLog("Запуск синхронизации WebView...");
-    const syncUrl = new URL(baseUrl);
-    syncUrl.searchParams.set('app_mode', 'true');
-    syncUrl.searchParams.set('v', '3.4');
-    // Redirect the entire app to the server
-    window.location.href = syncUrl.toString();
+  const [isWarmingUp, setIsWarmingUp] = useState(false);
+  const [warmUpStatus, setWarmUpStatus] = useState<string | null>(null);
+
+  const startWebViewSync = async () => {
+    setIsWarmingUp(true);
+    setWarmUpStatus("Прогрев сервера (будим Google Cloud)...");
+    addClientLog("Запуск синхронизации WebView с прогревом...");
+    
+    let attempts = 0;
+    const maxAttempts = 15;
+    
+    const pingServer = async () => {
+      try {
+        const res = await universalFetch(`${baseUrl}/api/ping`);
+        return res.ok;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    while (attempts < maxAttempts) {
+      const isAlive = await pingServer();
+      if (isAlive) {
+        setWarmUpStatus("Сервер проснулся! Переключаюсь...");
+        setTimeout(() => {
+          const syncUrl = new URL(baseUrl);
+          syncUrl.searchParams.set('app_mode', 'true');
+          syncUrl.searchParams.set('v', '3.6');
+          window.location.href = syncUrl.toString();
+        }, 1000);
+        return;
+      }
+      attempts++;
+      setWarmUpStatus(`Прогрев... попытка ${attempts}/${maxAttempts}`);
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    setWarmUpStatus("❌ Сервер не ответил. Попробуйте еще раз.");
+    setIsWarmingUp(false);
   };
 
   const testNetwork = async () => {
@@ -540,7 +572,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.5</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.6</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -640,10 +672,11 @@ export default function App() {
                   </button>
                   <button 
                     onClick={startWebViewSync}
-                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+                    disabled={isWarmingUp}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-emerald-500/20"
                   >
-                    <RefreshCw size={12} />
-                    🔑 Прямой вход (WebView Sync)
+                    <RefreshCw size={12} className={isWarmingUp ? 'animate-spin' : ''} />
+                    {isWarmingUp ? warmUpStatus : "🔑 Прямой вход (WebView Sync)"}
                   </button>
                   <button 
                     onClick={startDeepLogin}
