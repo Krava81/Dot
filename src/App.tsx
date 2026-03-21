@@ -54,12 +54,13 @@ const universalFetch = async (url: string, options: any = {}) => {
       }
 
       const res = await http.request({
-        url: url.includes('?') ? `${url}&v=2.7` : `${url}?v=2.7`,
+        url: url.includes('?') ? `${url}&v=2.8` : `${url}?v=2.8`,
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'X-Requested-With': 'XMLHttpRequest',
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
           ...(options.headers || {})
@@ -119,6 +120,7 @@ export default function App() {
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [fullResponse, setFullResponse] = useState<string | null>(null);
   const [showFullResponse, setShowFullResponse] = useState(false);
+  const [showCookieFixer, setShowCookieFixer] = useState(false);
 
   const DEV_URL = "https://ais-dev-rmq2x3cl372oyaqjtvr24s-648683748313.europe-west2.run.app";
   const PRE_URL = "https://ais-pre-rmq2x3cl372oyaqjtvr24s-648683748313.europe-west2.run.app";
@@ -473,7 +475,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.7</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.8</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -558,14 +560,19 @@ export default function App() {
               </div>
               <div className="p-4 bg-black/40 rounded-xl border border-white/5">
                 <p className="text-sm text-neutral-400 mb-2">Ответ сервера (диагностика):</p>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button 
                     onClick={() => setShowFullResponse(true)}
                     className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-xs rounded-lg transition-colors"
                   >
-                    Показать полный ответ
+                    Показать ответ
                   </button>
-                  <span className="text-[10px] text-neutral-500">Поможет найти причину HTML</span>
+                  <button 
+                    onClick={() => setShowCookieFixer(true)}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold"
+                  >
+                    🛠 Исправить авторизацию (Cookie Fix)
+                  </button>
                 </div>
               </div>
             </div>
@@ -869,6 +876,43 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+        {/* Cookie Fixer Modal */}
+        <AnimatePresence>
+          {showCookieFixer && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-3xl h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+              >
+                <div className="p-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-800/50">
+                  <div>
+                    <h3 className="text-lg font-bold">🛠 Cookie Fixer</h3>
+                    <p className="text-[10px] text-neutral-400">Войдите в Google здесь, чтобы эмулятор получил доступ к серверу</p>
+                  </div>
+                  <button onClick={() => setShowCookieFixer(false)} className="p-2 hover:bg-neutral-700 rounded-full transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="flex-1 bg-white">
+                  <iframe 
+                    src={baseUrl} 
+                    className="w-full h-full border-none"
+                    title="Google Auth Fixer"
+                  />
+                </div>
+                <div className="p-4 border-t border-neutral-800 flex justify-between items-center">
+                  <span className="text-xs text-amber-400 font-medium">После входа закройте это окно и обновите статус</span>
+                  <button onClick={() => setShowCookieFixer(false)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors font-bold">
+                    Я вошел, закрыть
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Full Response Modal */}
         <AnimatePresence>
