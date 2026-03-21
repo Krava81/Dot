@@ -55,7 +55,7 @@ export default function App() {
     fetchData();
   };
 
-  // Универсальный загрузчик v3.8 (Поддержка токенов)
+  // Универсальный загрузчик v4.0 (Максимальная отладка)
   const universalFetch = async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
@@ -66,20 +66,22 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
+      'X-App-Version': '4.0',
       ...(options.headers || {})
     };
 
-    // v3.8: Add session token if exists
     if (sessionToken) {
       (headers as any)['Authorization'] = `Bearer ${sessionToken}`;
       (headers as any)['X-Session-Token'] = sessionToken;
     }
     
+    addClientLog(`Fetch [${options.method || 'GET'}]: ${url.substring(0, 50)}...`);
+
     if ((isNative || isNativePlatform) && !isWebMirror) {
       try {
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
         const res = await http.request({
-          url: url.includes('?') ? `${url}&v=3.8` : `${url}?v=3.8`,
+          url: url.includes('?') ? `${url}&v=4.0` : `${url}?v=4.0`,
           method: options.method || 'GET',
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
@@ -101,11 +103,17 @@ export default function App() {
             }
           }
         };
-      } catch (err) {
+      } catch (err: any) {
+        addClientLog(`CapacitorHttp Error: ${err.message}`);
         throw err;
       }
     } else {
-      return fetch(url, { ...options, headers });
+      try {
+        return await fetch(url, { ...options, headers });
+      } catch (err: any) {
+        addClientLog(`Fetch Error: ${err.message}`);
+        throw err;
+      }
     }
   };
   const [isDeepLogin, setIsDeepLogin] = useState(() => {
@@ -577,7 +585,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.9</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v4.0</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -711,6 +719,15 @@ export default function App() {
                 className="px-4 py-2 bg-neutral-800 text-neutral-400 rounded-lg text-xs"
               >
                 Отмена
+              </button>
+              <button 
+                onClick={() => {
+                  saveToken('');
+                  setShowTokenInput(false);
+                }}
+                className="px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-xs"
+              >
+                Сбросить токен
               </button>
               <p className="text-[10px] text-amber-500/50 self-center italic">
                 * Токен можно получить, нажав "Открыть в браузере" и выбрав "Скопировать токен"

@@ -22,7 +22,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "3.9",
+    version: "4.0",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -33,7 +33,7 @@ app.get("/api/status", (req, res) => {
 });
 
 app.get("/api/ping", (req, res) => {
-  res.send("pong v2.5");
+  res.json({ status: "pong", time: new Date().toISOString(), version: "4.0" });
 });
 
 app.get("/api/auth/token", (req, res) => {
@@ -76,7 +76,7 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma, X-Session-Token, X-App-Version');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.status(200).end();
