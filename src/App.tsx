@@ -31,12 +31,12 @@ const universalFetch = async (url: string, options: any = {}) => {
   const isNativePlatform = Capacitor.isNativePlatform();
   const isLocalhost = window.location.hostname === 'localhost';
   
-  console.log(`[Diagnostic v1.2] universalFetch called for: ${url}`);
-  console.log(`[Diagnostic v1.2] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}, isLocalhost: ${isLocalhost}`);
+  console.log(`[Diagnostic v1.3] universalFetch called for: ${url}`);
+  console.log(`[Diagnostic v1.3] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}, isLocalhost: ${isLocalhost}`);
   
   // Force CapacitorHttp if we are on a native platform or running from localhost (Capacitor default)
   if (isNative || isNativePlatform || isLocalhost) {
-    console.log(`[Diagnostic v1.2] Using CapacitorHttp for: ${url}`);
+    console.log(`[Diagnostic v1.3] Using CapacitorHttp for: ${url}`);
     try {
       // Ensure data is properly handled for POST/PUT
       let requestData = undefined;
@@ -44,7 +44,7 @@ const universalFetch = async (url: string, options: any = {}) => {
         try {
           requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         } catch (e) {
-          console.warn("[Diagnostic v1.2] Failed to parse body as JSON, sending as is:", e);
+          console.warn("[Diagnostic v1.3] Failed to parse body as JSON, sending as is:", e);
           requestData = options.body;
         }
       }
@@ -53,24 +53,26 @@ const universalFetch = async (url: string, options: any = {}) => {
       const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
       
       if (!http) {
-        console.error("[Diagnostic v1.2] CapacitorHttp plugin not found!");
+        console.error("[Diagnostic v1.3] CapacitorHttp plugin not found!");
         throw new Error("CapacitorHttp plugin not found");
       }
 
       const res = await http.request({
-        url,
+        url: url.includes('?') ? `${url}&v=1.3` : `${url}?v=1.3`,
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
           ...(options.headers || {})
         },
         data: requestData,
-        connectTimeout: 20000,
-        readTimeout: 20000
+        connectTimeout: 30000,
+        readTimeout: 30000
       });
       
-      console.log(`[Diagnostic v1.2] CapacitorHttp response status: ${res.status} for ${url}`);
+      console.log(`[Diagnostic v1.3] CapacitorHttp response status: ${res.status} for ${url}`);
       
       return {
         ok: res.status >= 200 && res.status < 300,
@@ -233,7 +235,7 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-      console.log(`[Diagnostic v1.2] Fetching status from: ${currentBaseUrl}/api/status`);
+      console.log(`[Diagnostic v1.3] Fetching status from: ${currentBaseUrl}/api/status`);
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -422,7 +424,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v1.2</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v1.3</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -861,14 +863,26 @@ export default function App() {
                 >
                   Сбросить на URL по умолчанию
                 </button>
-                <button 
-                  onClick={handleSaveSettings}
-                  disabled={isSubmitting}
-                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                  {isSubmitting ? 'Сохранение...' : 'Сохранить и перезапустить'}
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={handleSaveSettings}
+                    disabled={isSubmitting}
+                    className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                    {isSubmitting ? 'Сохранение...' : 'Сохранить'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      localStorage.clear();
+                      window.location.reload();
+                    }}
+                    className="px-4 py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-xl transition-all border border-red-500/20"
+                    title="Сбросить всё"
+                  >
+                    <RefreshCw size={18} />
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

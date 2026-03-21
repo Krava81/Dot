@@ -36,7 +36,7 @@ app.use((req, res, next) => {
   const method = req.method;
   const path = req.path;
   if (method !== 'OPTIONS') {
-    addLog(`[Request v1.2] ${method} ${path} from ${origin || 'No Origin'}`);
+    addLog(`[Request v1.3] ${method} ${path} from ${origin || 'No Origin'}`);
   }
   next();
 });
