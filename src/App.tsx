@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, RefreshCw, CheckCircle2, AlertCircle, ExternalLink, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
 
 declare global {
   interface Window {
@@ -153,14 +154,15 @@ export default function App() {
     window.open(baseUrl, '_blank');
   };
 
-  const startDeepLogin = () => {
-    addClientLog("Запуск внутреннего входа...");
-    const loginUrl = new URL(baseUrl);
-    loginUrl.searchParams.set('app_mode', 'true');
-    // We add a special flag to the return URL
-    const returnUrl = window.location.origin + '?mode=app_return';
-    loginUrl.searchParams.set('return_to', returnUrl);
-    window.location.href = loginUrl.toString();
+  const startDeepLogin = async () => {
+    addClientLog("Запуск браузерного входа через плагин...");
+    try {
+      await Browser.open({ url: baseUrl });
+      addClientLog("Браузерное окно закрыто. Повторная проверка...");
+      fetchData();
+    } catch (e: any) {
+      addClientLog(`Ошибка браузера: ${e.message}`);
+    }
   };
 
   const testNetwork = async () => {
@@ -529,7 +531,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.2</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.3</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -632,7 +634,7 @@ export default function App() {
                     className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-indigo-500/20"
                   >
                     <Key size={12} />
-                    🔑 Внутренний вход (Stay in App)
+                    🔑 Внутренний вход (Browser Plugin)
                   </button>
                   <button 
                     onClick={openInBrowser}
