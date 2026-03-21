@@ -25,74 +25,6 @@ const getInitialBaseUrl = () => {
   return process.env.VITE_APP_URL || '';
 };
 
-// Универсальный загрузчик v2.1 (Максимальная совместимость с эмулятором)
-const universalFetch = async (url: string, options: any = {}) => {
-  const platform = Capacitor.getPlatform();
-  const isNative = platform === 'android' || platform === 'ios';
-  const isNativePlatform = Capacitor.isNativePlatform();
-  
-  // Если мы уже на удаленном сервере (Web Mirror Mode), используем обычный fetch
-  const isWebMirror = window.location.href.includes('run.app');
-  
-  if ((isNative || isNativePlatform) && !isWebMirror) {
-    console.log(`[Diagnostic v2.9] universalFetch (Native) called for: ${url}`);
-    try {
-      let requestData = undefined;
-      if (options.body) {
-        try {
-          requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-        } catch (e) {
-          requestData = options.body;
-        }
-      }
-
-      const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
-      
-      const res = await http.request({
-        url: url.includes('?') ? `${url}&v=2.9` : `${url}?v=2.9`,
-        method: options.method || 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-          ...(options.headers || {})
-        },
-        data: requestData,
-        connectTimeout: 15000,
-        readTimeout: 15000
-      });
-      
-      return {
-        ok: res.status >= 200 && res.status < 300,
-        status: res.status,
-        statusText: `Status ${res.status}`,
-        json: async () => typeof res.data === 'string' ? JSON.parse(res.data) : res.data,
-        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
-        headers: {
-          get: (name: string) => {
-            if (!res.headers) return null;
-            const val = res.headers[name] || res.headers[name.toLowerCase()] || res.headers[name.toUpperCase()];
-            return val || null;
-          }
-        }
-      };
-    } catch (err) {
-      console.error("[Diagnostic v2.9] CapacitorHttp error:", err);
-      throw err;
-    }
-  } else {
-    console.log(`[Diagnostic v2.9] Using standard fetch (Web/Mirror) for: ${url}`);
-    return fetch(url, {
-      ...options,
-      headers: {
-        'Accept': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest',
-        ...(options.headers || {})
-      }
-    });
-  }
-};
-
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(getInitialBaseUrl);
   const [logs, setLogs] = useState<string[]>([]);
@@ -113,6 +45,69 @@ export default function App() {
   const [fullResponse, setFullResponse] = useState<string | null>(null);
   const [showFullResponse, setShowFullResponse] = useState(false);
   const [showCookieFixer, setShowCookieFixer] = useState(false);
+  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
+  const [showTokenInput, setShowTokenInput] = useState(false);
+
+  const saveToken = (token: string) => {
+    setSessionToken(token);
+    localStorage.setItem('app_session_token', token);
+    addClientLog("Токен сохранен. Перезапуск...");
+    fetchData();
+  };
+
+  // Универсальный загрузчик v3.8 (Поддержка токенов)
+  const universalFetch = async (url: string, options: any = {}) => {
+    const platform = Capacitor.getPlatform();
+    const isNative = platform === 'android' || platform === 'ios';
+    const isNativePlatform = Capacitor.isNativePlatform();
+    const isWebMirror = window.location.href.includes('run.app');
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      ...(options.headers || {})
+    };
+
+    // v3.8: Add session token if exists
+    if (sessionToken) {
+      (headers as any)['Authorization'] = `Bearer ${sessionToken}`;
+      (headers as any)['X-Session-Token'] = sessionToken;
+    }
+    
+    if ((isNative || isNativePlatform) && !isWebMirror) {
+      try {
+        const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
+        const res = await http.request({
+          url: url.includes('?') ? `${url}&v=3.8` : `${url}?v=3.8`,
+          method: options.method || 'GET',
+          headers,
+          data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
+          connectTimeout: 15000,
+          readTimeout: 15000
+        });
+        
+        return {
+          ok: res.status >= 200 && res.status < 300,
+          status: res.status,
+          statusText: `Status ${res.status}`,
+          json: async () => typeof res.data === 'string' ? JSON.parse(res.data) : res.data,
+          text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+          headers: {
+            get: (name: string) => {
+              if (!res.headers) return null;
+              const val = res.headers[name] || res.headers[name.toLowerCase()] || res.headers[name.toUpperCase()];
+              return val || null;
+            }
+          }
+        };
+      } catch (err) {
+        throw err;
+      }
+    } else {
+      return fetch(url, { ...options, headers });
+    }
+  };
   const [isDeepLogin, setIsDeepLogin] = useState(() => {
     return new URLSearchParams(window.location.search).get('mode') === 'app_return';
   });
