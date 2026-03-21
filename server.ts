@@ -243,7 +243,7 @@ bot.on('text', async (ctx) => {
 });
 
 async function startServer() {
-  // Vite middleware for development
+  app.post("/api/process-url", async (req, res) => {
     const { url, chatId } = req.body;
     // Priority: Explicit ID > Default Env ID > Last seen ID > Hardcoded target ID
     const targetChatId = chatId || DEFAULT_CHAT_ID || lastChatId || "-1002603084916";
