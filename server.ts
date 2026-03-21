@@ -11,7 +11,22 @@ import { v4 as uuidv4 } from "uuid";
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin || 'No Origin';
+  const method = req.method;
+  const path = req.path;
+  addLog(`Incoming request: ${method} ${path} from ${origin}`);
+  next();
+});
+
+app.use(cors({
+  origin: '*', // Allow all origins for the bot manager
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true
+}));
 app.use(express.json({ limit: '50mb' }));
 const PORT = 3000;
 

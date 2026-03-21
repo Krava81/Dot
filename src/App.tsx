@@ -155,6 +155,7 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+      console.log(`[Diagnostic] Fetching status from: ${currentBaseUrl}/api/status`);
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -717,9 +718,18 @@ export default function App() {
                     placeholder="https://your-app.run.app"
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                   />
-                  <p className="text-[10px] text-neutral-500">
-                    Укажите адрес, по которому запущен ваш сервер в AI Studio.
-                  </p>
+                  <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl space-y-2">
+                    <p className="text-[10px] text-blue-400 font-medium flex items-center gap-1">
+                      <AlertCircle size={10} /> ВАЖНО ДЛЯ ЭМУЛЯТОРА:
+                    </p>
+                    <p className="text-[10px] text-neutral-500 leading-relaxed">
+                      Для работы в Android Studio используйте <strong>Shared App URL</strong> (из AI Studio). 
+                      Обычный URL может быть защищен и недоступен для эмулятора.
+                    </p>
+                    <p className="text-[10px] text-neutral-400 font-mono break-all">
+                      Текущий: {baseUrl || 'не задан'}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
