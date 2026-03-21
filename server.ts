@@ -12,31 +12,32 @@ dotenv.config();
 
 const app = express();
 
-// 1. MANDATORY: CORS must be the VERY FIRST middleware
-// Use the standard cors package for better compatibility
-app.use(cors({
-  origin: true, // Reflect the request origin
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Cache-Control', 'Pragma', 'X-CSRF-Token'],
-  credentials: true,
-  maxAge: 86400
-}));
-
-// Extra manual headers just in case the package misses something in this environment
+// 1. КРИТИЧЕСКИ ВАЖНО: Исправленный CORS для v1.5 (Credentials + Dynamic Origin)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  // Если origin есть (браузер), возвращаем его. Если нет, ставим *
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
+  
+  // КРИТИЧЕСКИ: Если есть origin, разрешаем Credentials. Если origin '*', Credentials ЗАПРЕЩЕНЫ браузером.
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
   res.setHeader('Vary', 'Origin');
+
+  // Мгновенный ответ на preflight-запросы
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
   next();
 });
 
-// 2. Request logging
+// 2. Логирование запросов v1.5
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const method = req.method;
-  const path = req.path;
-  if (method !== 'OPTIONS') {
-    addLog(`[Request v1.3] ${method} ${path} from ${origin || 'No Origin'}`);
+  if (req.method !== 'OPTIONS') {
+    console.log(`[Request v1.5] ${req.method} ${req.path} | Origin: ${req.headers.origin || 'None'}`);
   }
   next();
 });
@@ -51,7 +52,22 @@ let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
 let botWaitRemaining = 0;
 let currentBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
-let bot = new Telegraf(currentBotToken);
+// Инициализация бота с защитой от вылета v1.5
+let bot: Telegraf;
+try {
+  if (!currentBotToken) {
+    console.error("[v1.5] TELEGRAM_BOT_TOKEN is missing!");
+  }
+  bot = new Telegraf(currentBotToken);
+  
+  bot.catch((err: any) => {
+    console.error('[v1.5] Telegraf error:', err);
+    addLog(`Ошибка бота: ${err.message}`);
+  });
+} catch (e) {
+  console.error("[v1.5] Failed to initialize bot:", e);
+  bot = new Telegraf('dummy_token'); // Заглушка, чтобы сервер не падал
+}
 
 function addLog(msg: string) {
   const timestamp = new Date().toLocaleTimeString();
