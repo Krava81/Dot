@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "update-android": "npm run build && npx cap sync android"
+    "update-android": "npm run build && npx cap sync android",
+    "postinstall": "node -e \"const fs = require('fs'); const path = './node_modules/@capacitor/browser/android/build.gradle'; if (fs.existsSync(path)) { const content = fs.readFileSync(path, 'utf8'); fs.writeFileSync(path, content.replace('proguard-android.txt', 'proguard-android-optimize.txt')); }\""
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
