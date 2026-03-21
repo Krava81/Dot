@@ -48,12 +48,15 @@ export default function App() {
     setIsSubmitting(true);
     setSubmitMsg(null);
     try {
-      if (baseUrl) {
-        localStorage.setItem('tg_bot_server_url', baseUrl);
+      let url = baseUrl.trim();
+      if (!url.startsWith('http')) {
+        url = `https://${url}`;
       }
+      setBaseUrl(url);
+      localStorage.setItem('tg_bot_server_url', url);
 
       if (tempBotToken) {
-        const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+        const cleanBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
         const res = await fetch(`${cleanBaseUrl}/api/config/token`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -61,14 +64,15 @@ export default function App() {
         });
 
         if (!res.ok) {
-          throw new Error(`Ошибка при обновлении токена: ${res.statusText}`);
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || `Ошибка сервера: ${res.status}`);
         }
       }
 
-      setSubmitMsg({ type: 'success', text: 'Настройки успешно сохранены!' });
+      setSubmitMsg({ type: 'success', text: 'Настройки сохранены! Бот перезапускается...' });
       setTimeout(() => setShowSettings(false), 2000);
     } catch (err) {
-      setSubmitMsg({ type: 'error', text: err instanceof Error ? err.message : 'Ошибка при сохранении настроек' });
+      setSubmitMsg({ type: 'error', text: err instanceof Error ? err.message : 'Ошибка соединения с сервером' });
     } finally {
       setIsSubmitting(false);
       fetchData();
@@ -141,13 +145,27 @@ export default function App() {
   };
 
   const fetchData = async () => {
+    if (!baseUrl || baseUrl === '/') return;
+
     try {
-      const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-      const logsRes = await fetch(`${currentBaseUrl}/api/logs`);
-      const statusRes = await fetch(`${currentBaseUrl}/api/status`);
+      let url = baseUrl.trim();
+      if (!url.startsWith('http')) {
+        url = `https://${url}`;
+      }
+      const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
       
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const [logsRes, statusRes] = await Promise.all([
+        fetch(`${currentBaseUrl}/api/logs?t=${Date.now()}`, { signal: controller.signal }),
+        fetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal })
+      ]);
+      
+      clearTimeout(timeoutId);
+
       if (!logsRes.ok || !statusRes.ok) {
-        throw new Error(`Server responded with ${logsRes.status} / ${statusRes.status}`);
+        throw new Error(`Server error: ${logsRes.status} / ${statusRes.status}`);
       }
 
       const logsContentType = logsRes.headers.get("content-type");
