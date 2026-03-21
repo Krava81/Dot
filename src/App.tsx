@@ -102,7 +102,14 @@ const universalFetch = async (url: string, options: any = {}) => {
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(getInitialBaseUrl);
   const [logs, setLogs] = useState<string[]>([]);
+  const [clientLogs, setClientLogs] = useState<string[]>([]);
   const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null } | null>(null);
+  
+  const addClientLog = (msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setClientLogs(prev => [`[Diag ${time}] ${msg}`, ...prev].slice(0, 20));
+    console.log(`[Diagnostic v2.2] ${msg}`);
+  };
   const [loading, setLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -231,7 +238,7 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-      console.log(`[Diagnostic v2.1] Fetching status from: ${currentBaseUrl}/api/status`);
+      addClientLog(`Запрос статуса: ${currentBaseUrl}/api/status`);
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -244,7 +251,9 @@ export default function App() {
       clearTimeout(timeoutId);
 
       if (!logsRes.ok || !statusRes.ok) {
-        setLastError(`Ошибка сервера: ${logsRes.status} / ${statusRes.status}`);
+        const err = `Ошибка сервера: ${logsRes.status} / ${statusRes.status}`;
+        addClientLog(err);
+        setLastError(err);
         setStatus(null);
         return;
       }
@@ -254,7 +263,9 @@ export default function App() {
 
       if ((logsContentType && logsContentType.includes("text/html")) || 
           (statusContentType && statusContentType.includes("text/html"))) {
-        setLastError("Сервер возвращает HTML (возможно, он еще запускается)");
+        const err = "Сервер возвращает HTML (проверьте URL или VPN)";
+        addClientLog(err);
+        setLastError(err);
         setStatus(null);
         return;
       }
@@ -264,9 +275,11 @@ export default function App() {
       setLogs(logsData.logs || []);
       setStatus(statusData);
       setLastError(null);
+      addClientLog("Данные успешно обновлены");
     } catch (err: any) {
-      console.error("[Diagnostic v2.1] Failed to fetch data", err);
-      setLastError(err.message || String(err));
+      const errMsg = err.message || String(err);
+      addClientLog(`Ошибка: ${errMsg}`);
+      setLastError(errMsg);
       setStatus(null);
     } finally {
       setLoading(false);
@@ -423,7 +436,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.1</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.2</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -638,7 +651,18 @@ export default function App() {
           
           <div className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-sm">
             <AnimatePresence initial={false}>
-              {logs.length === 0 ? (
+              {clientLogs.map((log, i) => (
+                <motion.div
+                  key={`client-${i}`}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="text-blue-400 border-l-2 border-blue-500/50 bg-blue-500/5 pl-3 py-0.5 transition-all"
+                >
+                  <span className="text-blue-600 mr-2">[CLIENT]</span>
+                  {log}
+                </motion.div>
+              ))}
+              {logs.length === 0 && clientLogs.length === 0 ? (
                 <p className="text-neutral-600 italic">Логов пока нет. Ожидание сообщений...</p>
               ) : (
                 logs.map((log, i) => (
