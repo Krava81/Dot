@@ -154,9 +154,12 @@ export default function App() {
   };
 
   const startDeepLogin = () => {
+    addClientLog("Запуск внутреннего входа...");
     const loginUrl = new URL(baseUrl);
     loginUrl.searchParams.set('app_mode', 'true');
-    loginUrl.searchParams.set('return_to', window.location.href + (window.location.href.includes('?') ? '&' : '?') + 'mode=app_return');
+    // We add a special flag to the return URL
+    const returnUrl = window.location.origin + '?mode=app_return';
+    loginUrl.searchParams.set('return_to', returnUrl);
     window.location.href = loginUrl.toString();
   };
 
@@ -526,7 +529,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.1</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.2</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -626,10 +629,10 @@ export default function App() {
                   </button>
                   <button 
                     onClick={startDeepLogin}
-                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1"
+                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-indigo-500/20"
                   >
                     <Key size={12} />
-                    🔑 Глубокий вход (Deep Login)
+                    🔑 Внутренний вход (Stay in App)
                   </button>
                   <button 
                     onClick={openInBrowser}
