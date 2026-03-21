@@ -12,28 +12,31 @@ dotenv.config();
 
 const app = express();
 
-// Manual CORS and logging middleware
+// 1. MANDATORY: CORS must be the VERY FIRST middleware
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // Be as permissive as possible for the bot manager
+  // Always reflect the origin or use *
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma, X-CSRF-Token');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
-  
-  const method = req.method;
-  const path = req.path;
-  
-  // Don't log OPTIONS requests to keep logs cleaner
-  if (method !== 'OPTIONS') {
-    addLog(`[Request] ${method} ${path} from ${origin || 'No Origin'}`);
-  }
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.setHeader('Vary', 'Origin');
 
-  if (method === 'OPTIONS') {
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
+  next();
+});
+
+// 2. Request logging
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const method = req.method;
+  const path = req.path;
+  addLog(`[Request] ${method} ${path} from ${origin || 'No Origin'}`);
   next();
 });
 app.use(express.json({ limit: '50mb' }));

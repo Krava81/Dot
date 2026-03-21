@@ -28,10 +28,26 @@ const getInitialBaseUrl = () => {
 const universalFetch = async (url: string, options: any = {}) => {
   const platform = Capacitor.getPlatform();
   const isNative = platform === 'android' || platform === 'ios';
+  const isNativePlatform = Capacitor.isNativePlatform();
   
-  if (isNative) {
+  console.log(`[Diagnostic] universalFetch called for: ${url}`);
+  console.log(`[Diagnostic] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}`);
+  console.log(`[Diagnostic] CapacitorHttp available: ${!!CapacitorHttp}`);
+
+  if (isNative || isNativePlatform) {
     console.log(`[Diagnostic] Using CapacitorHttp for: ${url}`);
     try {
+      // Ensure data is properly handled for POST/PUT
+      let requestData = undefined;
+      if (options.body) {
+        try {
+          requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        } catch (e) {
+          console.warn("[Diagnostic] Failed to parse body as JSON, sending as is:", e);
+          requestData = options.body;
+        }
+      }
+
       const res = await CapacitorHttp.request({
         url,
         method: options.method || 'GET',
@@ -40,27 +56,32 @@ const universalFetch = async (url: string, options: any = {}) => {
           'Accept': 'application/json',
           ...(options.headers || {})
         },
-        data: options.body ? JSON.parse(options.body) : undefined,
-        connectTimeout: 10000,
-        readTimeout: 10000
+        data: requestData,
+        connectTimeout: 15000,
+        readTimeout: 15000
       });
+      
+      console.log(`[Diagnostic] CapacitorHttp response status: ${res.status} for ${url}`);
       
       return {
         ok: res.status >= 200 && res.status < 300,
         status: res.status,
         statusText: `Status ${res.status}`,
-        json: async () => res.data,
+        json: async () => typeof res.data === 'string' ? JSON.parse(res.data) : res.data,
         text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
         headers: {
           get: (name: string) => {
-            const val = res.headers[name] || res.headers[name.toLowerCase()];
+            if (!res.headers) return null;
+            const val = res.headers[name] || res.headers[name.toLowerCase()] || res.headers[name.toUpperCase()];
             return val || null;
           }
         }
       };
     } catch (err) {
       console.error("[Diagnostic] CapacitorHttp error:", err);
-      throw err;
+      // Fallback to fetch if CapacitorHttp fails unexpectedly
+      console.warn("[Diagnostic] Falling back to standard fetch due to CapacitorHttp error");
+      return fetch(url, options);
     }
   } else {
     console.log(`[Diagnostic] Using standard fetch for: ${url}`);
