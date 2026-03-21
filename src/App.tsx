@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, RefreshCw, CheckCircle2, AlertCircle, ExternalLink, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 declare global {
   interface Window {
@@ -21,6 +22,41 @@ const getInitialBaseUrl = () => {
   const saved = localStorage.getItem('tg_bot_server_url');
   if (saved) return saved;
   return process.env.VITE_APP_URL || '';
+};
+
+// Custom fetcher that uses CapacitorHttp on native platforms to bypass CORS
+const universalFetch = async (url: string, options: any = {}) => {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await CapacitorHttp.request({
+        url,
+        method: options.method || 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        },
+        data: options.body ? JSON.parse(options.body) : undefined,
+      });
+      
+      return {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        json: async () => res.data,
+        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+        headers: {
+          get: (name: string) => {
+            const val = res.headers[name] || res.headers[name.toLowerCase()];
+            return val || null;
+          }
+        }
+      };
+    } catch (err) {
+      console.error("CapacitorHttp error:", err);
+      throw err;
+    }
+  } else {
+    return fetch(url, options);
+  }
 };
 
 export default function App() {
@@ -59,7 +95,7 @@ export default function App() {
 
       if (tempBotToken) {
         const cleanBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-        const res = await fetch(`${cleanBaseUrl}/api/config/token`, {
+        const res = await universalFetch(`${cleanBaseUrl}/api/config/token`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: tempBotToken })
@@ -161,8 +197,8 @@ export default function App() {
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const [logsRes, statusRes] = await Promise.all([
-        fetch(`${currentBaseUrl}/api/logs?t=${Date.now()}`, { signal: controller.signal }),
-        fetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal })
+        universalFetch(`${currentBaseUrl}/api/logs?t=${Date.now()}`, { signal: controller.signal }),
+        universalFetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal })
       ]);
       
       clearTimeout(timeoutId);
@@ -207,7 +243,7 @@ export default function App() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const res = await fetch(`${currentBaseUrl}/api/ping`, { signal: controller.signal });
+      const res = await universalFetch(`${currentBaseUrl}/api/ping`, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (res.ok) {
@@ -231,7 +267,7 @@ export default function App() {
     
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-      const res = await fetch(`${currentBaseUrl}/api/process-url`, {
+      const res = await universalFetch(`${currentBaseUrl}/api/process-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: manualUrl })
@@ -259,7 +295,7 @@ export default function App() {
 
       try {
         const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-        const res = await fetch(`${currentBaseUrl}/api/tasks`);
+        const res = await universalFetch(`${currentBaseUrl}/api/tasks`);
         if (!res.ok) {
           if (res.status === 404) return;
           throw new Error(`Server responded with ${res.status}`);
@@ -295,7 +331,7 @@ export default function App() {
               apiKeys[activeKeyIndex]?.key
             );
             
-            const completeRes = await fetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
+            const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ adaptedText })
@@ -307,7 +343,7 @@ export default function App() {
           } catch (e) {
             console.error("Task processing failed", e);
             // Report error back to server so it can be logged and task can be removed
-            await fetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
+            await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}` })
