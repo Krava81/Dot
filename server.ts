@@ -222,7 +222,7 @@ async function startServer() {
   app.get("/api/status", (req, res) => {
     res.json({ 
       status: "running", 
-      version: "2.0",
+      version: "2.1",
       bot: botStatus, 
       botWaitRemaining,
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
