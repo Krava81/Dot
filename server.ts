@@ -22,7 +22,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "3.8",
+    version: "3.9",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -40,7 +40,15 @@ app.get("/api/auth/token", (req, res) => {
   // Extract session cookie from request
   const cookies = req.headers.cookie || '';
   const sessionCookie = cookies.split('; ').find(row => row.startsWith('SESS')) || 'No session cookie found';
-  res.json({ token: sessionCookie.split('=')[1] || sessionCookie });
+  const token = sessionCookie.split('=')[1] || sessionCookie;
+  res.json({ token });
+});
+
+app.get("/api/auth/login", (req, res) => {
+  // Set a simple session cookie for 30 days
+  const sessionToken = uuidv4();
+  res.setHeader('Set-Cookie', `SESS=${sessionToken}; Path=/; Max-Age=2592000; HttpOnly; SameSite=None; Secure`);
+  res.json({ status: "ok", token: sessionToken });
 });
 
 app.get("/api/logs", (req, res) => {

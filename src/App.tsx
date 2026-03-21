@@ -577,7 +577,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.8</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.9</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -637,30 +637,53 @@ export default function App() {
           </div>
         </header>
 
-        {/* Web Mirror Mode Alert - v3.8 Token Support */}
+        {/* Web Mirror Mode Alert - v3.9 Token Support */}
         {window.location.href.includes('run.app') && (
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-6 flex flex-col items-center gap-4">
             <div className="text-center">
               <p className="text-blue-400 font-bold">Вы в веб-версии (Mirror Mode)</p>
-              <p className="text-xs text-blue-500/70">Используйте кнопку ниже, чтобы авторизовать приложение на телефоне</p>
+              <p className="text-xs text-blue-500/70">Сначала авторизуйтесь, затем скопируйте токен для телефона</p>
             </div>
-            <button 
-              onClick={async () => {
-                try {
-                  const res = await fetch('/api/auth/token');
-                  const data = await res.json();
-                  const token = data.token || 'no-token';
-                  await navigator.clipboard.writeText(token);
-                  alert(`Токен скопирован: ${token.substring(0, 10)}... Вставьте его в приложении на телефоне.`);
-                } catch (e) {
-                  alert("Ошибка при получении токена. Убедитесь, что вы вошли в систему.");
-                }
-              }}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all flex items-center gap-2"
-            >
-              <Key size={18} />
-              Скопировать токен доступа
-            </button>
+            <div className="flex gap-3">
+              <button 
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/auth/login');
+                    const data = await res.json();
+                    if (data.status === 'ok') {
+                      alert("Авторизация успешна! Теперь вы можете скопировать токен.");
+                    }
+                  } catch (e) {
+                    alert("Ошибка авторизации.");
+                  }
+                }}
+                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-all flex items-center gap-2"
+              >
+                <CheckCircle2 size={18} />
+                1. Авторизовать браузер
+              </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/auth/token');
+                    const data = await res.json();
+                    const token = data.token;
+                    if (token === 'No session cookie found') {
+                      alert("Сначала нажмите 'Авторизовать браузер'!");
+                      return;
+                    }
+                    await navigator.clipboard.writeText(token);
+                    alert(`Токен скопирован: ${token.substring(0, 10)}... Вставьте его в приложении на телефоне.`);
+                  } catch (e) {
+                    alert("Ошибка при получении токена.");
+                  }
+                }}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all flex items-center gap-2"
+              >
+                <Key size={18} />
+                2. Скопировать токен
+              </button>
+            </div>
           </div>
         )}
 
