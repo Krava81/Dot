@@ -30,6 +30,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
   
   // Manual Input State
   const [manualUrl, setManualUrl] = useState('');
@@ -165,33 +167,57 @@ export default function App() {
       clearTimeout(timeoutId);
 
       if (!logsRes.ok || !statusRes.ok) {
-        throw new Error(`Server error: ${logsRes.status} / ${statusRes.status}`);
+        throw new Error(`Ошибка сервера: ${logsRes.status} / ${statusRes.status}`);
       }
 
       const logsContentType = logsRes.headers.get("content-type");
       const statusContentType = statusRes.headers.get("content-type");
 
-      // Check if we got HTML (likely the platform loading page)
       if ((logsContentType && logsContentType.includes("text/html")) || 
           (statusContentType && statusContentType.includes("text/html"))) {
-        console.log("Server is still starting up (received HTML)...");
+        setLastError("Сервер возвращает HTML (возможно, он еще запускается)");
         return;
       }
 
-      // Now it's safe to parse as JSON
       const logsData = await logsRes.json();
       const statusData = await statusRes.json();
-      setLogs(logsData.logs);
+      setLogs(logsData.logs || []);
       setStatus(statusData);
-    } catch (err) {
-      if (err instanceof TypeError && err.message === 'Failed to fetch') {
-        // Silent fail for network issues
-      } else {
-        console.error("Failed to fetch data", err);
-      }
-      setStatus(null); // Ensure status is null on error to show offline
+      setLastError(null);
+    } catch (err: any) {
+      console.error("Failed to fetch data", err);
+      setLastError(err.message || String(err));
+      setStatus(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const testConnection = async () => {
+    setIsTestingConnection(true);
+    setSubmitMsg(null);
+    try {
+      let url = baseUrl.trim();
+      if (!url.startsWith('http')) {
+        url = `https://${url}`;
+      }
+      const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const res = await fetch(`${currentBaseUrl}/api/ping`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        setSubmitMsg({ type: 'success', text: 'Соединение с сервером установлено!' });
+      } else {
+        throw new Error(`Ошибка: ${res.status}`);
+      }
+    } catch (err: any) {
+      setSubmitMsg({ type: 'error', text: `Ошибка соединения: ${err.message || 'Сервер недоступен'}` });
+    } finally {
+      setIsTestingConnection(false);
     }
   };
 
@@ -344,6 +370,9 @@ export default function App() {
             }`}>
               {status ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
               Сервер: {status ? 'Онлайн' : 'Оффлайн'}
+              {!status && lastError && (
+                <span className="text-[10px] opacity-70 ml-1 truncate max-w-[100px]">({lastError})</span>
+              )}
             </div>
             <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
               status?.bot === 'active' 
@@ -727,6 +756,14 @@ export default function App() {
               </AnimatePresence>
 
               <div className="flex flex-col gap-3 pt-2">
+                <button 
+                  onClick={testConnection}
+                  disabled={isTestingConnection || !baseUrl}
+                  className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700"
+                >
+                  {isTestingConnection ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                  Проверить соединение
+                </button>
                 <button 
                   onClick={() => {
                     const defaultUrl = process.env.VITE_APP_URL || '';
