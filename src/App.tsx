@@ -29,48 +29,37 @@ const universalFetch = async (url: string, options: any = {}) => {
   const platform = Capacitor.getPlatform();
   const isNative = platform === 'android' || platform === 'ios';
   const isNativePlatform = Capacitor.isNativePlatform();
-  const isLocalhost = window.location.hostname === 'localhost';
   
-  if (isNative || isNativePlatform || isLocalhost) {
-    console.log(`[Diagnostic v2.7] universalFetch called for: ${url}`);
+  // Если мы уже на удаленном сервере (Web Mirror Mode), используем обычный fetch
+  const isWebMirror = window.location.href.includes('run.app');
+  
+  if ((isNative || isNativePlatform) && !isWebMirror) {
+    console.log(`[Diagnostic v2.9] universalFetch (Native) called for: ${url}`);
     try {
-      // Ensure data is properly handled for POST/PUT
       let requestData = undefined;
       if (options.body) {
         try {
           requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         } catch (e) {
-          console.warn("[Diagnostic v2.7] Failed to parse body as JSON, sending as is:", e);
           requestData = options.body;
         }
       }
 
-      // Use either the direct import or the plugin registry
       const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
       
-      if (!http) {
-        console.error("[Diagnostic v2.7] CapacitorHttp plugin not found!");
-        throw new Error("CapacitorHttp plugin not found");
-      }
-
       const res = await http.request({
-        url: url.includes('?') ? `${url}&v=2.8` : `${url}?v=2.8`,
+        url: url.includes('?') ? `${url}&v=2.9` : `${url}?v=2.9`,
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'X-Requested-With': 'XMLHttpRequest',
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
           ...(options.headers || {})
         },
         data: requestData,
         connectTimeout: 15000,
         readTimeout: 15000
       });
-      
-      console.log(`[Diagnostic v2.7] CapacitorHttp response status: ${res.status} for ${url}`);
       
       return {
         ok: res.status >= 200 && res.status < 300,
@@ -87,17 +76,19 @@ const universalFetch = async (url: string, options: any = {}) => {
         }
       };
     } catch (err) {
-      console.error("[Diagnostic v2.7] CapacitorHttp error:", err);
-      // Fallback to fetch ONLY if we are NOT on a native platform
-      if (!isNative && !isNativePlatform) {
-        console.warn("[Diagnostic v2.7] Falling back to standard fetch on web");
-        return fetch(url, options);
-      }
+      console.error("[Diagnostic v2.9] CapacitorHttp error:", err);
       throw err;
     }
   } else {
-    console.log(`[Diagnostic v2.7] Using standard fetch for: ${url}`);
-    return fetch(url, options);
+    console.log(`[Diagnostic v2.9] Using standard fetch (Web/Mirror) for: ${url}`);
+    return fetch(url, {
+      ...options,
+      headers: {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(options.headers || {})
+      }
+    });
   }
 };
 
@@ -475,7 +466,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.8</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.9</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
