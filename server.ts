@@ -40,6 +40,39 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '50mb' }));
+
+// ==========================================
+// 0. ГЛОБАЛЬНЫЕ API (САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ)
+// ==========================================
+
+app.get("/api/status", (req, res) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.json({ 
+    status: "running", 
+    version: "2.4",
+    bot: botStatus, 
+    botWaitRemaining,
+    pendingTasks: tasks.filter(t => t.status === 'pending').length,
+    hasDefaultChat: !!DEFAULT_CHAT_ID,
+    lastChatId: lastChatId
+  });
+});
+
+app.get("/api/logs", (req, res) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.json({ logs });
+});
+
+app.get("/api/ping", (req, res) => {
+  res.send("pong");
+});
+
+app.get("/api/dev/package-json", (req, res) => {
+  const filePath = path.join(process.cwd(), 'package.json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.sendFile(filePath);
+});
+
 const PORT = 3000;
 
 // In-memory state
@@ -210,42 +243,7 @@ bot.on('text', async (ctx) => {
 });
 
 async function startServer() {
-  // 0. САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ: API ДЛЯ ЭМУЛЯТОРА
-  app.get("/api/status", (req, res) => {
-    res.json({ 
-      status: "running", 
-      version: "2.3",
-      bot: botStatus, 
-      botWaitRemaining,
-      pendingTasks: tasks.filter(t => t.status === 'pending').length,
-      hasDefaultChat: !!DEFAULT_CHAT_ID,
-      lastChatId: lastChatId
-    });
-  });
-
-  app.get("/api/logs", (req, res) => {
-    res.json({ logs });
-  });
-
-  app.get("/api/ping", (req, res) => {
-    res.send("pong");
-  });
-
-  // 1. Маршруты для разработки
-  app.get("/api/dev/app-tsx", (req, res) => {
-    const filePath = path.join(process.cwd(), 'src', 'App.tsx');
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.sendFile(filePath);
-  });
-
-  app.get("/api/dev/package-json", (req, res) => {
-    const filePath = path.join(process.cwd(), 'package.json');
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.sendFile(filePath);
-  });
-
-  // 2. Остальные API...
-  app.post("/api/process-url", async (req, res) => {
+  // Vite middleware for development
     const { url, chatId } = req.body;
     // Priority: Explicit ID > Default Env ID > Last seen ID > Hardcoded target ID
     const targetChatId = chatId || DEFAULT_CHAT_ID || lastChatId || "-1002603084916";
