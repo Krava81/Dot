@@ -12,11 +12,47 @@ dotenv.config();
 
 const app = express();
 
-// 0. САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ: Путь для авто-обновления v1.8
+// ==========================================
+// 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
+// ==========================================
+
+app.get("/api/status", (req, res) => {
+  console.log(`[API] Status request from ${req.ip}`);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.json({ 
+    status: "running", 
+    version: "2.5",
+    bot: botStatus, 
+    botWaitRemaining,
+    pendingTasks: tasks.filter(t => t.status === 'pending').length,
+    hasDefaultChat: !!DEFAULT_CHAT_ID,
+    lastChatId: lastChatId,
+    env: process.env.NODE_ENV || 'development'
+  });
+});
+
+app.get("/api/ping", (req, res) => {
+  res.send("pong v2.5");
+});
+
+app.get("/api/logs", (req, res) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.json({ logs });
+});
+
+// 0.1. Путь для авто-обновления v2.5
 app.get("/api/dev/app-tsx", (req, res) => {
   const filePath = path.join(process.cwd(), 'src', 'App.tsx');
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Разрешаем скачивание отовсюду
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.sendFile(filePath);
+});
+
+app.get("/api/dev/package-json", (req, res) => {
+  const filePath = path.join(process.cwd(), 'package.json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.sendFile(filePath);
 });
 
@@ -40,38 +76,6 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '50mb' }));
-
-// ==========================================
-// 0. ГЛОБАЛЬНЫЕ API (САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ)
-// ==========================================
-
-app.get("/api/status", (req, res) => {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.json({ 
-    status: "running", 
-    version: "2.4",
-    bot: botStatus, 
-    botWaitRemaining,
-    pendingTasks: tasks.filter(t => t.status === 'pending').length,
-    hasDefaultChat: !!DEFAULT_CHAT_ID,
-    lastChatId: lastChatId
-  });
-});
-
-app.get("/api/logs", (req, res) => {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.json({ logs });
-});
-
-app.get("/api/ping", (req, res) => {
-  res.send("pong");
-});
-
-app.get("/api/dev/package-json", (req, res) => {
-  const filePath = path.join(process.cwd(), 'package.json');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.sendFile(filePath);
-});
 
 const PORT = 3000;
 
