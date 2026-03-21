@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Terminal, RefreshCw, CheckCircle2, AlertCircle, ExternalLink, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X } from 'lucide-react';
+import { Terminal, RefreshCw, CheckCircle2, AlertCircle, ExternalLink, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
@@ -114,6 +114,25 @@ export default function App() {
   const [isWorking, setIsWorking] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [netTestResult, setNetTestResult] = useState<string | null>(null);
+  const [isTestingNet, setIsTestingNet] = useState(false);
+
+  const testNetwork = async () => {
+    setIsTestingNet(true);
+    setNetTestResult("Тестирование...");
+    try {
+      const res = await fetch("https://api.github.com", { method: 'GET' });
+      if (res.ok) {
+        setNetTestResult("✅ Интернет есть (GitHub доступен)");
+      } else {
+        setNetTestResult(`❌ Ошибка сети: ${res.status}`);
+      }
+    } catch (e: any) {
+      setNetTestResult(`❌ Нет доступа к интернету: ${e.message}`);
+    } finally {
+      setIsTestingNet(false);
+    }
+  };
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   
   // Manual Input State
@@ -437,7 +456,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.5</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.6</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -496,6 +515,36 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* Diagnostic Panel */}
+        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Activity className="text-blue-500 w-5 h-5" />
+            Диагностика подключения
+            <span className="text-[10px] font-mono opacity-50 ml-auto">v2.6</span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 bg-black/40 rounded-xl border border-white/5">
+              <p className="text-sm text-neutral-400 mb-2">Статус интернета в эмуляторе:</p>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={testNetwork}
+                  disabled={isTestingNet}
+                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs rounded-lg transition-colors"
+                >
+                  {isTestingNet ? "Проверка..." : "Проверить интернет"}
+                </button>
+                <span className={`text-sm font-mono ${netTestResult?.includes('✅') ? 'text-green-400' : 'text-red-400'}`}>
+                  {netTestResult || "Не проверялось"}
+                </span>
+              </div>
+            </div>
+            <div className="p-4 bg-black/40 rounded-xl border border-white/5">
+              <p className="text-sm text-neutral-400 mb-2">Текущий URL сервера:</p>
+              <code className="text-xs text-blue-400 break-all">{baseUrl}</code>
+            </div>
+          </div>
+        </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
