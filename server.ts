@@ -15,21 +15,24 @@ const app = express();
 // Manual CORS and logging middleware
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
+  
+  // Be as permissive as possible for the bot manager
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
   
   const method = req.method;
   const path = req.path;
-  addLog(`Incoming request: ${method} ${path} from ${origin || 'No Origin'}`);
+  
+  // Don't log OPTIONS requests to keep logs cleaner
+  if (method !== 'OPTIONS') {
+    addLog(`[Request] ${method} ${path} from ${origin || 'No Origin'}`);
+  }
 
   if (method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.status(200).end();
   }
   next();
 });

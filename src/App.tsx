@@ -26,21 +26,29 @@ const getInitialBaseUrl = () => {
 
 // Custom fetcher that uses CapacitorHttp on native platforms to bypass CORS
 const universalFetch = async (url: string, options: any = {}) => {
-  if (Capacitor.isNativePlatform()) {
+  const platform = Capacitor.getPlatform();
+  const isNative = platform === 'android' || platform === 'ios';
+  
+  if (isNative) {
+    console.log(`[Diagnostic] Using CapacitorHttp for: ${url}`);
     try {
       const res = await CapacitorHttp.request({
         url,
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
           ...(options.headers || {})
         },
         data: options.body ? JSON.parse(options.body) : undefined,
+        connectTimeout: 10000,
+        readTimeout: 10000
       });
       
       return {
         ok: res.status >= 200 && res.status < 300,
         status: res.status,
+        statusText: `Status ${res.status}`,
         json: async () => res.data,
         text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
         headers: {
@@ -51,10 +59,11 @@ const universalFetch = async (url: string, options: any = {}) => {
         }
       };
     } catch (err) {
-      console.error("CapacitorHttp error:", err);
+      console.error("[Diagnostic] CapacitorHttp error:", err);
       throw err;
     }
   } else {
+    console.log(`[Diagnostic] Using standard fetch for: ${url}`);
     return fetch(url, options);
   }
 };
