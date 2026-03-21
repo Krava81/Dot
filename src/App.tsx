@@ -572,7 +572,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.6</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.7</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -684,6 +684,13 @@ export default function App() {
                   >
                     <Key size={12} />
                     🔑 Внутренний вход (Browser Plugin)
+                  </button>
+                  <button 
+                    onClick={() => setShowTokenInput(true)}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-amber-500/20"
+                  >
+                    <Key size={12} />
+                    🔑 Ввести токен (Manual Auth)
                   </button>
                   <button 
                     onClick={openInBrowser}
