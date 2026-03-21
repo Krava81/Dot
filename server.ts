@@ -235,6 +235,7 @@ async function startServer() {
   // Route for automatic updates of the local project
   app.get("/api/dev/app-tsx", (req, res) => {
     const filePath = path.join(process.cwd(), 'src', 'App.tsx');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.sendFile(filePath);
   });
 
