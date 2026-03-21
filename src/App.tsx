@@ -29,13 +29,14 @@ const universalFetch = async (url: string, options: any = {}) => {
   const platform = Capacitor.getPlatform();
   const isNative = platform === 'android' || platform === 'ios';
   const isNativePlatform = Capacitor.isNativePlatform();
+  const isLocalhost = window.location.hostname === 'localhost';
   
-  console.log(`[Diagnostic] universalFetch called for: ${url}`);
-  console.log(`[Diagnostic] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}`);
-  console.log(`[Diagnostic] CapacitorHttp available: ${!!CapacitorHttp}`);
-
-  if (isNative || isNativePlatform) {
-    console.log(`[Diagnostic] Using CapacitorHttp for: ${url}`);
+  console.log(`[Diagnostic v1.1] universalFetch called for: ${url}`);
+  console.log(`[Diagnostic v1.1] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}, isLocalhost: ${isLocalhost}`);
+  
+  // Force CapacitorHttp if we are on a native platform or running from localhost (Capacitor default)
+  if (isNative || isNativePlatform || isLocalhost) {
+    console.log(`[Diagnostic v1.1] Using CapacitorHttp for: ${url}`);
     try {
       // Ensure data is properly handled for POST/PUT
       let requestData = undefined;
@@ -43,12 +44,20 @@ const universalFetch = async (url: string, options: any = {}) => {
         try {
           requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         } catch (e) {
-          console.warn("[Diagnostic] Failed to parse body as JSON, sending as is:", e);
+          console.warn("[Diagnostic v1.1] Failed to parse body as JSON, sending as is:", e);
           requestData = options.body;
         }
       }
 
-      const res = await CapacitorHttp.request({
+      // Use either the direct import or the plugin registry
+      const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
+      
+      if (!http) {
+        console.error("[Diagnostic v1.1] CapacitorHttp plugin not found!");
+        throw new Error("CapacitorHttp plugin not found");
+      }
+
+      const res = await http.request({
         url,
         method: options.method || 'GET',
         headers: {
@@ -61,7 +70,7 @@ const universalFetch = async (url: string, options: any = {}) => {
         readTimeout: 15000
       });
       
-      console.log(`[Diagnostic] CapacitorHttp response status: ${res.status} for ${url}`);
+      console.log(`[Diagnostic v1.1] CapacitorHttp response status: ${res.status} for ${url}`);
       
       return {
         ok: res.status >= 200 && res.status < 300,
@@ -78,13 +87,16 @@ const universalFetch = async (url: string, options: any = {}) => {
         }
       };
     } catch (err) {
-      console.error("[Diagnostic] CapacitorHttp error:", err);
-      // Fallback to fetch if CapacitorHttp fails unexpectedly
-      console.warn("[Diagnostic] Falling back to standard fetch due to CapacitorHttp error");
-      return fetch(url, options);
+      console.error("[Diagnostic v1.1] CapacitorHttp error:", err);
+      // Fallback to fetch ONLY if we are NOT on a native platform
+      if (!isNative && !isNativePlatform) {
+        console.warn("[Diagnostic v1.1] Falling back to standard fetch on web");
+        return fetch(url, options);
+      }
+      throw err;
     }
   } else {
-    console.log(`[Diagnostic] Using standard fetch for: ${url}`);
+    console.log(`[Diagnostic v1.1] Using standard fetch for: ${url}`);
     return fetch(url, options);
   }
 };

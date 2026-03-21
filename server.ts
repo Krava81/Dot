@@ -13,21 +13,20 @@ dotenv.config();
 const app = express();
 
 // 1. MANDATORY: CORS must be the VERY FIRST middleware
+// Use the standard cors package for better compatibility
+app.use(cors({
+  origin: true, // Reflect the request origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Cache-Control', 'Pragma', 'X-CSRF-Token'],
+  credentials: true,
+  maxAge: 86400
+}));
+
+// Extra manual headers just in case the package misses something in this environment
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  
-  // Always reflect the origin or use *
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma, X-CSRF-Token');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400');
   res.setHeader('Vary', 'Origin');
-
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
   next();
 });
 
@@ -36,7 +35,9 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   const method = req.method;
   const path = req.path;
-  addLog(`[Request] ${method} ${path} from ${origin || 'No Origin'}`);
+  if (method !== 'OPTIONS') {
+    addLog(`[Request v1.1] ${method} ${path} from ${origin || 'No Origin'}`);
+  }
   next();
 });
 app.use(express.json({ limit: '50mb' }));
