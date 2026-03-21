@@ -12,32 +12,31 @@ dotenv.config();
 
 const app = express();
 
-// 1. КРИТИЧЕСКИ ВАЖНО: Исправленный CORS для v1.5 (Credentials + Dynamic Origin)
+// 1. КРИТИЧЕСКИ ВАЖНО: Исправленный CORS для v1.6 (Полная поддержка эмулятора)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // Если origin есть (браузер), возвращаем его. Если нет, ставим *
-  res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
-  
-  // КРИТИЧЕСКИ: Если есть origin, разрешаем Credentials. Если origin '*', Credentials ЗАПРЕЩЕНЫ браузером.
+  // Разрешаем конкретный origin или *, но учитываем правила Credentials
   if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
   }
   
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
   res.setHeader('Vary', 'Origin');
 
-  // Мгновенный ответ на preflight-запросы
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
   next();
 });
 
-// 2. Логирование запросов v1.5
+// 2. Логирование запросов v1.6
 app.use((req, res, next) => {
   if (req.method !== 'OPTIONS') {
-    console.log(`[Request v1.5] ${req.method} ${req.path} | Origin: ${req.headers.origin || 'None'}`);
+    console.log(`[Request v1.6] ${req.method} ${req.path} | Origin: ${req.headers.origin || 'None'}`);
   }
   next();
 });
@@ -224,12 +223,19 @@ async function startServer() {
   app.get("/api/status", (req, res) => {
     res.json({ 
       status: "running", 
+      version: "1.6",
       bot: botStatus, 
       botWaitRemaining,
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
       hasDefaultChat: !!DEFAULT_CHAT_ID,
       lastChatId: lastChatId
     });
+  });
+
+  // Route for automatic updates of the local project
+  app.get("/api/dev/app-tsx", (req, res) => {
+    const filePath = path.join(process.cwd(), 'src', 'App.tsx');
+    res.sendFile(filePath);
   });
 
   app.post("/api/process-url", async (req, res) => {
