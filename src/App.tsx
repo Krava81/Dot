@@ -32,7 +32,7 @@ const universalFetch = async (url: string, options: any = {}) => {
   const isLocalhost = window.location.hostname === 'localhost';
   
   if (isNative || isNativePlatform || isLocalhost) {
-    console.log(`[Diagnostic v2.1] universalFetch called for: ${url}`);
+    console.log(`[Diagnostic v2.7] universalFetch called for: ${url}`);
     try {
       // Ensure data is properly handled for POST/PUT
       let requestData = undefined;
@@ -40,7 +40,7 @@ const universalFetch = async (url: string, options: any = {}) => {
         try {
           requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         } catch (e) {
-          console.warn("[Diagnostic v2.1] Failed to parse body as JSON, sending as is:", e);
+          console.warn("[Diagnostic v2.7] Failed to parse body as JSON, sending as is:", e);
           requestData = options.body;
         }
       }
@@ -49,16 +49,17 @@ const universalFetch = async (url: string, options: any = {}) => {
       const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
       
       if (!http) {
-        console.error("[Diagnostic v2.1] CapacitorHttp plugin not found!");
+        console.error("[Diagnostic v2.7] CapacitorHttp plugin not found!");
         throw new Error("CapacitorHttp plugin not found");
       }
 
       const res = await http.request({
-        url: url.includes('?') ? `${url}&v=2.1` : `${url}?v=2.1`,
+        url: url.includes('?') ? `${url}&v=2.7` : `${url}?v=2.7`,
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
           ...(options.headers || {})
@@ -68,7 +69,7 @@ const universalFetch = async (url: string, options: any = {}) => {
         readTimeout: 15000
       });
       
-      console.log(`[Diagnostic v2.1] CapacitorHttp response status: ${res.status} for ${url}`);
+      console.log(`[Diagnostic v2.7] CapacitorHttp response status: ${res.status} for ${url}`);
       
       return {
         ok: res.status >= 200 && res.status < 300,
@@ -85,16 +86,16 @@ const universalFetch = async (url: string, options: any = {}) => {
         }
       };
     } catch (err) {
-      console.error("[Diagnostic v2.1] CapacitorHttp error:", err);
+      console.error("[Diagnostic v2.7] CapacitorHttp error:", err);
       // Fallback to fetch ONLY if we are NOT on a native platform
       if (!isNative && !isNativePlatform) {
-        console.warn("[Diagnostic v2.1] Falling back to standard fetch on web");
+        console.warn("[Diagnostic v2.7] Falling back to standard fetch on web");
         return fetch(url, options);
       }
       throw err;
     }
   } else {
-    console.log(`[Diagnostic v2.1] Using standard fetch for: ${url}`);
+    console.log(`[Diagnostic v2.7] Using standard fetch for: ${url}`);
     return fetch(url, options);
   }
 };
@@ -116,6 +117,17 @@ export default function App() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isTestingNet, setIsTestingNet] = useState(false);
+  const [fullResponse, setFullResponse] = useState<string | null>(null);
+  const [showFullResponse, setShowFullResponse] = useState(false);
+
+  const DEV_URL = "https://ais-dev-rmq2x3cl372oyaqjtvr24s-648683748313.europe-west2.run.app";
+  const PRE_URL = "https://ais-pre-rmq2x3cl372oyaqjtvr24s-648683748313.europe-west2.run.app";
+
+  const switchToUrl = (url: string) => {
+    setBaseUrl(url);
+    localStorage.setItem('tg_bot_server_url', url);
+    addLog(`Переключено на URL: ${url}`);
+  };
 
   const testNetwork = async () => {
     setIsTestingNet(true);
@@ -249,7 +261,10 @@ export default function App() {
   };
 
   const fetchData = async () => {
-    if (!baseUrl || baseUrl === '/') return;
+    if (!baseUrl || baseUrl === '/') {
+      setLoading(false);
+      return;
+    }
 
     try {
       let url = baseUrl.trim();
@@ -282,7 +297,9 @@ export default function App() {
 
       if ((logsContentType && logsContentType.includes("text/html")) || 
           (statusContentType && statusContentType.includes("text/html"))) {
-        const htmlSnippet = await statusRes.text().then(t => t.slice(0, 150).replace(/</g, '&lt;'));
+        const fullText = await statusRes.text();
+        setFullResponse(fullText);
+        const htmlSnippet = fullText.slice(0, 150).replace(/</g, '&lt;');
         const err = `Сервер вернул HTML вместо данных. Начало текста: "${htmlSnippet}..."`;
         addClientLog(err);
         setLastError("Ошибка: Сервер вернул веб-страницу вместо данных");
@@ -456,7 +473,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.6</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.7</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -523,28 +540,52 @@ export default function App() {
             Диагностика подключения
             <span className="text-[10px] font-mono opacity-50 ml-auto">v2.6</span>
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-black/40 rounded-xl border border-white/5">
-              <p className="text-sm text-neutral-400 mb-2">Статус интернета в эмуляторе:</p>
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={testNetwork}
-                  disabled={isTestingNet}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs rounded-lg transition-colors"
-                >
-                  {isTestingNet ? "Проверка..." : "Проверить интернет"}
-                </button>
-                <span className={`text-sm font-mono ${netTestResult?.includes('✅') ? 'text-green-400' : 'text-red-400'}`}>
-                  {netTestResult || "Не проверялось"}
-                </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-black/40 rounded-xl border border-white/5">
+                <p className="text-sm text-neutral-400 mb-2">Статус интернета в эмуляторе:</p>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={testNetwork}
+                    disabled={isTestingNet}
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs rounded-lg transition-colors"
+                  >
+                    {isTestingNet ? "Проверка..." : "Проверить интернет"}
+                  </button>
+                  <span className={`text-sm font-mono ${netTestResult?.includes('✅') ? 'text-green-400' : 'text-red-400'}`}>
+                    {netTestResult || "Не проверялось"}
+                  </span>
+                </div>
+              </div>
+              <div className="p-4 bg-black/40 rounded-xl border border-white/5">
+                <p className="text-sm text-neutral-400 mb-2">Ответ сервера (диагностика):</p>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setShowFullResponse(true)}
+                    className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-xs rounded-lg transition-colors"
+                  >
+                    Показать полный ответ
+                  </button>
+                  <span className="text-[10px] text-neutral-500">Поможет найти причину HTML</span>
+                </div>
               </div>
             </div>
-            <div className="p-4 bg-black/40 rounded-xl border border-white/5">
-              <p className="text-sm text-neutral-400 mb-2">Текущий URL сервера:</p>
-              <code className="text-xs text-blue-400 break-all">{baseUrl}</code>
-            </div>
           </div>
-        </div>
+
+          {/* URL Switcher */}
+          <div className="flex flex-wrap gap-2">
+            <button 
+              onClick={() => switchToUrl(DEV_URL)}
+              className={`px-4 py-2 rounded-xl text-xs font-medium transition-all ${baseUrl === DEV_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'}`}
+            >
+              Использовать DEV URL
+            </button>
+            <button 
+              onClick={() => switchToUrl(PRE_URL)}
+              className={`px-4 py-2 rounded-xl text-xs font-medium transition-all ${baseUrl === PRE_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'}`}
+            >
+              Использовать PRE URL (Shared)
+            </button>
+          </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -829,7 +870,36 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Server Settings Modal */}
+        {/* Full Response Modal */}
+        <AnimatePresence>
+          {showFullResponse && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
+              >
+                <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
+                  <h3 className="text-xl font-bold">Полный ответ сервера</h3>
+                  <button onClick={() => setShowFullResponse(false)} className="p-2 hover:bg-neutral-800 rounded-full transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="p-6 overflow-auto flex-1 font-mono text-xs text-neutral-400 bg-black/20">
+                  {fullResponse || "Нет данных. Попробуйте обновить статус сервера."}
+                </div>
+                <div className="p-6 border-t border-neutral-800 flex justify-end">
+                  <button onClick={() => setShowFullResponse(false)} className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors">
+                    Закрыть
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Server Settings Modal */}
       <AnimatePresence>
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
