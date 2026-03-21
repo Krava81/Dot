@@ -210,19 +210,11 @@ bot.on('text', async (ctx) => {
 });
 
 async function startServer() {
-  // API for logs
-  app.get("/api/logs", (req, res) => {
-    res.json({ logs });
-  });
-
-  app.get("/api/ping", (req, res) => {
-    res.send("pong");
-  });
-
+  // 0. САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ: API ДЛЯ ЭМУЛЯТОРА
   app.get("/api/status", (req, res) => {
     res.json({ 
       status: "running", 
-      version: "2.1",
+      version: "2.3",
       bot: botStatus, 
       botWaitRemaining,
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -231,7 +223,15 @@ async function startServer() {
     });
   });
 
-  // Route for automatic updates of the local project
+  app.get("/api/logs", (req, res) => {
+    res.json({ logs });
+  });
+
+  app.get("/api/ping", (req, res) => {
+    res.send("pong");
+  });
+
+  // 1. Маршруты для разработки
   app.get("/api/dev/app-tsx", (req, res) => {
     const filePath = path.join(process.cwd(), 'src', 'App.tsx');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -244,6 +244,7 @@ async function startServer() {
     res.sendFile(filePath);
   });
 
+  // 2. Остальные API...
   app.post("/api/process-url", async (req, res) => {
     const { url, chatId } = req.body;
     // Priority: Explicit ID > Default Env ID > Last seen ID > Hardcoded target ID

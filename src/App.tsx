@@ -263,9 +263,10 @@ export default function App() {
 
       if ((logsContentType && logsContentType.includes("text/html")) || 
           (statusContentType && statusContentType.includes("text/html"))) {
-        const err = "Сервер возвращает HTML (проверьте URL или VPN)";
+        const htmlSnippet = await statusRes.text().then(t => t.slice(0, 150).replace(/</g, '&lt;'));
+        const err = `Сервер вернул HTML вместо данных. Начало текста: "${htmlSnippet}..."`;
         addClientLog(err);
-        setLastError(err);
+        setLastError("Ошибка: Сервер вернул веб-страницу вместо данных");
         setStatus(null);
         return;
       }
@@ -436,7 +437,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.2</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.3</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
