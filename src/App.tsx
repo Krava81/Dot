@@ -113,13 +113,29 @@ export default function App() {
   const [showFullResponse, setShowFullResponse] = useState(false);
   const [showCookieFixer, setShowCookieFixer] = useState(false);
 
+  // v3.0: Safety timeout for loading screen
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (loading) {
+        console.log("[v3.0] Loading timeout reached, forcing UI display");
+        setLoading(false);
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
   const DEV_URL = "https://ais-dev-rmq2x3cl372oyaqjtvr24s-648683748313.europe-west2.run.app";
   const PRE_URL = "https://ais-pre-rmq2x3cl372oyaqjtvr24s-648683748313.europe-west2.run.app";
 
   const switchToUrl = (url: string) => {
     setBaseUrl(url);
     localStorage.setItem('tg_bot_server_url', url);
-    addLog(`Переключено на URL: ${url}`);
+    addClientLog(`Переключено на URL: ${url}`);
+    fetchData();
+  };
+
+  const openInBrowser = () => {
+    window.open(baseUrl, '_blank');
   };
 
   const testNetwork = async () => {
@@ -458,6 +474,28 @@ export default function App() {
     return () => clearInterval(interval);
   }, [baseUrl]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-6">
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full"
+        />
+        <div className="text-center space-y-2">
+          <h2 className="text-xl font-bold text-white">Загрузка панели управления...</h2>
+          <p className="text-sm text-neutral-500">Проверка связи с сервером v3.0</p>
+        </div>
+        <button 
+          onClick={() => setLoading(false)}
+          className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs rounded-xl transition-all"
+        >
+          Пропустить загрузку
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-8">
@@ -466,7 +504,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v2.9</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.0</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -563,6 +601,13 @@ export default function App() {
                     className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold"
                   >
                     🛠 Исправить авторизацию (Cookie Fix)
+                  </button>
+                  <button 
+                    onClick={openInBrowser}
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-xs rounded-lg transition-colors flex items-center gap-1"
+                  >
+                    <ExternalLink size={10} />
+                    Открыть в браузере
                   </button>
                 </div>
               </div>
