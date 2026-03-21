@@ -165,6 +165,15 @@ export default function App() {
     }
   };
 
+  const startWebViewSync = () => {
+    addClientLog("Запуск синхронизации WebView...");
+    const syncUrl = new URL(baseUrl);
+    syncUrl.searchParams.set('app_mode', 'true');
+    syncUrl.searchParams.set('v', '3.4');
+    // Redirect the entire app to the server
+    window.location.href = syncUrl.toString();
+  };
+
   const testNetwork = async () => {
     setIsTestingNet(true);
     setNetTestResult("Тестирование...");
@@ -531,7 +540,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.3</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.4</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -628,6 +637,13 @@ export default function App() {
                     className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold"
                   >
                     🛠 Исправить авторизацию (Cookie Fix)
+                  </button>
+                  <button 
+                    onClick={startWebViewSync}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+                  >
+                    <RefreshCw size={12} />
+                    🔑 Прямой вход (WebView Sync)
                   </button>
                   <button 
                     onClick={startDeepLogin}
