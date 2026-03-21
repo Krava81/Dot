@@ -31,12 +31,12 @@ const universalFetch = async (url: string, options: any = {}) => {
   const isNativePlatform = Capacitor.isNativePlatform();
   const isLocalhost = window.location.hostname === 'localhost';
   
-  console.log(`[Diagnostic v1.8] universalFetch called for: ${url}`);
-  console.log(`[Diagnostic v1.8] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}, isLocalhost: ${isLocalhost}`);
+  console.log(`[Diagnostic v2.0] universalFetch called for: ${url}`);
+  console.log(`[Diagnostic v2.0] Platform: ${platform}, isNative: ${isNative}, isNativePlatform: ${isNativePlatform}, isLocalhost: ${isLocalhost}`);
   
   // Force CapacitorHttp if we are on a native platform or running from localhost (Capacitor default)
   if (isNative || isNativePlatform || isLocalhost) {
-    console.log(`[Diagnostic v1.8] Using CapacitorHttp for: ${url}`);
+    console.log(`[Diagnostic v2.0] Using CapacitorHttp for: ${url}`);
     try {
       // Ensure data is properly handled for POST/PUT
       let requestData = undefined;
@@ -44,7 +44,7 @@ const universalFetch = async (url: string, options: any = {}) => {
         try {
           requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         } catch (e) {
-          console.warn("[Diagnostic v1.8] Failed to parse body as JSON, sending as is:", e);
+          console.warn("[Diagnostic v2.0] Failed to parse body as JSON, sending as is:", e);
           requestData = options.body;
         }
       }
@@ -53,12 +53,12 @@ const universalFetch = async (url: string, options: any = {}) => {
       const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
       
       if (!http) {
-        console.error("[Diagnostic v1.8] CapacitorHttp plugin not found!");
+        console.error("[Diagnostic v2.0] CapacitorHttp plugin not found!");
         throw new Error("CapacitorHttp plugin not found");
       }
 
       const res = await http.request({
-        url: url.includes('?') ? `${url}&v=1.8` : `${url}?v=1.8`,
+        url: url.includes('?') ? `${url}&v=2.0` : `${url}?v=2.0`,
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -72,7 +72,7 @@ const universalFetch = async (url: string, options: any = {}) => {
         readTimeout: 30000
       });
       
-      console.log(`[Diagnostic v1.8] CapacitorHttp response status: ${res.status} for ${url}`);
+      console.log(`[Diagnostic v2.0] CapacitorHttp response status: ${res.status} for ${url}`);
       
       return {
         ok: res.status >= 200 && res.status < 300,
@@ -89,16 +89,16 @@ const universalFetch = async (url: string, options: any = {}) => {
         }
       };
     } catch (err) {
-      console.error("[Diagnostic v1.8] CapacitorHttp error:", err);
+      console.error("[Diagnostic v2.0] CapacitorHttp error:", err);
       // Fallback to fetch ONLY if we are NOT on a native platform
       if (!isNative && !isNativePlatform) {
-        console.warn("[Diagnostic v1.8] Falling back to standard fetch on web");
+        console.warn("[Diagnostic v2.0] Falling back to standard fetch on web");
         return fetch(url, options);
       }
       throw err;
     }
   } else {
-    console.log(`[Diagnostic v1.8] Using standard fetch for: ${url}`);
+    console.log(`[Diagnostic v2.0] Using standard fetch for: ${url}`);
     return fetch(url, options);
   }
 };
@@ -235,7 +235,7 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-      console.log(`[Diagnostic v1.8] Fetching status from: ${currentBaseUrl}/api/status`);
+      console.log(`[Diagnostic v2.0] Fetching status from: ${currentBaseUrl}/api/status`);
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -248,7 +248,9 @@ export default function App() {
       clearTimeout(timeoutId);
 
       if (!logsRes.ok || !statusRes.ok) {
-        throw new Error(`Ошибка сервера: ${logsRes.status} / ${statusRes.status}`);
+        setLastError(`Ошибка сервера: ${logsRes.status} / ${statusRes.status}`);
+        setStatus(null);
+        return;
       }
 
       const logsContentType = logsRes.headers.get("content-type");
@@ -257,6 +259,7 @@ export default function App() {
       if ((logsContentType && logsContentType.includes("text/html")) || 
           (statusContentType && statusContentType.includes("text/html"))) {
         setLastError("Сервер возвращает HTML (возможно, он еще запускается)");
+        setStatus(null);
         return;
       }
 
@@ -266,7 +269,7 @@ export default function App() {
       setStatus(statusData);
       setLastError(null);
     } catch (err: any) {
-      console.error("Failed to fetch data", err);
+      console.error("[Diagnostic v2.0] Failed to fetch data", err);
       setLastError(err.message || String(err));
       setStatus(null);
     } finally {
@@ -424,7 +427,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v1.8</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v2.0</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>

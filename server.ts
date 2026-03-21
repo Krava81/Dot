@@ -20,24 +20,22 @@ app.get("/api/dev/app-tsx", (req, res) => {
   res.sendFile(filePath);
 });
 
-// 1. КРИТИЧЕСКИ ВАЖНО: Исправленный CORS для v1.8
+// 1. КРИТИЧЕСКИ ВАЖНО: CORS v2.0 для публичных (Shared) приложений
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.status(200).end();
   next();
 });
 
-// 2. Логирование запросов v1.6
+// 2. Логирование v2.0
 app.use((req, res, next) => {
   if (req.method !== 'OPTIONS') {
-    console.log(`[Request v1.6] ${req.method} ${req.path} | Origin: ${req.headers.origin || 'None'}`);
+    console.log(`[v2.0] ${req.method} ${req.path}`);
   }
   next();
 });
@@ -224,7 +222,7 @@ async function startServer() {
   app.get("/api/status", (req, res) => {
     res.json({ 
       status: "running", 
-      version: "1.8",
+      version: "2.0",
       bot: botStatus, 
       botWaitRemaining,
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
