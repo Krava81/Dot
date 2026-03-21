@@ -112,6 +112,21 @@ export default function App() {
   const [fullResponse, setFullResponse] = useState<string | null>(null);
   const [showFullResponse, setShowFullResponse] = useState(false);
   const [showCookieFixer, setShowCookieFixer] = useState(false);
+  const [isDeepLogin, setIsDeepLogin] = useState(() => {
+    return new URLSearchParams(window.location.search).get('mode') === 'app_return';
+  });
+
+  // v3.1: Handle return from Deep Login
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'app_return') {
+      addClientLog("Возврат из глубокой авторизации. Проверка связи...");
+      setIsDeepLogin(false);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      fetchData();
+    }
+  }, []);
 
   // v3.0: Safety timeout for loading screen
   useEffect(() => {
@@ -136,6 +151,13 @@ export default function App() {
 
   const openInBrowser = () => {
     window.open(baseUrl, '_blank');
+  };
+
+  const startDeepLogin = () => {
+    const loginUrl = new URL(baseUrl);
+    loginUrl.searchParams.set('app_mode', 'true');
+    loginUrl.searchParams.set('return_to', window.location.href + (window.location.href.includes('?') ? '&' : '?') + 'mode=app_return');
+    window.location.href = loginUrl.toString();
   };
 
   const testNetwork = async () => {
@@ -504,7 +526,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.0</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.1</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -601,6 +623,13 @@ export default function App() {
                     className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold"
                   >
                     🛠 Исправить авторизацию (Cookie Fix)
+                  </button>
+                  <button 
+                    onClick={startDeepLogin}
+                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1"
+                  >
+                    <Key size={12} />
+                    🔑 Глубокий вход (Deep Login)
                   </button>
                   <button 
                     onClick={openInBrowser}
