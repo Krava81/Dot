@@ -150,8 +150,18 @@ export default function App() {
     fetchData();
   };
 
-  const openInBrowser = () => {
-    window.open(baseUrl, '_blank');
+  const openInBrowser = async () => {
+    addClientLog("Открытие в системном браузере...");
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Browser.open({ url: baseUrl });
+      } else {
+        window.open(baseUrl, '_blank');
+      }
+    } catch (e: any) {
+      addClientLog(`Ошибка открытия браузера: ${e.message}`);
+      window.open(baseUrl, '_blank');
+    }
   };
 
   const startDeepLogin = async () => {
@@ -572,7 +582,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v3.7</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v3.8</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -631,6 +641,65 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* Web Mirror Mode Alert - v3.8 Token Support */}
+        {window.location.href.includes('run.app') && (
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-6 flex flex-col items-center gap-4">
+            <div className="text-center">
+              <p className="text-blue-400 font-bold">Вы в веб-версии (Mirror Mode)</p>
+              <p className="text-xs text-blue-500/70">Используйте кнопку ниже, чтобы авторизовать приложение на телефоне</p>
+            </div>
+            <button 
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/auth/token');
+                  const data = await res.json();
+                  const token = data.token || 'no-token';
+                  await navigator.clipboard.writeText(token);
+                  alert(`Токен скопирован: ${token.substring(0, 10)}... Вставьте его в приложении на телефоне.`);
+                } catch (e) {
+                  alert("Ошибка при получении токена. Убедитесь, что вы вошли в систему.");
+                }
+              }}
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all flex items-center gap-2"
+            >
+              <Key size={18} />
+              Скопировать токен доступа
+            </button>
+          </div>
+        )}
+
+        {/* Token Input Panel */}
+        {showTokenInput && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 space-y-4">
+            <h3 className="text-amber-400 font-bold flex items-center gap-2">
+              <Key size={18} />
+              Авторизация через токен
+            </h3>
+            <div className="space-y-2">
+              <p className="text-[10px] text-amber-500/70">Текущий токен: {sessionToken ? `${sessionToken.substring(0, 10)}...` : 'не установлен'}</p>
+              <input 
+                type="text"
+                placeholder="Вставьте токен здесь..."
+                className="w-full bg-black/40 border border-amber-500/30 rounded-xl p-3 text-sm font-mono text-amber-200 outline-none focus:border-amber-500"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveToken(e.currentTarget.value);
+                }}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setShowTokenInput(false)}
+                className="px-4 py-2 bg-neutral-800 text-neutral-400 rounded-lg text-xs"
+              >
+                Отмена
+              </button>
+              <p className="text-[10px] text-amber-500/50 self-center italic">
+                * Токен можно получить, нажав "Открыть в браузере" и выбрав "Скопировать токен"
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Diagnostic Panel */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">

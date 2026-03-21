@@ -22,7 +22,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "2.5",
+    version: "3.8",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -34,6 +34,13 @@ app.get("/api/status", (req, res) => {
 
 app.get("/api/ping", (req, res) => {
   res.send("pong v2.5");
+});
+
+app.get("/api/auth/token", (req, res) => {
+  // Extract session cookie from request
+  const cookies = req.headers.cookie || '';
+  const sessionCookie = cookies.split('; ').find(row => row.startsWith('SESS')) || 'No session cookie found';
+  res.json({ token: sessionCookie.split('=')[1] || sessionCookie });
 });
 
 app.get("/api/logs", (req, res) => {
