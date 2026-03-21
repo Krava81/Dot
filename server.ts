@@ -12,24 +12,25 @@ dotenv.config();
 
 const app = express();
 
-// 1. КРИТИЧЕСКИ ВАЖНО: Исправленный CORS для v1.6 (Полная поддержка эмулятора)
+// 0. САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ: Путь для авто-обновления v1.8
+app.get("/api/dev/app-tsx", (req, res) => {
+  const filePath = path.join(process.cwd(), 'src', 'App.tsx');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*'); // Разрешаем скачивание отовсюду
+  res.sendFile(filePath);
+});
+
+// 1. КРИТИЧЕСКИ ВАЖНО: Исправленный CORS для v1.8
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // Разрешаем конкретный origin или *, но учитываем правила Credentials
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
-  
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
-  res.setHeader('Vary', 'Origin');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
+  res.setHeader('Vary', 'Origin');
+  if (req.method === 'OPTIONS') return res.status(200).end();
   next();
 });
 
@@ -223,7 +224,7 @@ async function startServer() {
   app.get("/api/status", (req, res) => {
     res.json({ 
       status: "running", 
-      version: "1.6",
+      version: "1.8",
       bot: botStatus, 
       botWaitRemaining,
       pendingTasks: tasks.filter(t => t.status === 'pending').length,
