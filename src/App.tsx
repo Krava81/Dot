@@ -316,12 +316,42 @@ export default function App() {
     localStorage.setItem('tg_bot_active_key_index', activeKeyIndex.toString());
   }, [activeKeyIndex]);
 
+  const [isTestingKey, setIsTestingKey] = useState<number | null>(null);
+  const [keyTestResult, setKeyTestResult] = useState<{ index: number, success: boolean, message: string } | null>(null);
+
+  const testApiKey = async (index: number) => {
+    const key = apiKeys[index].key;
+    if (!key || key.trim().length < 10) {
+      setKeyTestResult({ index, success: false, message: 'Ключ слишком короткий или пустой' });
+      return;
+    }
+
+    setIsTestingKey(index);
+    setKeyTestResult(null);
+    try {
+      // We'll use a simple prompt to test the key
+      await processNewsText("Test", "This is a test message to verify the API key.", key);
+      setKeyTestResult({ index, success: true, message: 'Ключ работает!' });
+    } catch (e: any) {
+      let msg = e.message || String(e);
+      if (msg.includes("API key not valid")) {
+        msg = "Неверный API ключ. Проверьте правильность копирования.";
+      } else if (msg.includes("quota")) {
+        msg = "Превышена квота (Quota exceeded).";
+      }
+      setKeyTestResult({ index, success: false, message: msg });
+    } finally {
+      setIsTestingKey(null);
+    }
+  };
+
   const handleSaveKey = () => {
     if (editingKeyIndex !== null) {
       const newKeys = [...apiKeys];
       newKeys[editingKeyIndex] = { label: tempKeyLabel, key: tempKeyValue };
       setApiKeys(newKeys);
       setEditingKeyIndex(null);
+      setKeyTestResult(null);
     }
   };
 
@@ -907,6 +937,30 @@ export default function App() {
                       {item.key ? `${item.key.substring(0, 8)}...${item.key.substring(item.key.length - 4)}` : 'Ключ не задан'}
                     </p>
                   </button>
+
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-neutral-800/50">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        testApiKey(index);
+                      }}
+                      disabled={isTestingKey === index || !item.key}
+                      className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${
+                        keyTestResult?.index === index 
+                          ? (keyTestResult.success ? 'text-emerald-500' : 'text-red-500')
+                          : 'text-neutral-500 hover:text-amber-500'
+                      }`}
+                    >
+                      {isTestingKey === index ? (
+                        <RefreshCw size={10} className="animate-spin" />
+                      ) : keyTestResult?.index === index ? (
+                        keyTestResult.success ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />
+                      ) : (
+                        <Activity size={10} />
+                      )}
+                      {isTestingKey === index ? 'Проверка...' : keyTestResult?.index === index ? keyTestResult.message : 'Проверить ключ'}
+                    </button>
+                  </div>
 
                   {activeKeyIndex === index && (
                     <div className="absolute -top-2 -right-2 bg-amber-500 text-black p-1 rounded-full shadow-lg">
