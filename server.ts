@@ -59,6 +59,26 @@ app.get("/api/ping", (req, res) => {
   res.json({ status: "pong", time: new Date().toISOString(), version: "4.0" });
 });
 
+app.get("/api/auth/token", (req, res) => {
+  // Extract session cookie from request
+  const cookies = req.headers.cookie || '';
+  const sessionCookie = cookies.split('; ').find(row => row.startsWith('SESS')) || 'No session cookie found';
+  const token = sessionCookie.split('=')[1] || sessionCookie;
+  res.json({ token });
+});
+
+app.get("/api/auth/login", (req, res) => {
+  // Set a simple session cookie for 30 days
+  const sessionToken = uuidv4();
+  res.setHeader('Set-Cookie', `SESS=${sessionToken}; Path=/; Max-Age=2592000; HttpOnly; SameSite=None; Secure`);
+  res.json({ status: "ok", token: sessionToken });
+});
+
+app.get("/api/logs", (req, res) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.json({ logs });
+});
+
 // 0.1. Путь для авто-обновления v2.5
 app.get("/api/dev/app-tsx", (req, res) => {
   const filePath = path.join(process.cwd(), 'src', 'App.tsx');
@@ -99,6 +119,7 @@ app.use(express.json({ limit: '50mb' }));
 const PORT = 3000;
 
 // In-memory state
+const logs: string[] = [];
 const tasks: any[] = []; // Pending AI tasks
 const DEFAULT_CHAT_ID = "-1002603084916";
 let lastChatId: string | number | null = "-1002603084916";
@@ -123,6 +144,9 @@ try {
 }
 
 function addLog(msg: string) {
+  const timestamp = new Date().toLocaleTimeString();
+  logs.push(`[${timestamp}] ${msg}`);
+  if (logs.length > 50) logs.shift();
   console.log(msg);
 }
 

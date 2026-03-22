@@ -27,8 +27,14 @@ const getInitialBaseUrl = () => {
 
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(process.env.VITE_APP_URL || '');
-  const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null } | null>(null);
+  const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null; botWaitRemaining?: number } | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const addClientLog = (msg: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs(prev => [`[${timestamp}] [Client] ${msg}`, ...prev].slice(0, 50));
+  };
   const [isWorking, setIsWorking] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [sessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
@@ -146,6 +152,7 @@ export default function App() {
   const switchToUrl = (url: string) => {
     setBaseUrl(url);
     localStorage.setItem('tg_bot_server_url', url);
+    addClientLog(`Переключено на URL: ${url}`);
     fetchData();
   };
 
@@ -369,12 +376,16 @@ export default function App() {
       });
       if (res.ok) {
         setSubmitMsg({ type: 'success', text: 'Токен сохранен на сервере и бот перезапущен!' });
+        addClientLog("Токен успешно сохранен на сервере.");
         localStorage.setItem('tg_bot_token_backup', botToken);
       } else {
-        throw new Error(await res.text());
+        const errText = await res.text();
+        addClientLog(`Ошибка сохранения токена: ${errText}`);
+        throw new Error(errText);
       }
     } catch (err: any) {
       setSubmitMsg({ type: 'error', text: `Ошибка сохранения: ${err.message}` });
+      addClientLog(`Ошибка: ${err.message}`);
     } finally {
       setIsSavingToken(false);
       fetchData();
@@ -384,6 +395,7 @@ export default function App() {
   const handleSaveTokenToLocal = () => {
     if (!botToken) return;
     localStorage.setItem('tg_bot_token', botToken);
+    addClientLog("Токен сохранен локально.");
     setSubmitMsg({ type: 'success', text: 'Токен сохранен локально в приложении.' });
   };
 
@@ -429,6 +441,15 @@ export default function App() {
       const statusData = await statusRes.json();
       setStatus(statusData);
       setLastError(null);
+
+      // Fetch logs
+      try {
+        const logsRes = await universalFetch(`${currentBaseUrl}/api/logs?t=${Date.now()}`);
+        if (logsRes.ok) {
+          const logsData = await logsRes.json();
+          setLogs(logsData.logs || []);
+        }
+      } catch (e) {}
     } catch (err: any) {
       if (err.message === "AI_STUDIO_COOKIE_CHECK") {
         setLastError("Server returned a web page instead of data");
@@ -639,7 +660,25 @@ export default function App() {
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex bg-neutral-900 border border-neutral-800 rounded-full p-1">
+              <button 
+                onClick={() => switchToUrl(DEV_URL)}
+                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${
+                  baseUrl === DEV_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                DEV
+              </button>
+              <button 
+                onClick={() => switchToUrl(PRE_URL)}
+                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${
+                  baseUrl === PRE_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                PRE
+              </button>
+            </div>
             {needsKey && (
               <button
                 onClick={handleOpenKeyDialog}
@@ -940,6 +979,42 @@ export default function App() {
               )}
             </AnimatePresence>
           </form>
+        </section>
+
+        {/* Logs Terminal */}
+        <section className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-neutral-800 rounded-lg">
+                <Activity className="text-neutral-400" size={20} />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold">Логи сервера</h2>
+                <p className="text-neutral-500 text-sm">Живой поток событий бота</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setLogs([])}
+              className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+            >
+              Очистить экран
+            </button>
+          </div>
+
+          <div className="bg-black/50 rounded-xl p-4 h-64 overflow-y-auto font-mono text-[10px] space-y-1 border border-neutral-800 scrollbar-thin scrollbar-thumb-neutral-800">
+            {logs.length === 0 ? (
+              <p className="text-neutral-700 italic">Ожидание логов...</p>
+            ) : (
+              logs.map((log, i) => (
+                <div key={i} className="flex gap-2">
+                  <span className="text-neutral-600 shrink-0">[{i+1}]</span>
+                  <span className={log.includes('Ошибка') || log.includes('Error') ? 'text-red-400' : log.includes('Warning') ? 'text-amber-400' : 'text-neutral-400'}>
+                    {log}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </section>
 
         {/* Edit Key Modal */}
