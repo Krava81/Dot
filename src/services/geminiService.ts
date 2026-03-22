@@ -2,10 +2,27 @@ import { GoogleGenAI } from "@google/genai";
 
 export async function processNewsText(title: string, text: string, manualApiKey?: string) {
   // Priority: Manual Key > Env API_KEY > Env GEMINI_API_KEY
-  const apiKey = manualApiKey || process.env.API_KEY || process.env.GEMINI_API_KEY || "";
+  // v4.2: Robust key resolution with logging
+  const resolveKey = () => {
+    if (manualApiKey && manualApiKey.trim().length > 10) return manualApiKey.trim();
+    
+    const envKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (envKey && envKey !== 'undefined' && envKey !== 'null' && envKey.trim().length > 10) {
+      return envKey.trim();
+    }
+    
+    return "";
+  };
+
+  const apiKey = resolveKey();
   
   if (!apiKey) {
-    throw new Error("API key is missing. Please select an API key in the settings or via the manager.");
+    const isNative = window.location.href.includes('localhost') || !window.location.href.includes('run.app');
+    const platformMsg = isNative 
+      ? "На мобильном устройстве необходимо вручную ввести API ключ в разделе 'Управление API Ключами'." 
+      : "API ключ не найден. Выберите ключ в настройках или через менеджер AI Studio.";
+    
+    throw new Error(platformMsg);
   }
 
   // Create instance right before use to get the latest key

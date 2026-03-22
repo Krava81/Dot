@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Terminal, RefreshCw, CheckCircle2, AlertCircle, ExternalLink, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
@@ -26,12 +26,18 @@ const getInitialBaseUrl = () => {
 };
 
 export default function App() {
-  const [baseUrl] = useState(process.env.VITE_APP_URL || '');
+  const [baseUrl, setBaseUrl] = useState(process.env.VITE_APP_URL || '');
   const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [sessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
+  const [showSettings, setShowSettings] = useState(false);
+  const [showCookieFixer, setShowCookieFixer] = useState(false);
+  const [showFullResponse, setShowFullResponse] = useState(false);
+  const [fullResponse, setFullResponse] = useState<string | null>(null);
+  const [isTestingNet, setIsTestingNet] = useState(false);
+  const [netTestResult, setNetTestResult] = useState<string | null>(null);
 
   // Универсальный загрузчик v4.1
   const universalFetch = async (url: string, options: any = {}) => {
@@ -116,7 +122,6 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'app_return') {
-      addClientLog("Возврат из глубокой авторизации. Проверка связи...");
       setIsDeepLogin(false);
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -141,12 +146,10 @@ export default function App() {
   const switchToUrl = (url: string) => {
     setBaseUrl(url);
     localStorage.setItem('tg_bot_server_url', url);
-    addClientLog(`Переключено на URL: ${url}`);
     fetchData();
   };
 
   const openInBrowser = async () => {
-    addClientLog("Открытие в системном браузере...");
     try {
       if (Capacitor.isNativePlatform()) {
         await Browser.open({ url: baseUrl });
@@ -154,19 +157,16 @@ export default function App() {
         window.open(baseUrl, '_blank');
       }
     } catch (e: any) {
-      addClientLog(`Ошибка открытия браузера: ${e.message}`);
       window.open(baseUrl, '_blank');
     }
   };
 
   const startDeepLogin = async () => {
-    addClientLog("Запуск браузерного входа через плагин...");
     try {
       await Browser.open({ url: baseUrl });
-      addClientLog("Браузерное окно закрыто. Повторная проверка...");
       fetchData();
     } catch (e: any) {
-      addClientLog(`Ошибка браузера: ${e.message}`);
+      console.error(e);
     }
   };
 
@@ -176,7 +176,6 @@ export default function App() {
   const startWebViewSync = async () => {
     setIsWarmingUp(true);
     setWarmUpStatus("Прогрев сервера (будим Google Cloud)...");
-    addClientLog("Запуск синхронизации WebView с прогревом...");
     
     let attempts = 0;
     const maxAttempts = 15;
@@ -254,6 +253,8 @@ export default function App() {
       localStorage.setItem('tg_bot_server_url', url);
 
       if (tempBotToken) {
+        localStorage.setItem('tg_bot_token', tempBotToken);
+        setBotToken(tempBotToken);
         const cleanBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
         const res = await universalFetch(`${cleanBaseUrl}/api/config/token`, {
           method: 'POST',
@@ -328,22 +329,31 @@ export default function App() {
       if (window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
         // If no key is selected via dialog, show the button
-        // Even if GEMINI_API_KEY exists, it might be the free one that doesn't work for Gemini 3
         setNeedsKey(!hasKey);
+      } else {
+        // If not in AI Studio (e.g. mobile), check if we have any manual keys
+        const hasManualKey = apiKeys.some(k => k.key && k.key.trim().length > 10);
+        setNeedsKey(!hasManualKey);
       }
     };
     checkKey();
-  }, []);
+  }, [apiKeys]);
 
   const handleOpenKeyDialog = async () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
       setNeedsKey(false);
+    } else {
+      // On mobile, scroll to keys section
+      const keysSection = document.getElementById('api-keys-section');
+      if (keysSection) {
+        keysSection.scrollIntoView({ behavior: 'smooth' });
+      }
     }
   };
 
   // Bot Token State
-  const [botToken, setBotToken] = useState('');
+  const [botToken, setBotToken] = useState(() => localStorage.getItem('tg_bot_token') || '');
   const [isSavingToken, setIsSavingToken] = useState(false);
 
   const handleSaveTokenToServer = async () => {
@@ -373,14 +383,9 @@ export default function App() {
 
   const handleSaveTokenToLocal = () => {
     if (!botToken) return;
-    localStorage.setItem('tg_bot_token_backup', botToken);
+    localStorage.setItem('tg_bot_token', botToken);
     setSubmitMsg({ type: 'success', text: 'Токен сохранен локально в приложении.' });
   };
-
-  useEffect(() => {
-    const saved = localStorage.getItem('tg_bot_token_backup');
-    if (saved) setBotToken(saved);
-  }, []);
 
   const fetchData = async () => {
     if (!baseUrl || baseUrl === '/') {
@@ -394,55 +399,42 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-      addClientLog(`Запрос статуса: ${currentBaseUrl}/api/status`);
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const [logsRes, statusRes] = await Promise.all([
-        universalFetch(`${currentBaseUrl}/api/logs?t=${Date.now()}`, { signal: controller.signal }),
-        universalFetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal })
-      ]);
+      const statusRes = await universalFetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal });
       
       clearTimeout(timeoutId);
 
-      if (!logsRes.ok || !statusRes.ok) {
-        const err = `Ошибка сервера: ${logsRes.status} / ${statusRes.status}`;
-        addClientLog(err);
+      if (!statusRes.ok) {
+        const err = `Ошибка сервера: ${statusRes.status}`;
         setLastError(err);
         setStatus(null);
         return;
       }
 
-      const logsContentType = logsRes.headers.get("content-type");
       const statusContentType = statusRes.headers.get("content-type");
 
-      if ((logsContentType && logsContentType.includes("text/html")) || 
-          (statusContentType && statusContentType.includes("text/html"))) {
+      if (statusContentType && statusContentType.includes("text/html")) {
         const fullText = await statusRes.text();
         setFullResponse(fullText);
         const htmlSnippet = fullText.slice(0, 150).replace(/</g, '&lt;');
         const err = `Сервер вернул HTML вместо данных. Начало текста: "${htmlSnippet}..."`;
-        addClientLog(err);
         setLastError("Server returned a web page instead of data");
         setStatus(null);
         return;
       }
 
-      const logsData = await logsRes.json();
       const statusData = await statusRes.json();
-      setLogs(logsData.logs || []);
       setStatus(statusData);
       setLastError(null);
-      addClientLog("Данные успешно обновлены");
     } catch (err: any) {
       if (err.message === "AI_STUDIO_COOKIE_CHECK") {
         setLastError("Server returned a web page instead of data");
-        addClientLog("⚠️ AI Studio заблокировал запрос (Cookie Check). Требуется авторизация.");
         setStatus(null);
       } else {
         const errMsg = err.message || String(err);
-        addClientLog(`Ошибка: ${errMsg}`);
         setLastError(errMsg);
         setStatus(null);
       }
@@ -508,6 +500,25 @@ export default function App() {
       fetchData();
     }
   };
+
+  useEffect(() => {
+    const syncToken = async () => {
+      if (status && status.bot === 'offline' && botToken) {
+        console.log("Syncing bot token to server...");
+        try {
+          const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+          await universalFetch(`${cleanBaseUrl}/api/config/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: botToken })
+          });
+        } catch (e) {
+          console.error("Failed to sync bot token", e);
+        }
+      }
+    };
+    if (status) syncToken();
+  }, [status, botToken, baseUrl]);
 
   // AI Worker Logic
   useEffect(() => {
@@ -803,7 +814,7 @@ export default function App() {
         </div>
 
         {/* API Key Management */}
-        <section className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 space-y-6">
+        <section id="api-keys-section" className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 space-y-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-amber-500/10 rounded-lg">
@@ -814,6 +825,12 @@ export default function App() {
                 <p className="text-neutral-500 text-sm">Выберите активный ключ или отредактируйте сохраненные</p>
               </div>
             </div>
+            {(!apiKeys[activeKeyIndex]?.key) && (
+              <div className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2 text-amber-500 text-xs">
+                <AlertCircle size={14} />
+                <span>В активном слоте нет ключа. Обработка новостей будет невозможна.</span>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -925,73 +942,7 @@ export default function App() {
           </form>
         </section>
 
-        {/* Logs Terminal */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col h-[500px]">
-          <div className="bg-neutral-800/50 px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
-              <Terminal size={16} className="text-blue-400" />
-              Живые логи бота
-            </div>
-            <div className="flex gap-1.5">
-              <div className="w-3 h-3 rounded-full bg-red-500/20" />
-              <div className="w-3 h-3 rounded-full bg-amber-500/20" />
-              <div className="w-3 h-3 rounded-full bg-emerald-500/20" />
-            </div>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-sm">
-            <AnimatePresence initial={false}>
-              {clientLogs.map((log, i) => (
-                <motion.div
-                  key={`client-${i}`}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="text-blue-400 border-l-2 border-blue-500/50 bg-blue-500/5 pl-3 py-0.5 transition-all"
-                >
-                  <span className="text-blue-600 mr-2">[CLIENT]</span>
-                  {log}
-                </motion.div>
-              ))}
-              {logs.length === 0 && clientLogs.length === 0 ? (
-                <p className="text-neutral-600 italic">Логов пока нет. Ожидание сообщений...</p>
-              ) : (
-                logs.map((log, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="text-neutral-400 border-l-2 border-transparent hover:border-blue-500/50 hover:bg-neutral-800/30 pl-3 py-0.5 transition-all"
-                  >
-                    <span className="text-neutral-600 mr-2">[{i + 1}]</span>
-                    {log}
-                  </motion.div>
-                ))
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-
-        {/* Setup Instructions */}
-        <div className="bg-blue-500/5 border border-blue-500/10 p-6 rounded-2xl space-y-4">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <ExternalLink size={20} className="text-blue-400" />
-            Инструкции по настройке
-          </h3>
-          <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-amber-400 text-sm flex items-start gap-3">
-            <AlertCircle className="shrink-0" size={18} />
-            <p>
-              <strong>Важно:</strong> Обработка Gemini AI теперь запускается в вашем браузере для соблюдения правил безопасности. 
-              Держите эту вкладку открытой, чтобы бот мог обрабатывать новости автоматически.
-            </p>
-          </div>
-          <ul className="space-y-2 text-neutral-400 text-sm list-disc list-inside">
-            <li>Создайте бота через <a href="https://t.me/BotFather" className="text-blue-400 hover:underline">@BotFather</a> и получите токен.</li>
-            <li>Добавьте бота в ваш исходный канал и целевой канал (как администратора).</li>
-            <li>Получите ID каналов (используйте <a href="https://t.me/userinfobot" className="text-blue-400 hover:underline">@userinfobot</a> или аналоги).</li>
-            <li>Настройте переменные окружения в меню Secrets.</li>
-            <li>Держите эту вкладку открытой для фоновой обработки.</li>
-          </ul>
-        </div>
+        {/* Edit Key Modal */}
       </div>
 
       {/* Edit Key Modal */}
