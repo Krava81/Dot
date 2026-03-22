@@ -26,36 +26,14 @@ const getInitialBaseUrl = () => {
 };
 
 export default function App() {
-  const [baseUrl, setBaseUrl] = useState(getInitialBaseUrl);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [clientLogs, setClientLogs] = useState<string[]>([]);
+  const [baseUrl] = useState(process.env.VITE_APP_URL || '');
   const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null } | null>(null);
-  
-  const addClientLog = (msg: string) => {
-    const time = new Date().toLocaleTimeString();
-    setClientLogs(prev => [`[Diag ${time}] ${msg}`, ...prev].slice(0, 20));
-    console.log(`[Diagnostic v2.2] ${msg}`);
-  };
   const [loading, setLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [netTestResult, setNetTestResult] = useState<string | null>(null);
-  const [isTestingNet, setIsTestingNet] = useState(false);
-  const [fullResponse, setFullResponse] = useState<string | null>(null);
-  const [showFullResponse, setShowFullResponse] = useState(false);
-  const [showCookieFixer, setShowCookieFixer] = useState(false);
-  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
-  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [sessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
 
-  const saveToken = (token: string) => {
-    setSessionToken(token);
-    localStorage.setItem('app_session_token', token);
-    addClientLog("Токен сохранен. Перезапуск...");
-    fetchData();
-  };
-
-  // Универсальный загрузчик v4.0 (Максимальная отладка)
+  // Универсальный загрузчик v4.1
   const universalFetch = async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
@@ -66,7 +44,7 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
-      'X-App-Version': '4.0',
+      'X-App-Version': '4.1',
       ...(options.headers || {})
     };
 
@@ -75,13 +53,11 @@ export default function App() {
       (headers as any)['X-Session-Token'] = sessionToken;
     }
     
-    addClientLog(`Fetch [${options.method || 'GET'}]: ${url.substring(0, 50)}...`);
-
     if ((isNative || isNativePlatform) && !isWebMirror) {
       try {
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
         const res = await http.request({
-          url: url.includes('?') ? `${url}&v=4.0` : `${url}?v=4.0`,
+          url: url.includes('?') ? `${url}&v=4.1` : `${url}?v=4.1`,
           method: options.method || 'GET',
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
@@ -89,6 +65,11 @@ export default function App() {
           readTimeout: 15000
         });
         
+        // v4.1: Detect AI Studio Proxy "Cookie Check"
+        if (typeof res.data === 'string' && res.data.includes('<!doctype html>') && res.data.includes('Cookie check')) {
+          throw new Error("AI_STUDIO_COOKIE_CHECK");
+        }
+
         return {
           ok: res.status >= 200 && res.status < 300,
           status: res.status,
@@ -104,14 +85,25 @@ export default function App() {
           }
         };
       } catch (err: any) {
-        addClientLog(`CapacitorHttp Error: ${err.message}`);
+        if (err.message === "AI_STUDIO_COOKIE_CHECK") throw err;
         throw err;
       }
     } else {
       try {
-        return await fetch(url, { ...options, headers });
+        const res = await fetch(url, { ...options, headers });
+        
+        // v4.1: Detect AI Studio Proxy "Cookie Check" in Web mode
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('text/html')) {
+          const text = await res.clone().text();
+          if (text.includes('Cookie check')) {
+            throw new Error("AI_STUDIO_COOKIE_CHECK");
+          }
+        }
+        
+        return res;
       } catch (err: any) {
-        addClientLog(`Fetch Error: ${err.message}`);
+        if (err.message === "AI_STUDIO_COOKIE_CHECK") throw err;
         throw err;
       }
     }
@@ -350,6 +342,46 @@ export default function App() {
     }
   };
 
+  // Bot Token State
+  const [botToken, setBotToken] = useState('');
+  const [isSavingToken, setIsSavingToken] = useState(false);
+
+  const handleSaveTokenToServer = async () => {
+    if (!botToken) return;
+    setIsSavingToken(true);
+    setSubmitMsg(null);
+    try {
+      const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      const res = await universalFetch(`${currentBaseUrl}/api/config/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: botToken })
+      });
+      if (res.ok) {
+        setSubmitMsg({ type: 'success', text: 'Токен сохранен на сервере и бот перезапущен!' });
+        localStorage.setItem('tg_bot_token_backup', botToken);
+      } else {
+        throw new Error(await res.text());
+      }
+    } catch (err: any) {
+      setSubmitMsg({ type: 'error', text: `Ошибка сохранения: ${err.message}` });
+    } finally {
+      setIsSavingToken(false);
+      fetchData();
+    }
+  };
+
+  const handleSaveTokenToLocal = () => {
+    if (!botToken) return;
+    localStorage.setItem('tg_bot_token_backup', botToken);
+    setSubmitMsg({ type: 'success', text: 'Токен сохранен локально в приложении.' });
+  };
+
+  useEffect(() => {
+    const saved = localStorage.getItem('tg_bot_token_backup');
+    if (saved) setBotToken(saved);
+  }, []);
+
   const fetchData = async () => {
     if (!baseUrl || baseUrl === '/') {
       setLoading(false);
@@ -392,7 +424,7 @@ export default function App() {
         const htmlSnippet = fullText.slice(0, 150).replace(/</g, '&lt;');
         const err = `Сервер вернул HTML вместо данных. Начало текста: "${htmlSnippet}..."`;
         addClientLog(err);
-        setLastError("Ошибка: Сервер вернул веб-страницу вместо данных");
+        setLastError("Server returned a web page instead of data");
         setStatus(null);
         return;
       }
@@ -404,10 +436,16 @@ export default function App() {
       setLastError(null);
       addClientLog("Данные успешно обновлены");
     } catch (err: any) {
-      const errMsg = err.message || String(err);
-      addClientLog(`Ошибка: ${errMsg}`);
-      setLastError(errMsg);
-      setStatus(null);
+      if (err.message === "AI_STUDIO_COOKIE_CHECK") {
+        setLastError("Server returned a web page instead of data");
+        addClientLog("⚠️ AI Studio заблокировал запрос (Cookie Check). Требуется авторизация.");
+        setStatus(null);
+      } else {
+        const errMsg = err.message || String(err);
+        addClientLog(`Ошибка: ${errMsg}`);
+        setLastError(errMsg);
+        setStatus(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -585,19 +623,12 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v4.0</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v4.1</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
           
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowSettings(true)}
-              className="p-2 bg-neutral-800 hover:bg-neutral-700 rounded-full text-neutral-400 transition-colors"
-              title="Настройки сервера"
-            >
-              <Settings size={20} />
-            </button>
             {needsKey && (
               <button
                 onClick={handleOpenKeyDialog}
@@ -613,9 +644,22 @@ export default function App() {
               {status ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
               Сервер: {status ? 'Онлайн' : 'Оффлайн'}
               {!status && lastError && (
-                <span className="text-[10px] opacity-70 ml-1 truncate max-w-[100px]">({lastError})</span>
+                <span className="text-[10px] opacity-70 ml-1 truncate max-w-[150px]">
+                  ({lastError === "Server returned a web page instead of data" 
+                    ? "Ошибка: Сервер вернул веб-страницу вместо данных" 
+                    : lastError})
+                </span>
               )}
             </div>
+            
+            {!status && lastError === "Server returned a web page instead of data" && (
+              <button
+                onClick={() => window.open(baseUrl, '_blank')}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-full flex items-center gap-2 text-sm transition-all shadow-lg shadow-blue-500/20"
+              >
+                🛠 Исправить авторизацию (Cookie Fix)
+              </button>
+            )}
             <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
               status?.bot === 'active' 
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
@@ -695,134 +739,52 @@ export default function App() {
           </div>
         )}
 
-        {/* Token Input Panel */}
-        {showTokenInput && (
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 space-y-4">
-            <h3 className="text-amber-400 font-bold flex items-center gap-2">
-              <Key size={18} />
-              Авторизация через токен
-            </h3>
+        {/* Bot Management Section */}
+        <section className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-500/10 rounded-lg">
+              <MessageSquare className="text-emerald-500" size={20} />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Настройка Telegram Бота</h2>
+              <p className="text-neutral-500 text-sm">Введите токен от @BotFather для запуска бота</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
             <div className="space-y-2">
-              <p className="text-[10px] text-amber-500/70">Текущий токен: {sessionToken ? `${sessionToken.substring(0, 10)}...` : 'не установлен'}</p>
+              <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
+                <Key size={12} /> Токен бота
+              </label>
               <input 
-                type="text"
-                placeholder="Вставьте токен здесь..."
-                className="w-full bg-black/40 border border-amber-500/30 rounded-xl p-3 text-sm font-mono text-amber-200 outline-none focus:border-amber-500"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveToken(e.currentTarget.value);
-                }}
+                type="password"
+                value={botToken}
+                onChange={(e) => setBotToken(e.target.value)}
+                placeholder="123456789:ABCDEF..."
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all font-mono"
               />
             </div>
-            <div className="flex gap-2">
-              <button 
-                onClick={() => setShowTokenInput(false)}
-                className="px-4 py-2 bg-neutral-800 text-neutral-400 rounded-lg text-xs"
+            
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={handleSaveTokenToServer}
+                disabled={isSavingToken || !botToken}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-500/20"
               >
-                Отмена
+                {isSavingToken ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                Сохранить на сервере
               </button>
-              <button 
-                onClick={() => {
-                  saveToken('');
-                  setShowTokenInput(false);
-                }}
-                className="px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-xs"
+              <button
+                onClick={handleSaveTokenToLocal}
+                disabled={!botToken}
+                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-all border border-neutral-700"
               >
-                Сбросить токен
+                <Save size={18} />
+                Сохранить локально
               </button>
-              <p className="text-[10px] text-amber-500/50 self-center italic">
-                * Токен можно получить, нажав "Открыть в браузере" и выбрав "Скопировать токен"
-              </p>
             </div>
           </div>
-        )}
-
-        {/* Diagnostic Panel */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
-          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Activity className="text-blue-500 w-5 h-5" />
-            Диагностика подключения
-            <span className="text-[10px] font-mono opacity-50 ml-auto">v2.6</span>
-          </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-black/40 rounded-xl border border-white/5">
-                <p className="text-sm text-neutral-400 mb-2">Статус интернета в эмуляторе:</p>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={testNetwork}
-                    disabled={isTestingNet}
-                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs rounded-lg transition-colors"
-                  >
-                    {isTestingNet ? "Проверка..." : "Проверить интернет"}
-                  </button>
-                  <span className={`text-sm font-mono ${netTestResult?.includes('✅') ? 'text-green-400' : 'text-red-400'}`}>
-                    {netTestResult || "Не проверялось"}
-                  </span>
-                </div>
-              </div>
-              <div className="p-4 bg-black/40 rounded-xl border border-white/5">
-                <p className="text-sm text-neutral-400 mb-2">Ответ сервера (диагностика):</p>
-                <div className="flex flex-wrap gap-2">
-                  <button 
-                    onClick={() => setShowFullResponse(true)}
-                    className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-xs rounded-lg transition-colors"
-                  >
-                    Показать ответ
-                  </button>
-                  <button 
-                    onClick={() => setShowCookieFixer(true)}
-                    className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold"
-                  >
-                    🛠 Исправить авторизацию (Cookie Fix)
-                  </button>
-                  <button 
-                    onClick={startWebViewSync}
-                    disabled={isWarmingUp}
-                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-emerald-500/20"
-                  >
-                    <RefreshCw size={12} className={isWarmingUp ? 'animate-spin' : ''} />
-                    {isWarmingUp ? warmUpStatus : "🔑 Прямой вход (WebView Sync)"}
-                  </button>
-                  <button 
-                    onClick={startDeepLogin}
-                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-indigo-500/20"
-                  >
-                    <Key size={12} />
-                    🔑 Внутренний вход (Browser Plugin)
-                  </button>
-                  <button 
-                    onClick={() => setShowTokenInput(true)}
-                    className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-xs rounded-lg transition-colors font-bold flex items-center gap-1 shadow-lg shadow-amber-500/20"
-                  >
-                    <Key size={12} />
-                    🔑 Ввести токен (Manual Auth)
-                  </button>
-                  <button 
-                    onClick={openInBrowser}
-                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-xs rounded-lg transition-colors flex items-center gap-1"
-                  >
-                    <ExternalLink size={10} />
-                    Открыть в браузере
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* URL Switcher */}
-          <div className="flex flex-wrap gap-2">
-            <button 
-              onClick={() => switchToUrl(DEV_URL)}
-              className={`px-4 py-2 rounded-xl text-xs font-medium transition-all ${baseUrl === DEV_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'}`}
-            >
-              Использовать DEV URL
-            </button>
-            <button 
-              onClick={() => switchToUrl(PRE_URL)}
-              className={`px-4 py-2 rounded-xl text-xs font-medium transition-all ${baseUrl === PRE_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:bg-neutral-800'}`}
-            >
-              Использовать PRE URL (Shared)
-            </button>
-          </div>
+        </section>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

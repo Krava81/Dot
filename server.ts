@@ -8,9 +8,32 @@ import * as cheerio from "cheerio";
 import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 
+import fs from "fs";
+
 dotenv.config();
 
 const app = express();
+const TOKEN_FILE = path.join(process.cwd(), 'bot_token.txt');
+
+// Helper to get bot token persistently
+function getPersistentToken() {
+  try {
+    if (fs.existsSync(TOKEN_FILE)) {
+      return fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+    }
+  } catch (e) {
+    console.error("Error reading token file:", e);
+  }
+  return process.env.TELEGRAM_BOT_TOKEN || '';
+}
+
+function savePersistentToken(token: string) {
+  try {
+    fs.writeFileSync(TOKEN_FILE, token, 'utf8');
+  } catch (e) {
+    console.error("Error saving token file:", e);
+  }
+}
 
 // ==========================================
 // 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
@@ -22,7 +45,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "4.0",
+    version: "4.1",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -77,6 +100,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma, X-Session-Token, X-App-Version');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Session-Token, X-App-Version');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -101,14 +125,14 @@ const DEFAULT_CHAT_ID = "-1002603084916";
 let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
 let botWaitRemaining = 0;
-let currentBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
+let currentBotToken = getPersistentToken();
 // Инициализация бота с защитой от вылета v1.5
 let bot: Telegraf;
 try {
   if (!currentBotToken) {
     console.error("[v1.5] TELEGRAM_BOT_TOKEN is missing!");
   }
-  bot = new Telegraf(currentBotToken);
+  bot = new Telegraf(currentBotToken || 'dummy_token');
   
   bot.catch((err: any) => {
     console.error('[v1.5] Telegraf error:', err);
@@ -404,8 +428,9 @@ async function startServer() {
       return res.status(400).send("Token is required");
     }
 
-    addLog("Received new bot token. Restarting bot...");
+    addLog("Received new bot token. Persisting and restarting bot...");
     currentBotToken = token;
+    savePersistentToken(token);
     
     // Stop current bot
     try {
@@ -419,7 +444,7 @@ async function startServer() {
     // Start bot
     startBot();
     
-    res.json({ status: "ok", message: "Bot token updated. Restarting..." });
+    res.json({ status: "ok", message: "Bot token updated and persisted. Restarting..." });
   });
 
   // Vite middleware for development
