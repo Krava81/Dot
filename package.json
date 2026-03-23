@@ -11,7 +11,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "update-android": "npm run build && npx cap sync android",
-    "sync-from-cloud": "git pull origin main && npm install --legacy-peer-deps && npm run update-android",
+    "sync-from-cloud": "git stash && git pull origin main && npm install --legacy-peer-deps && npm run update-android",
     "postinstall": "node -e \"const fs = require('fs'); const path = './node_modules/@capacitor/browser/android/build.gradle'; if (fs.existsSync(path)) { const content = fs.readFileSync(path, 'utf8'); fs.writeFileSync(path, content.replace('proguard-android.txt', 'proguard-android-optimize.txt')); }\""
   },
   "dependencies": {
