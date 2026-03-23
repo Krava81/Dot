@@ -79,6 +79,17 @@ app.get("/api/logs", (req, res) => {
   res.json({ logs });
 });
 
+// API: Статус сервера и ключи v4.3
+app.get("/api/config/status", (req, res) => {
+  const envKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  res.json({
+    hasServerKey: !!(envKey && envKey.trim().length > 10),
+    serverKeyMasked: envKey ? `${envKey.substring(0, 4)}...${envKey.substring(envKey.length - 4)}` : null,
+    botTokenSet: !!currentBotToken,
+    chatId: lastChatId || DEFAULT_CHAT_ID
+  });
+});
+
 // 0.1. Путь для авто-обновления v2.5
 app.get("/api/dev/app-tsx", (req, res) => {
   const filePath = path.join(process.cwd(), 'src', 'App.tsx');

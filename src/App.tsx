@@ -28,6 +28,7 @@ const getInitialBaseUrl = () => {
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(process.env.VITE_APP_URL || '');
   const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null; botWaitRemaining?: number } | null>(null);
+  const [serverStatus, setServerStatus] = useState<{ hasServerKey: boolean, serverKeyMasked: string | null } | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -302,7 +303,11 @@ export default function App() {
   });
   const [activeKeyIndex, setActiveKeyIndex] = useState(() => {
     const saved = localStorage.getItem('tg_bot_active_key_index');
-    return saved ? parseInt(saved, 10) : 0;
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    return 0;
   });
   const [editingKeyIndex, setEditingKeyIndex] = useState<number | null>(null);
   const [tempKeyLabel, setTempKeyLabel] = useState('');
@@ -334,10 +339,12 @@ export default function App() {
       setKeyTestResult({ index, success: true, message: 'Ключ работает!' });
     } catch (e: any) {
       let msg = e.message || String(e);
-      if (msg.includes("API key not valid")) {
+      if (msg.includes("API key not valid") || msg.includes("invalid_api_key")) {
         msg = "Неверный API ключ. Проверьте правильность копирования.";
-      } else if (msg.includes("quota")) {
-        msg = "Превышена квота (Quota exceeded).";
+      } else if (msg.includes("quota") || msg.includes("rate_limit")) {
+        msg = "Превышена квота или лимит запросов.";
+      } else if (msg.includes("model not found") || msg.includes("model_not_found")) {
+        msg = "Модель не найдена или недоступна для этого ключа.";
       }
       setKeyTestResult({ index, success: false, message: msg });
     } finally {
@@ -447,6 +454,17 @@ export default function App() {
 
       const statusRes = await universalFetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal });
       
+      // Дополнительно запрашиваем статус конфигурации (API ключи на сервере)
+      try {
+        const configRes = await universalFetch(`${currentBaseUrl}/api/config/status?t=${Date.now()}`, { signal: controller.signal });
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setServerStatus({ hasServerKey: configData.hasServerKey, serverKeyMasked: configData.serverKeyMasked });
+        }
+      } catch (e) {
+        console.warn("Failed to fetch server config status", e);
+      }
+
       clearTimeout(timeoutId);
 
       if (!statusRes.ok) {
@@ -608,10 +626,20 @@ export default function App() {
               throw new Error("Текст статьи слишком короткий или пустой.");
             }
 
+            // Fallback: if active key is empty, try to find any non-empty key
+            let keyToUse = apiKeys[activeKeyIndex]?.key;
+            if (!keyToUse || keyToUse.trim().length < 10) {
+              const fallbackKey = apiKeys.find((k: any) => k.key && k.key.trim().length > 10);
+              if (fallbackKey) {
+                console.log("Active key is empty, using fallback key:", fallbackKey.label);
+                keyToUse = fallbackKey.key;
+              }
+            }
+
             const adaptedText = await processNewsText(
               task.data.title, 
               task.data.text, 
-              apiKeys[activeKeyIndex]?.key
+              keyToUse
             );
             
             const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
@@ -894,12 +922,23 @@ export default function App() {
                 <p className="text-neutral-500 text-sm">Выберите активный ключ или отредактируйте сохраненные</p>
               </div>
             </div>
-            {(!apiKeys[activeKeyIndex]?.key) && (
-              <div className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2 text-amber-500 text-xs">
-                <AlertCircle size={14} />
-                <span>В активном слоте нет ключа. Обработка новостей будет невозможна.</span>
+            <div className="flex flex-col items-end gap-2">
+              <div className="px-3 py-1 bg-neutral-800 border border-neutral-700 rounded-lg flex items-center gap-2 text-neutral-400 text-[10px]">
+                <span>Поддерживаются: Gemini, OpenRouter, Grok</span>
               </div>
-            )}
+              {serverStatus?.hasServerKey && (
+                <div className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-center gap-2 text-blue-400 text-[10px] font-bold">
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                  Сервер имеет ключ: {serverStatus.serverKeyMasked}
+                </div>
+              )}
+              {(!apiKeys[activeKeyIndex]?.key) && (
+                <div className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2 text-amber-500 text-xs">
+                  <AlertCircle size={14} />
+                  <span>В активном слоте нет ключа. Обработка новостей будет невозможна.</span>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1047,12 +1086,27 @@ export default function App() {
                 <p className="text-neutral-500 text-sm">Живой поток событий бота</p>
               </div>
             </div>
-            <button 
-              onClick={() => setLogs([])}
-              className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-            >
-              Очистить экран
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  const key = apiKeys[activeKeyIndex]?.key;
+                  if (key) {
+                    alert(`Активный ключ начинается на: ${key.substring(0, 8)}...\nДлина: ${key.length} симв.`);
+                  } else {
+                    alert("Активный ключ не задан!");
+                  }
+                }}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-[10px] font-bold rounded-lg transition-all border border-neutral-700"
+              >
+                Отладка ключа
+              </button>
+              <button 
+                onClick={() => setLogs([])}
+                className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+              >
+                Очистить экран
+              </button>
+            </div>
           </div>
 
           <div className="bg-black/50 rounded-xl p-4 h-64 overflow-y-auto font-mono text-[10px] space-y-1 border border-neutral-800 scrollbar-thin scrollbar-thumb-neutral-800">
