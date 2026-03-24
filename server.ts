@@ -40,18 +40,20 @@ function savePersistentToken(token: string) {
 // ==========================================
 
 app.get("/api/status", (req, res) => {
-  console.log(`[API] Status request from ${req.ip}`);
+  console.log(`[API] Status request from ${req.ip} with headers: ${JSON.stringify(req.headers)}`);
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "4.1",
+    version: "4.3",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
     hasDefaultChat: !!DEFAULT_CHAT_ID,
     lastChatId: lastChatId,
-    env: process.env.NODE_ENV || 'development'
+    env: process.env.NODE_ENV || 'development',
+    time: new Date().toISOString(),
+    auth: req.headers['authorization'] ? 'present' : 'missing'
   });
 });
 
@@ -105,9 +107,10 @@ app.get("/api/dev/package-json", (req, res) => {
   res.sendFile(filePath);
 });
 
-// 1. КРИТИЧЕСКИ ВАЖНО: CORS v2.0 для публичных (Shared) приложений
+// 1. КРИТИЧЕСКИ ВАЖНО: CORS v2.1 для публичных (Shared) приложений и Native Apps
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  // Разрешаем все origin для нативных приложений (capacitor://localhost, http://localhost)
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma, X-Session-Token, X-App-Version');
@@ -115,6 +118,31 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
+
+// 1.1. Middleware для проверки токена сессии v4.3
+app.use((req, res, next) => {
+  // Пропускаем статические файлы и логин
+  if (req.path.startsWith('/assets') || req.path === '/' || req.path === '/api/auth/login' || req.path === '/api/auth/token' || req.path === '/api/ping') {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization;
+  const sessionHeader = req.headers['x-session-token'];
+  const cookies = req.headers.cookie || '';
+  const sessionCookie = cookies.split('; ').find(row => row.startsWith('SESS'))?.split('=')[1];
+
+  const token = (authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null) || sessionHeader || sessionCookie;
+  const source = authHeader ? 'Authorization' : (sessionHeader ? 'X-Session-Token' : (sessionCookie ? 'Cookie' : 'None'));
+
+  if (process.env.NODE_ENV === 'production' && !token && !req.path.startsWith('/api/dev')) {
+    console.warn(`[AUTH] Missing token for ${req.method} ${req.path} from ${req.ip}. Source: ${source}`);
+  } else if (token) {
+    const tokenStr = Array.isArray(token) ? token[0] : token;
+    console.log(`[AUTH] Request with token ${tokenStr.substring(0, 8)}... from ${source} for ${req.path}`);
+  }
+
   next();
 });
 

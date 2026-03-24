@@ -23,8 +23,9 @@ export async function processNewsText(title: string, text: string, manualApiKey?
   const isOpenRouter = cleanKey.startsWith('sk-or-');
   const isGrok = cleanKey.startsWith('xai-');
   const isGroq = cleanKey.startsWith('gsk_');
+  const isOpenAI = cleanKey.startsWith('sk-proj-') || (cleanKey.startsWith('sk-') && !isOpenRouter);
 
-  console.log(`Provider Detection: Gemini=${isGemini}, OpenRouter=${isOpenRouter}, Grok=${isGrok}, Groq=${isGroq}`);
+  console.log(`Provider Detection: Gemini=${isGemini}, OpenRouter=${isOpenRouter}, Grok=${isGrok}, Groq=${isGroq}, OpenAI=${isOpenAI}`);
 
   const prompt = `Translate the following news article to Russian and adapt it for a Telegram channel. 
   Make it engaging, concise, use emojis, and format it using basic HTML tags (<b>, <i>, <a>).
@@ -65,23 +66,33 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     throw lastError || new Error("Не удалось получить ответ от Gemini.");
   } 
   
-  if (isOpenRouter || isGrok || isGroq) {
-    const provider = isOpenRouter ? "OpenRouter" : (isGrok ? "Grok" : "Groq");
+  if (isOpenRouter || isGrok || isGroq || isOpenAI) {
+    const provider = isOpenRouter ? "OpenRouter" : (isGrok ? "Grok" : (isGroq ? "Groq" : "OpenAI"));
     console.log(`Using ${provider} API`);
     
-    const endpoint = isOpenRouter 
-      ? "https://openrouter.ai/api/v1/chat/completions" 
-      : (isGrok ? "https://api.x.ai/v1/chat/completions" : "https://api.groq.com/openai/v1/chat/completions");
+    let endpoint = "";
+    let model = "";
     
-    const model = isOpenRouter 
-      ? "google/gemini-2.0-flash-exp:free" 
-      : (isGrok ? "grok-beta" : "llama-3.3-70b-versatile");
+    if (isOpenRouter) {
+      endpoint = "https://openrouter.ai/api/v1/chat/completions";
+      model = "google/gemini-2.0-flash-exp:free";
+    } else if (isGrok) {
+      endpoint = "https://api.x.ai/v1/chat/completions";
+      model = "grok-beta";
+    } else if (isGroq) {
+      endpoint = "https://api.groq.com/openai/v1/chat/completions";
+      model = "llama-3.3-70b-versatile";
+    } else if (isOpenAI) {
+      endpoint = "https://api.openai.com/v1/chat/completions";
+      model = "gpt-4o-mini";
+    }
 
     try {
       console.log(`Sending request to ${provider} (${endpoint}) with model ${model}`);
       const response = await axios.post(endpoint, {
         model: model,
-        messages: [{ role: "user", content: prompt }]
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7
       }, {
         headers: {
           "Authorization": `Bearer ${cleanKey}`,
@@ -89,16 +100,16 @@ export async function processNewsText(title: string, text: string, manualApiKey?
           "HTTP-Referer": "https://github.com/capacitor-community/http",
           "X-Title": "Telegram News Bot"
         },
-        timeout: 15000
+        timeout: 20000
       });
       
       if (response.data?.choices?.[0]?.message?.content) {
         return response.data.choices[0].message.content;
       }
-      throw new Error("Некорректный ответ от API");
+      throw new Error("Некорректный ответ от API: " + JSON.stringify(response.data));
     } catch (err: any) {
       console.error(`${provider} Error Details:`, err.response?.data || err.message);
-      const errMsg = err.response?.data?.error?.message || err.message;
+      const errMsg = err.response?.data?.error?.message || err.response?.data?.error || err.message;
       throw new Error(`${provider} Error: ${errMsg}`);
     }
   }

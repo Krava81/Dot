@@ -68,9 +68,10 @@ export default function App() {
     
     if ((isNative || isNativePlatform) && !isWebMirror) {
       try {
+        console.log(`[NativeFetch] ${options.method || 'GET'} ${url}`);
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
         const res = await http.request({
-          url: url.includes('?') ? `${url}&v=4.1` : `${url}?v=4.1`,
+          url: url.includes('?') ? `${url}&v=4.3` : `${url}?v=4.3`,
           method: options.method || 'GET',
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
@@ -78,9 +79,13 @@ export default function App() {
           readTimeout: 15000
         });
         
-        // v4.1: Detect AI Studio Proxy "Cookie Check"
-        if (typeof res.data === 'string' && res.data.includes('<!doctype html>') && res.data.includes('Cookie check')) {
-          throw new Error("AI_STUDIO_COOKIE_CHECK");
+        console.log(`[NativeFetch] Response Status: ${res.status}`);
+        
+        // v4.3: Detect AI Studio Proxy "Cookie Check" or Login Page
+        if (typeof res.data === 'string' && (res.data.includes('<!doctype html>') || res.data.includes('login') || res.data.includes('Cookie check'))) {
+          if (res.data.includes('Cookie check') || res.data.includes('google-signin')) {
+            throw new Error("AI_STUDIO_AUTH_REQUIRED");
+          }
         }
 
         return {
@@ -98,7 +103,7 @@ export default function App() {
           }
         };
       } catch (err: any) {
-        if (err.message === "AI_STUDIO_COOKIE_CHECK") throw err;
+        console.error(`[NativeFetch] Error: ${err.message}`);
         throw err;
       }
     } else {
@@ -507,8 +512,8 @@ export default function App() {
         }
       } catch (e) {}
     } catch (err: any) {
-      if (err.message === "AI_STUDIO_COOKIE_CHECK") {
-        setLastError("Server returned a web page instead of data");
+      if (err.message === "AI_STUDIO_COOKIE_CHECK" || err.message === "AI_STUDIO_AUTH_REQUIRED") {
+        setLastError("Требуется авторизация Google (Mirror Mode)");
         setStatus(null);
       } else {
         const errMsg = err.message || String(err);
@@ -721,7 +726,7 @@ export default function App() {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v4.2 (Build: 24.03.2026 05:22)</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v4.3 (Build: 24.03.2026 06:10)</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
@@ -768,10 +773,21 @@ export default function App() {
               Сервер: {status ? 'Онлайн' : 'Оффлайн'}
               {!status && lastError && (
                 <span className="text-[10px] opacity-70 ml-1 truncate max-w-[150px]">
-                  ({lastError === "Server returned a web page instead of data" 
-                    ? "Ошибка: Сервер вернул веб-страницу вместо данных" 
-                    : lastError})
+                  ({lastError})
                 </span>
+              )}
+              {!status && (
+                <button 
+                  onClick={() => {
+                    const debugInfo = `URL: ${baseUrl}\nToken: ${sessionToken ? 'Set (starts with ' + sessionToken.substring(0, 5) + ')' : 'Not Set'}\nPlatform: ${Capacitor.getPlatform()}\nError: ${lastError}`;
+                    alert(debugInfo);
+                    addClientLog("Debug Info: " + debugInfo);
+                  }}
+                  className="ml-2 p-1 hover:bg-white/10 rounded"
+                  title="Отладка сети"
+                >
+                  <Activity size={12} />
+                </button>
               )}
             </div>
             
@@ -858,6 +874,9 @@ export default function App() {
                     </button>
                   )}
                 </div>
+                <p className="text-[10px] text-neutral-500 italic">
+                  * Токен необходим для обхода защиты Google Cloud Run на телефоне.
+                </p>
               </div>
             </div>
           </div>
@@ -909,6 +928,9 @@ export default function App() {
                 2. Скопировать токен
               </button>
             </div>
+            <p className="text-[10px] text-neutral-500 italic mt-2">
+              * Для работы на телефоне (в APK) используйте <b>Shared App URL</b> в настройках (иконка шестеренки).
+            </p>
           </div>
         )}
 
@@ -1452,13 +1474,16 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      localStorage.clear();
-                      window.location.reload();
+                      if (window.confirm("Вы уверены, что хотите полностью сбросить приложение? Все настройки и ключи будут удалены.")) {
+                        localStorage.clear();
+                        window.location.reload();
+                      }
                     }}
-                    className="px-4 py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-xl transition-all border border-red-500/20"
+                    className="px-4 py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-xl transition-all border border-red-500/20 flex items-center gap-2"
                     title="Сбросить всё"
                   >
-                    <RefreshCw size={18} />
+                    <Trash2 size={18} />
+                    <span className="hidden sm:inline">Сброс</span>
                   </button>
                 </div>
               </div>
