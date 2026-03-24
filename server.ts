@@ -45,7 +45,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "4.6",
+    version: "4.7",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -92,8 +92,12 @@ app.get("/api/config/status", (req, res) => {
   });
 });
 
-// v4.6: Легкий маршрут для синхронизации Cookie в мобильном приложении
+// v4.7: Легкий маршрут для синхронизации Cookie в мобильном приложении
 app.get("/api/auth/sync", (req, res) => {
+  const cookies = req.headers.cookie || '';
+  const sessionCookie = cookies.split('; ').find(row => row.startsWith('SESS')) || '';
+  const sessionToken = sessionCookie.split('=')[1] || '';
+  
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(`
     <!DOCTYPE html>
@@ -101,31 +105,44 @@ app.get("/api/auth/sync", (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Синхронизация</title>
+      <title>Синхронизация v4.7</title>
       <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0a0a0a; color: white; text-align: center; }
-        .card { background: #1a1a1a; padding: 2rem; border-radius: 1.5rem; border: 1px solid #333; box-shadow: 0 10px 25px rgba(0,0,0,0.5); max-width: 90%; }
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: white; text-align: center; padding: 20px; box-sizing: border-box; }
+        .card { background: #1a1a1a; padding: 2rem; border-radius: 1.5rem; border: 1px solid #333; box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 400px; }
         .icon { font-size: 3rem; margin-bottom: 1rem; color: #10b981; }
         h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; }
-        p { color: #888; margin-bottom: 2rem; font-size: 0.9rem; }
-        button { background: #3b82f6; color: white; border: none; padding: 0.8rem 2rem; border-radius: 0.75rem; font-weight: bold; cursor: pointer; transition: transform 0.2s; }
-        button:active { transform: scale(0.95); }
+        p { color: #888; margin-bottom: 1.5rem; font-size: 0.9rem; }
+        .token-box { background: #000; border: 1px dashed #444; padding: 1rem; border-radius: 0.75rem; margin-bottom: 1.5rem; word-break: break-all; font-family: monospace; font-size: 0.8rem; color: #3b82f6; }
+        .btn { background: #3b82f6; color: white; border: none; padding: 0.8rem 2rem; border-radius: 0.75rem; font-weight: bold; cursor: pointer; transition: all 0.2s; width: 100%; margin-bottom: 10px; display: block; text-decoration: none; }
+        .btn:active { transform: scale(0.98); }
+        .btn-secondary { background: #333; color: #ccc; }
+        .success-msg { color: #10b981; font-size: 0.8rem; margin-top: 10px; display: none; }
       </style>
     </head>
     <body>
       <div class="card">
         <div class="icon">✅</div>
         <h1>Авторизация успешна</h1>
-        <p>Cookie-файлы Google Cloud Run получены. Теперь вы можете вернуться в приложение.</p>
-        <button onclick="window.history.back()">Вернуться назад</button>
+        <p>Cookie-файлы получены. Скопируйте токен ниже и вставьте его в настройки приложения.</p>
+        
+        <div class="token-box" id="token">${sessionToken || 'Ошибка: токен не найден. Попробуйте обновить страницу.'}</div>
+        
+        <button class="btn" onclick="copyToken()">Копировать токен</button>
+        <div id="copy-success" class="success-msg">Скопировано в буфер обмена!</div>
+        
+        <p style="margin-top: 20px; font-size: 0.7rem;">После копирования вернитесь в приложение и вставьте токен в поле "Токен сессии".</p>
       </div>
+      
       <script>
-        // Если мы в WebView, можно попробовать закрыть или уведомить
-        console.log("Auth Sync Complete");
-        // Через 3 секунды пробуем вернуться, если кнопка не нажата
-        setTimeout(() => {
-          if (window.history.length > 1) window.history.back();
-        }, 3000);
+        function copyToken() {
+          const token = document.getElementById('token').innerText;
+          navigator.clipboard.writeText(token).then(() => {
+            document.getElementById('copy-success').style.display = 'block';
+            setTimeout(() => {
+              document.getElementById('copy-success').style.display = 'none';
+            }, 2000);
+          });
+        }
       </script>
     </body>
     </html>

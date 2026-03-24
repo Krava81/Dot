@@ -60,7 +60,7 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
-      'X-App-Version': '4.6',
+      'X-App-Version': '4.7',
       ...(options.headers || {})
     };
 
@@ -73,14 +73,14 @@ export default function App() {
       try {
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
         
-        // v4.6: Принудительно добавляем метку версии и сессии в URL для обхода кэша прокси
+        // v4.7: Принудительно добавляем метку версии и сессии в URL для обхода кэша прокси
         let finalUrl = url;
         if (!finalUrl.startsWith('http')) {
           finalUrl = `https://${finalUrl}`;
         }
         
         const requestUrl = new URL(finalUrl);
-        requestUrl.searchParams.set('v', '4.6');
+        requestUrl.searchParams.set('v', '4.7');
         if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
 
         const res = await http.request({
@@ -215,10 +215,11 @@ export default function App() {
     }
 
     setIsWarmingUp(true);
-    setWarmUpStatus("Запуск глубокой авторизации...");
+    setWarmUpStatus("Открытие в Chrome...");
     
     try {
-      // v4.6: Используем легкий маршрут /api/auth/sync вместо загрузки всего приложения
+      // v4.7: Используем Browser.open для открытия во внешнем браузере (Chrome)
+      // Это решает проблему бесконечной загрузки во внутреннем WebView
       let finalBaseUrl = baseUrl.trim();
       if (!finalBaseUrl.startsWith('http')) {
         finalBaseUrl = `https://${finalBaseUrl}`;
@@ -226,15 +227,19 @@ export default function App() {
       
       const syncUrl = new URL(`${finalBaseUrl.endsWith('/') ? finalBaseUrl.slice(0, -1) : finalBaseUrl}/api/auth/sync`);
       syncUrl.searchParams.set('app_mode', 'true');
-      syncUrl.searchParams.set('v', '4.6');
+      syncUrl.searchParams.set('v', '4.7');
       syncUrl.searchParams.set('ts', Date.now().toString());
       
-      addClientLog(`Перенаправление на ${syncUrl.toString()}...`);
-      // Используем window.location.href, чтобы WebView приложения загрузил страницу логина
-      window.location.href = syncUrl.toString();
+      addClientLog(`Открытие внешней ссылки: ${syncUrl.toString()}`);
+      
+      // Открываем во внешнем браузере через плагин Capacitor Browser
+      await Browser.open({ url: syncUrl.toString() });
+      
+      setWarmUpStatus("Скопируйте токен из браузера");
+      setTimeout(() => setIsWarmingUp(false), 5000);
     } catch (e: any) {
-      addClientLog(`❌ Ошибка URL: ${e.message}`);
-      setWarmUpStatus("❌ Ошибка URL. Проверьте настройки.");
+      addClientLog(`❌ Ошибка: ${e.message}`);
+      setWarmUpStatus("❌ Ошибка. Проверьте настройки.");
       setTimeout(() => setIsWarmingUp(false), 3000);
     }
   };
@@ -1426,6 +1431,26 @@ export default function App() {
                       Текущий: {baseUrl || 'не задан'}
                     </p>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
+                    <Key size={12} /> Токен сессии (Session Token)
+                  </label>
+                  <input 
+                    type="text"
+                    value={sessionToken}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setSessionToken(val);
+                      localStorage.setItem('app_session_token', val);
+                    }}
+                    placeholder="Вставьте токен из браузера..."
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                  />
+                  <p className="text-[10px] text-neutral-500">
+                    Используйте кнопку "Синхронизировать", чтобы получить этот токен в Chrome.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
