@@ -291,6 +291,88 @@ app.post(["/api/config/update", "/api/config/token"], async (req, res) => {
   });
 });
 
+app.get("/api/tasks", (req, res) => {
+  const pendingTask = tasks.find(t => t.status === 'pending');
+  if (pendingTask) {
+    pendingTask.status = 'processing';
+    res.json(pendingTask);
+  } else {
+    res.json(null);
+  }
+});
+
+app.post("/api/tasks/:id/complete", async (req, res) => {
+  const { id } = req.params;
+  const { adaptedText } = req.body;
+  const task = tasks.find(t => t.id === id);
+  
+  if (task) {
+    task.status = 'completed';
+    task.adaptedText = adaptedText;
+    addLog(`✅ Task ${id} completed.`);
+    
+    if (bot && lastChatId) {
+      try {
+        await bot.telegram.sendMessage(lastChatId, adaptedText);
+        addLog(`✅ Message sent to Telegram (${lastChatId})`);
+      } catch (e: any) {
+        addLog(`❌ Error sending to Telegram: ${e.message}`);
+      }
+    } else {
+      addLog(`⚠️ Cannot send to Telegram: bot or chatId missing.`);
+    }
+    
+    res.json({ status: "ok" });
+  } else {
+    res.status(404).json({ error: "Task not found" });
+  }
+});
+
+app.post("/api/process-url", async (req, res) => {
+  const { url } = req.body;
+  addLog(`🌐 Processing URL: ${url}`);
+  
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      },
+      timeout: 10000
+    });
+    const $ = cheerio.load(response.data);
+    const title = $('title').text() || $('h1').first().text() || 'Без названия';
+    
+    // Simple text extraction: get all paragraphs
+    let text = '';
+    $('p').each((i, el) => {
+      const pText = $(el).text().trim();
+      if (pText.length > 20) text += pText + '\n';
+    });
+    
+    if (text.length < 100) {
+      text = $('article').text() || $('main').text() || $('body').text();
+    }
+    
+    const newTask = {
+      id: uuidv4(),
+      type: 'news_adaptation',
+      data: { url, title, text: text.substring(0, 10000) },
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+    tasks.push(newTask);
+    addLog(`➕ New task added from URL: ${title} (${newTask.id})`);
+    res.json({ status: "ok", taskId: newTask.id });
+  } catch (e: any) {
+    addLog(`❌ Error processing URL: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/tasks/all", (req, res) => {
+  res.json(tasks);
+});
+
 app.post("/api/tasks", (req, res) => {
   const { type, data } = req.body;
   const newTask = {
