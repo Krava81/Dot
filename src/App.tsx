@@ -20,6 +20,9 @@ declare global {
 }
 
 const getInitialBaseUrl = () => {
+  if (window.location.href.includes('run.app')) {
+    return window.location.origin;
+  }
   const saved = localStorage.getItem('tg_bot_server_url');
   if (saved) return saved;
   return process.env.VITE_APP_URL || '';
@@ -57,7 +60,7 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
-      'X-App-Version': '4.1',
+      'X-App-Version': '4.5',
       ...(options.headers || {})
     };
 
@@ -68,10 +71,20 @@ export default function App() {
     
     if ((isNative || isNativePlatform) && !isWebMirror) {
       try {
-        console.log(`[NativeFetch] ${options.method || 'GET'} ${url}`);
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
+        
+        // v4.5: Принудительно добавляем метку версии и сессии в URL для обхода кэша прокси
+        let finalUrl = url;
+        if (!finalUrl.startsWith('http')) {
+          finalUrl = `https://${finalUrl}`;
+        }
+        
+        const requestUrl = new URL(finalUrl);
+        requestUrl.searchParams.set('v', '4.5');
+        if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
+
         const res = await http.request({
-          url: url.includes('?') ? `${url}&v=4.3` : `${url}?v=4.3`,
+          url: requestUrl.toString(),
           method: options.method || 'GET',
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
@@ -79,14 +92,21 @@ export default function App() {
           readTimeout: 15000
         });
         
-        console.log(`[NativeFetch] Response Status: ${res.status}`);
+        // v4.4: Если сервер вернул HTML вместо JSON — это почти всегда страница логина Google или ошибка прокси
+        const isHtml = typeof res.data === 'string' && (res.data.includes('<!doctype html>') || res.data.includes('<html'));
         
-        // v4.3: Detect AI Studio Proxy "Cookie Check" or Login Page
-        if (typeof res.data === 'string' && (res.data.includes('<!doctype html>') || res.data.includes('login') || res.data.includes('Cookie check'))) {
-          if (res.data.includes('Cookie check') || res.data.includes('google-signin')) {
+        if (isHtml) {
+          if (res.data.includes('google-signin') || res.data.includes('Cookie check') || res.data.includes('login')) {
+            addClientLog("⚠️ Обнаружена защита Google Cloud Run. Требуется вход.");
+            throw new Error("AI_STUDIO_AUTH_REQUIRED");
+          }
+          // Если это просто какая-то другая ошибка в виде HTML
+          if (res.status === 403 || res.status === 401) {
             throw new Error("AI_STUDIO_AUTH_REQUIRED");
           }
         }
+
+        if (res.status === 404) throw new Error("API_NOT_FOUND");
 
         return {
           ok: res.status >= 200 && res.status < 300,
@@ -187,40 +207,36 @@ export default function App() {
   const [warmUpStatus, setWarmUpStatus] = useState<string | null>(null);
 
   const startWebViewSync = async () => {
-    setIsWarmingUp(true);
-    setWarmUpStatus("Прогрев сервера (будим Google Cloud)...");
-    
-    let attempts = 0;
-    const maxAttempts = 15;
-    
-    const pingServer = async () => {
-      try {
-        const res = await universalFetch(`${baseUrl}/api/ping`);
-        return res.ok;
-      } catch (e) {
-        return false;
-      }
-    };
-
-    while (attempts < maxAttempts) {
-      const isAlive = await pingServer();
-      if (isAlive) {
-        setWarmUpStatus("Сервер проснулся! Переключаюсь...");
-        setTimeout(() => {
-          const syncUrl = new URL(baseUrl);
-          syncUrl.searchParams.set('app_mode', 'true');
-          syncUrl.searchParams.set('v', '3.6');
-          window.location.href = syncUrl.toString();
-        }, 1000);
-        return;
-      }
-      attempts++;
-      setWarmUpStatus(`Прогрев... попытка ${attempts}/${maxAttempts}`);
-      await new Promise(r => setTimeout(r, 1500));
+    if (!baseUrl || baseUrl.length < 5) {
+      setWarmUpStatus("❌ Сначала укажите URL сервера в настройках!");
+      setIsWarmingUp(true);
+      setTimeout(() => setIsWarmingUp(false), 3000);
+      return;
     }
 
-    setWarmUpStatus("❌ Сервер не ответил. Попробуйте еще раз.");
-    setIsWarmingUp(false);
+    setIsWarmingUp(true);
+    setWarmUpStatus("Запуск глубокой авторизации...");
+    
+    try {
+      // v4.5: Прямой переход для получения Cookie от Google Cloud Run
+      let finalBaseUrl = baseUrl.trim();
+      if (!finalBaseUrl.startsWith('http')) {
+        finalBaseUrl = `https://${finalBaseUrl}`;
+      }
+      
+      const syncUrl = new URL(finalBaseUrl);
+      syncUrl.searchParams.set('app_mode', 'true');
+      syncUrl.searchParams.set('v', '4.5');
+      syncUrl.searchParams.set('ts', Date.now().toString());
+      
+      addClientLog(`Перенаправление на ${syncUrl.toString()}...`);
+      // Используем window.location.href, чтобы WebView приложения загрузил страницу логина
+      window.location.href = syncUrl.toString();
+    } catch (e: any) {
+      addClientLog(`❌ Ошибка URL: ${e.message}`);
+      setWarmUpStatus("❌ Ошибка URL. Проверьте настройки.");
+      setTimeout(() => setIsWarmingUp(false), 3000);
+    }
   };
 
   const testNetwork = async () => {
