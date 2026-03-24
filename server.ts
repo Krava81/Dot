@@ -45,7 +45,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "4.3",
+    version: "4.6",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -58,7 +58,7 @@ app.get("/api/status", (req, res) => {
 });
 
 app.get("/api/ping", (req, res) => {
-  res.json({ status: "pong", time: new Date().toISOString(), version: "4.0" });
+  res.json({ status: "pong", time: new Date().toISOString(), version: "4.6" });
 });
 
 app.get("/api/auth/token", (req, res) => {
@@ -90,6 +90,46 @@ app.get("/api/config/status", (req, res) => {
     botTokenSet: !!currentBotToken,
     chatId: lastChatId || DEFAULT_CHAT_ID
   });
+});
+
+// v4.6: Легкий маршрут для синхронизации Cookie в мобильном приложении
+app.get("/api/auth/sync", (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Синхронизация</title>
+      <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0a0a0a; color: white; text-align: center; }
+        .card { background: #1a1a1a; padding: 2rem; border-radius: 1.5rem; border: 1px solid #333; box-shadow: 0 10px 25px rgba(0,0,0,0.5); max-width: 90%; }
+        .icon { font-size: 3rem; margin-bottom: 1rem; color: #10b981; }
+        h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; }
+        p { color: #888; margin-bottom: 2rem; font-size: 0.9rem; }
+        button { background: #3b82f6; color: white; border: none; padding: 0.8rem 2rem; border-radius: 0.75rem; font-weight: bold; cursor: pointer; transition: transform 0.2s; }
+        button:active { transform: scale(0.95); }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="icon">✅</div>
+        <h1>Авторизация успешна</h1>
+        <p>Cookie-файлы Google Cloud Run получены. Теперь вы можете вернуться в приложение.</p>
+        <button onclick="window.history.back()">Вернуться назад</button>
+      </div>
+      <script>
+        // Если мы в WebView, можно попробовать закрыть или уведомить
+        console.log("Auth Sync Complete");
+        // Через 3 секунды пробуем вернуться, если кнопка не нажата
+        setTimeout(() => {
+          if (window.history.length > 1) window.history.back();
+        }, 3000);
+      </script>
+    </body>
+    </html>
+  `);
 });
 
 // 0.1. Путь для авто-обновления v2.5

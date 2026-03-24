@@ -60,7 +60,7 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
-      'X-App-Version': '4.5',
+      'X-App-Version': '4.6',
       ...(options.headers || {})
     };
 
@@ -73,14 +73,14 @@ export default function App() {
       try {
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
         
-        // v4.5: Принудительно добавляем метку версии и сессии в URL для обхода кэша прокси
+        // v4.6: Принудительно добавляем метку версии и сессии в URL для обхода кэша прокси
         let finalUrl = url;
         if (!finalUrl.startsWith('http')) {
           finalUrl = `https://${finalUrl}`;
         }
         
         const requestUrl = new URL(finalUrl);
-        requestUrl.searchParams.set('v', '4.5');
+        requestUrl.searchParams.set('v', '4.6');
         if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
 
         const res = await http.request({
@@ -218,15 +218,15 @@ export default function App() {
     setWarmUpStatus("Запуск глубокой авторизации...");
     
     try {
-      // v4.5: Прямой переход для получения Cookie от Google Cloud Run
+      // v4.6: Используем легкий маршрут /api/auth/sync вместо загрузки всего приложения
       let finalBaseUrl = baseUrl.trim();
       if (!finalBaseUrl.startsWith('http')) {
         finalBaseUrl = `https://${finalBaseUrl}`;
       }
       
-      const syncUrl = new URL(finalBaseUrl);
+      const syncUrl = new URL(`${finalBaseUrl.endsWith('/') ? finalBaseUrl.slice(0, -1) : finalBaseUrl}/api/auth/sync`);
       syncUrl.searchParams.set('app_mode', 'true');
-      syncUrl.searchParams.set('v', '4.5');
+      syncUrl.searchParams.set('v', '4.6');
       syncUrl.searchParams.set('ts', Date.now().toString());
       
       addClientLog(`Перенаправление на ${syncUrl.toString()}...`);
