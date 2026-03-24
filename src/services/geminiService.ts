@@ -18,9 +18,13 @@ export async function processNewsText(title: string, text: string, manualApiKey?
   }
 
   // Detect provider
-  const isGemini = apiKey.startsWith('AIza');
-  const isOpenRouter = apiKey.startsWith('sk-or-');
-  const isGrok = apiKey.startsWith('xai-') || apiKey.startsWith('gsk_'); // gsk_ is Groq, xai- is Grok
+  const cleanKey = apiKey.trim();
+  const isGemini = cleanKey.startsWith('AIza');
+  const isOpenRouter = cleanKey.startsWith('sk-or-');
+  const isGrok = cleanKey.startsWith('xai-');
+  const isGroq = cleanKey.startsWith('gsk_');
+
+  console.log(`Provider Detection: Gemini=${isGemini}, OpenRouter=${isOpenRouter}, Grok=${isGrok}, Groq=${isGroq}`);
 
   const prompt = `Translate the following news article to Russian and adapt it for a Telegram channel. 
   Make it engaging, concise, use emojis, and format it using basic HTML tags (<b>, <i>, <a>).
@@ -36,57 +40,64 @@ export async function processNewsText(title: string, text: string, manualApiKey?
 
   if (isGemini) {
     console.log("Using Google Gemini API");
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ apiKey: cleanKey });
     
     // Try primary model, fallback to stable models if it fails
-    const models = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash"];
+    const models = ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-3-flash-preview"];
     
+    let lastError = null;
     for (const modelName of models) {
       try {
+        console.log(`Trying Gemini model: ${modelName}`);
         const response = await ai.models.generateContent({
           model: modelName,
           contents: prompt
         });
-        return response.text;
+        if (response && response.text) return response.text;
+        throw new Error("Empty response from Gemini");
       } catch (err: any) {
-        if (err.message?.includes("not found") || err.message?.includes("not supported")) {
-          console.warn(`Model ${modelName} not available, trying next...`);
-          continue;
-        }
-        throw err;
+        lastError = err;
+        console.warn(`Model ${modelName} failed:`, err.message);
+        if (err.message?.includes("API key not valid")) throw err;
+        continue;
       }
     }
-    throw new Error("Не удалось найти доступную модель Gemini для вашего ключа.");
+    throw lastError || new Error("Не удалось получить ответ от Gemini.");
   } 
   
-  if (isOpenRouter || isGrok) {
-    const provider = isOpenRouter ? "OpenRouter" : "Grok/Groq";
+  if (isOpenRouter || isGrok || isGroq) {
+    const provider = isOpenRouter ? "OpenRouter" : (isGrok ? "Grok" : "Groq");
     console.log(`Using ${provider} API`);
     
     const endpoint = isOpenRouter 
       ? "https://openrouter.ai/api/v1/chat/completions" 
-      : (apiKey.startsWith('xai-') ? "https://api.x.ai/v1/chat/completions" : "https://api.groq.com/openai/v1/chat/completions");
+      : (isGrok ? "https://api.x.ai/v1/chat/completions" : "https://api.groq.com/openai/v1/chat/completions");
     
     const model = isOpenRouter 
-      ? "google/gemini-2.0-flash-exp:free" // Default free model for OpenRouter
-      : (apiKey.startsWith('xai-') ? "grok-beta" : "llama-3.3-70b-versatile");
+      ? "google/gemini-2.0-flash-exp:free" 
+      : (isGrok ? "grok-beta" : "llama-3.3-70b-versatile");
 
     try {
+      console.log(`Sending request to ${provider} (${endpoint}) with model ${model}`);
       const response = await axios.post(endpoint, {
         model: model,
         messages: [{ role: "user", content: prompt }]
       }, {
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
+          "Authorization": `Bearer ${cleanKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": window.location.origin,
+          "HTTP-Referer": "https://github.com/capacitor-community/http",
           "X-Title": "Telegram News Bot"
-        }
+        },
+        timeout: 15000
       });
       
-      return response.data.choices[0].message.content;
+      if (response.data?.choices?.[0]?.message?.content) {
+        return response.data.choices[0].message.content;
+      }
+      throw new Error("Некорректный ответ от API");
     } catch (err: any) {
-      console.error(`${provider} Error:`, err.response?.data || err.message);
+      console.error(`${provider} Error Details:`, err.response?.data || err.message);
       const errMsg = err.response?.data?.error?.message || err.message;
       throw new Error(`${provider} Error: ${errMsg}`);
     }

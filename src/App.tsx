@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2 } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
@@ -38,7 +38,7 @@ export default function App() {
   };
   const [isWorking, setIsWorking] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [sessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
+  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
   const [showSettings, setShowSettings] = useState(false);
   const [showCookieFixer, setShowCookieFixer] = useState(false);
   const [showFullResponse, setShowFullResponse] = useState(false);
@@ -323,6 +323,14 @@ export default function App() {
 
   const [isTestingKey, setIsTestingKey] = useState<number | null>(null);
   const [keyTestResult, setKeyTestResult] = useState<{ index: number, success: boolean, message: string } | null>(null);
+
+  const handleSaveSessionToken = (token: string) => {
+    const cleanToken = token.trim();
+    setSessionToken(cleanToken);
+    localStorage.setItem('app_session_token', cleanToken);
+    addClientLog("Токен сессии обновлен.");
+    fetchData();
+  };
 
   const testApiKey = async (index: number) => {
     const key = apiKeys[index].key;
@@ -804,29 +812,53 @@ export default function App() {
           </div>
         </header>
 
-        {/* Web Mirror Mode Alert - v3.9 Token Support */}
+        {/* Web Mirror Mode Alert - v4.3 Token Support */}
         {!window.location.href.includes('run.app') && Capacitor.isNativePlatform() && (
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 flex flex-col items-center gap-4">
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 flex flex-col gap-4">
             <div className="text-center">
               <p className="text-amber-400 font-bold">Мобильный режим (Native App)</p>
-              <p className="text-xs text-amber-500/70">Если сервер защищен Google Auth, используйте синхронизацию</p>
+              <p className="text-xs text-amber-500/70">Если сервер защищен Google Auth, используйте синхронизацию или вставьте токен</p>
             </div>
-            <div className="flex flex-wrap justify-center gap-3">
-              <button 
-                onClick={startWebViewSync}
-                disabled={isWarmingUp}
-                className="px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all flex items-center gap-2"
-              >
-                {isWarmingUp ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-                {isWarmingUp ? warmUpStatus : "Синхронизировать с Web"}
-              </button>
-              <button 
-                onClick={openInBrowser}
-                className="px-6 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold rounded-xl transition-all flex items-center gap-2 border border-neutral-700"
-              >
-                <LinkIcon size={18} />
-                Открыть в браузере
-              </button>
+            
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap justify-center gap-3">
+                <button 
+                  onClick={startWebViewSync}
+                  disabled={isWarmingUp}
+                  className="flex-1 px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+                >
+                  {isWarmingUp ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                  {isWarmingUp ? warmUpStatus : "Синхронизировать"}
+                </button>
+                <button 
+                  onClick={openInBrowser}
+                  className="flex-1 px-6 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold rounded-xl transition-all flex items-center justify-center gap-2 border border-neutral-700"
+                >
+                  <LinkIcon size={18} />
+                  Браузер
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Вставить токен сессии вручную</label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={sessionToken}
+                    onChange={(e) => handleSaveSessionToken(e.target.value)}
+                    placeholder="Вставьте токен из браузера..."
+                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-amber-500/50 transition-all"
+                  />
+                  {sessionToken && (
+                    <button 
+                      onClick={() => handleSaveSessionToken('')}
+                      className="p-2 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500/20 transition-all"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
