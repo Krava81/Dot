@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2 } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { Capacitor, CapacitorHttp, CapacitorCookies } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 
 declare global {
@@ -49,7 +49,7 @@ export default function App() {
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
 
-  // Универсальный загрузчик v4.1
+  // Универсальный загрузчик v4.9
   const universalFetch = async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
@@ -60,7 +60,7 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
-      'X-App-Version': '4.7',
+      'X-App-Version': '4.9',
       ...(options.headers || {})
     };
 
@@ -80,7 +80,7 @@ export default function App() {
         }
         
         const requestUrl = new URL(finalUrl);
-        requestUrl.searchParams.set('v', '4.7');
+        requestUrl.searchParams.set('v', '4.9');
         if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
 
         const res = await http.request({
@@ -227,7 +227,7 @@ export default function App() {
       
       const syncUrl = new URL(`${finalBaseUrl.endsWith('/') ? finalBaseUrl.slice(0, -1) : finalBaseUrl}/api/auth/sync`);
       syncUrl.searchParams.set('app_mode', 'true');
-      syncUrl.searchParams.set('v', '4.7');
+      syncUrl.searchParams.set('v', '4.9');
       syncUrl.searchParams.set('ts', Date.now().toString());
       
       addClientLog(`Открытие внешней ссылки: ${syncUrl.toString()}`);
@@ -311,6 +311,34 @@ export default function App() {
       fetchData();
     }
   };
+
+  // v4.9: Принудительная установка Cookie в нативный контейнер при изменении токена
+  useEffect(() => {
+    const syncNativeCookies = async () => {
+      if (sessionToken && baseUrl && (Capacitor.isNativePlatform())) {
+        try {
+          let url = baseUrl.trim();
+          if (!url.startsWith('http')) url = `https://${url}`;
+          const domain = new URL(url).hostname;
+          
+          addClientLog(`Синхронизация нативных Cookie для ${domain}...`);
+          
+          await CapacitorCookies.setCookie({
+            url: url,
+            key: 'SESS',
+            value: sessionToken,
+            expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+            path: '/',
+          });
+          
+          addClientLog("✅ Нативные Cookie синхронизированы.");
+        } catch (e: any) {
+          addClientLog(`❌ Ошибка синхронизации Cookie: ${e.message}`);
+        }
+      }
+    };
+    syncNativeCookies();
+  }, [sessionToken, baseUrl]);
 
   useEffect(() => {
     if (baseUrl) {
@@ -715,7 +743,7 @@ export default function App() {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [baseUrl]);
+  }, [baseUrl, sessionToken]);
 
   if (loading) {
     return (
@@ -727,7 +755,7 @@ export default function App() {
         />
         <div className="text-center space-y-2">
           <h2 className="text-xl font-bold text-white">Загрузка панели управления...</h2>
-          <p className="text-sm text-neutral-500">Проверка связи с сервером v3.0</p>
+          <p className="text-sm text-neutral-500">Проверка связи с сервером v4.9</p>
         </div>
         <button 
           onClick={() => setLoading(false)}

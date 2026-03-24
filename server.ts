@@ -15,6 +15,29 @@ dotenv.config();
 const app = express();
 const TOKEN_FILE = path.join(process.cwd(), 'bot_token.txt');
 
+// v4.8: Хранилище сессий для ручной синхронизации
+const activeSessions = new Set<string>();
+
+// Middleware для проверки сессии
+app.use((req, res, next) => {
+  const token = req.headers['x-session-token'] as string || 
+                (req.headers['authorization'] as string)?.replace('Bearer ', '');
+  
+  if (token && token.length > 10) {
+    activeSessions.add(token);
+  }
+  
+  // Если есть кука SESS, тоже считаем сессию активной
+  const cookies = req.headers.cookie || '';
+  const sessionCookie = cookies.split('; ').find(row => row.startsWith('SESS='));
+  if (sessionCookie) {
+    const cookieToken = sessionCookie.split('=')[1];
+    if (cookieToken) activeSessions.add(cookieToken);
+  }
+  
+  next();
+});
+
 // Helper to get bot token persistently
 function getPersistentToken() {
   try {
@@ -45,7 +68,7 @@ app.get("/api/status", (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({ 
     status: "running", 
-    version: "4.7",
+    version: "4.9",
     bot: botStatus, 
     botWaitRemaining,
     pendingTasks: tasks.filter(t => t.status === 'pending').length,
@@ -58,7 +81,7 @@ app.get("/api/status", (req, res) => {
 });
 
 app.get("/api/ping", (req, res) => {
-  res.json({ status: "pong", time: new Date().toISOString(), version: "4.6" });
+  res.json({ status: "pong", time: new Date().toISOString(), version: "4.9" });
 });
 
 app.get("/api/auth/token", (req, res) => {
@@ -105,7 +128,7 @@ app.get("/api/auth/sync", (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Синхронизация v4.7</title>
+      <title>Синхронизация v4.9</title>
       <style>
         body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: white; text-align: center; padding: 20px; box-sizing: border-box; }
         .card { background: #1a1a1a; padding: 2rem; border-radius: 1.5rem; border: 1px solid #333; box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 400px; }
