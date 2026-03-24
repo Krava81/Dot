@@ -2,7 +2,7 @@ apply plugin: 'com.android.application'
 
 android {
     namespace = "com.newsbot.manager"
-    compileSdkVersion 35
+    compileSdkVersion 36
     defaultConfig {
         applicationId "com.newsbot.manager"
         minSdkVersion 24
