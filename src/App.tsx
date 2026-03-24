@@ -49,7 +49,7 @@ export default function App() {
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
 
-  // Универсальный загрузчик v4.9
+  // Универсальный загрузчик v5.0
   const universalFetch = async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
@@ -60,13 +60,17 @@ export default function App() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
-      'X-App-Version': '4.9',
+      'X-App-Version': '5.0',
       ...(options.headers || {})
     };
 
     if (sessionToken) {
       (headers as any)['Authorization'] = `Bearer ${sessionToken}`;
       (headers as any)['X-Session-Token'] = sessionToken;
+      // v5.0: Если токен содержит '=', передаем его как Cookie для обхода прокси
+      if (isNative && sessionToken.includes('=')) {
+        (headers as any)['Cookie'] = sessionToken;
+      }
     }
     
     if ((isNative || isNativePlatform) && !isWebMirror) {
@@ -80,7 +84,7 @@ export default function App() {
         }
         
         const requestUrl = new URL(finalUrl);
-        requestUrl.searchParams.set('v', '4.9');
+        requestUrl.searchParams.set('v', '5.0');
         if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
 
         const res = await http.request({
@@ -227,7 +231,7 @@ export default function App() {
       
       const syncUrl = new URL(`${finalBaseUrl.endsWith('/') ? finalBaseUrl.slice(0, -1) : finalBaseUrl}/api/auth/sync`);
       syncUrl.searchParams.set('app_mode', 'true');
-      syncUrl.searchParams.set('v', '4.9');
+      syncUrl.searchParams.set('v', '5.0');
       syncUrl.searchParams.set('ts', Date.now().toString());
       
       addClientLog(`Открытие внешней ссылки: ${syncUrl.toString()}`);
@@ -312,7 +316,7 @@ export default function App() {
     }
   };
 
-  // v4.9: Принудительная установка Cookie в нативный контейнер при изменении токена
+  // v5.0: Принудительная установка Cookie (включая прокси-куки)
   useEffect(() => {
     const syncNativeCookies = async () => {
       if (sessionToken && baseUrl && (Capacitor.isNativePlatform())) {
@@ -323,15 +327,33 @@ export default function App() {
           
           addClientLog(`Синхронизация нативных Cookie для ${domain}...`);
           
-          await CapacitorCookies.setCookie({
-            url: url,
-            key: 'SESS',
-            value: sessionToken,
-            expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-            path: '/',
-          });
-          
-          addClientLog("✅ Нативные Cookie синхронизированы.");
+          // v5.0: Если токен содержит '=', это полный набор Cookie
+          if (sessionToken.includes('=')) {
+            const cookiePairs = sessionToken.split('; ');
+            for (const pair of cookiePairs) {
+              const [key, value] = pair.split('=');
+              if (key && value) {
+                await CapacitorCookies.setCookie({
+                  url: url,
+                  key: key.trim(),
+                  value: value.trim(),
+                  expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+                  path: '/',
+                });
+              }
+            }
+            addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
+          } else {
+            // Одиночный токен SESS
+            await CapacitorCookies.setCookie({
+              url: url,
+              key: 'SESS',
+              value: sessionToken,
+              expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              path: '/',
+            });
+            addClientLog("✅ Нативные Cookie синхронизированы (SESS).");
+          }
         } catch (e: any) {
           addClientLog(`❌ Ошибка синхронизации Cookie: ${e.message}`);
         }
@@ -755,7 +777,7 @@ export default function App() {
         />
         <div className="text-center space-y-2">
           <h2 className="text-xl font-bold text-white">Загрузка панели управления...</h2>
-          <p className="text-sm text-neutral-500">Проверка связи с сервером v4.9</p>
+          <p className="text-sm text-neutral-500">Проверка связи с сервером v5.0</p>
         </div>
         <button 
           onClick={() => setLoading(false)}
