@@ -26,7 +26,7 @@ const getInitialBaseUrl = () => {
 };
 
 export default function App() {
-  const [baseUrl, setBaseUrl] = useState(process.env.VITE_APP_URL || '');
+  const [baseUrl, setBaseUrl] = useState(getInitialBaseUrl());
   const [status, setStatus] = useState<{ status: string; bot: string; pendingTasks: number; hasDefaultChat: boolean; lastChatId: string | number | null; botWaitRemaining?: number } | null>(null);
   const [serverStatus, setServerStatus] = useState<{ hasServerKey: boolean, serverKeyMasked: string | null } | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -719,6 +719,13 @@ export default function App() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-2 bg-neutral-900 border border-neutral-800 rounded-full text-neutral-400 hover:text-white transition-all hover:bg-neutral-800"
+              title="Настройки"
+            >
+              <Settings size={20} />
+            </button>
             <div className="flex bg-neutral-900 border border-neutral-800 rounded-full p-1">
               <button 
                 onClick={() => switchToUrl(DEV_URL)}
@@ -798,6 +805,32 @@ export default function App() {
         </header>
 
         {/* Web Mirror Mode Alert - v3.9 Token Support */}
+        {!window.location.href.includes('run.app') && Capacitor.isNativePlatform() && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 flex flex-col items-center gap-4">
+            <div className="text-center">
+              <p className="text-amber-400 font-bold">Мобильный режим (Native App)</p>
+              <p className="text-xs text-amber-500/70">Если сервер защищен Google Auth, используйте синхронизацию</p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              <button 
+                onClick={startWebViewSync}
+                disabled={isWarmingUp}
+                className="px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all flex items-center gap-2"
+              >
+                {isWarmingUp ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                {isWarmingUp ? warmUpStatus : "Синхронизировать с Web"}
+              </button>
+              <button 
+                onClick={openInBrowser}
+                className="px-6 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold rounded-xl transition-all flex items-center gap-2 border border-neutral-700"
+              >
+                <LinkIcon size={18} />
+                Открыть в браузере
+              </button>
+            </div>
+          </div>
+        )}
+
         {window.location.href.includes('run.app') && (
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-6 flex flex-col items-center gap-4">
             <div className="text-center">
