@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2 } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, ShieldCheck } from 'lucide-react';
 import { processNewsText } from './services/geminiService';
 import { Capacitor, CapacitorHttp, CapacitorCookies } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
@@ -48,6 +48,7 @@ export default function App() {
   const [fullResponse, setFullResponse] = useState<string | null>(null);
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
+  const [isDebugMode, setIsDebugMode] = useState(false);
 
   // Универсальный загрузчик v5.0
   const universalFetch = async (url: string, options: any = {}) => {
@@ -110,7 +111,10 @@ export default function App() {
           }
         }
 
-        if (res.status === 404) throw new Error("API_NOT_FOUND");
+        if (res.status === 404) {
+          addClientLog(`❌ 404 Not Found: ${requestUrl.pathname}`);
+          throw new Error(`API_NOT_FOUND: ${requestUrl.pathname}`);
+        }
 
         return {
           ok: res.status >= 200 && res.status < 300,
@@ -490,23 +494,26 @@ export default function App() {
     setSubmitMsg(null);
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      addClientLog(`Отправка токена на ${currentBaseUrl}/api/config/token...`);
+      
       const res = await universalFetch(`${currentBaseUrl}/api/config/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: botToken })
       });
+      
       if (res.ok) {
         setSubmitMsg({ type: 'success', text: 'Токен сохранен на сервере и бот перезапущен!' });
-        addClientLog("Токен успешно сохранен на сервере.");
+        addClientLog("✅ Токен успешно сохранен на сервере.");
         localStorage.setItem('tg_bot_token_backup', botToken);
       } else {
         const errText = await res.text();
-        addClientLog(`Ошибка сохранения токена: ${errText}`);
+        addClientLog(`❌ Ошибка сохранения токена: ${errText}`);
         throw new Error(errText);
       }
     } catch (err: any) {
       setSubmitMsg({ type: 'error', text: `Ошибка сохранения: ${err.message}` });
-      addClientLog(`Ошибка: ${err.message}`);
+      addClientLog(`❌ Ошибка: ${err.message}`);
     } finally {
       setIsSavingToken(false);
       fetchData();
@@ -619,6 +626,31 @@ export default function App() {
       }
     } catch (err: any) {
       setSubmitMsg({ type: 'error', text: `Ошибка соединения: ${err.message || 'Сервер недоступен'}` });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
+  const testSync = async () => {
+    setIsTestingConnection(true);
+    setSubmitMsg(null);
+    try {
+      const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      const res = await universalFetch(`${currentBaseUrl}/api/sync-check`);
+      if (res.ok) {
+        const data = await res.json();
+        addClientLog(`🔍 Sync Check: ${JSON.stringify(data)}`);
+        if (data.authenticated) {
+          setSubmitMsg({ type: 'success', text: 'Синхронизация подтверждена сервером!' });
+        } else {
+          setSubmitMsg({ type: 'error', text: 'Сервер не видит вашу сессию. Проверьте куки.' });
+        }
+      } else {
+        throw new Error(`Ошибка: ${res.status}`);
+      }
+    } catch (e: any) {
+      addClientLog(`❌ Sync Check Error: ${e.message}`);
+      setSubmitMsg({ type: 'error', text: `Ошибка проверки синхронизации: ${e.message}` });
     } finally {
       setIsTestingConnection(false);
     }
@@ -1043,10 +1075,27 @@ export default function App() {
               <button
                 onClick={handleSaveTokenToLocal}
                 disabled={!botToken}
-                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-all border border-neutral-700"
+                className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold px-4 py-3 rounded-xl flex items-center justify-center gap-2 transition-all border border-neutral-700"
               >
                 <Save size={18} />
-                Сохранить локально
+                Локально
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+                    const res = await universalFetch(`${currentBaseUrl}/api/debug`);
+                    const data = await res.json();
+                    setFullResponse(JSON.stringify(data, null, 2));
+                    setShowFullResponse(true);
+                    addClientLog("✅ Дебаг-инфо получено.");
+                  } catch (e: any) {
+                    addClientLog(`❌ Ошибка дебага: ${e.message}`);
+                  }
+                }}
+                className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold px-4 py-3 rounded-xl flex items-center justify-center gap-2 transition-all border border-neutral-700"
+              >
+                <Activity size={18} />
               </button>
             </div>
           </div>
@@ -1376,9 +1425,22 @@ export default function App() {
                     <h3 className="text-lg font-bold">🛠 Cookie Fixer</h3>
                     <p className="text-[10px] text-neutral-400">Войдите в Google здесь, чтобы эмулятор получил доступ к серверу</p>
                   </div>
-                  <button onClick={() => setShowCookieFixer(false)} className="p-2 hover:bg-neutral-700 rounded-full transition-colors">
-                    <X size={20} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+                        const syncUrl = `${currentBaseUrl}/api/auth/sync`;
+                        await Browser.open({ url: syncUrl });
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-blue-500/20"
+                    >
+                      <RefreshCw size={14} />
+                      Открыть Sync
+                    </button>
+                    <button onClick={() => setShowCookieFixer(false)} className="p-2 hover:bg-neutral-700 rounded-full transition-colors">
+                      <X size={20} />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 bg-white">
                   <iframe 
@@ -1487,19 +1549,32 @@ export default function App() {
                   <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
                     <Key size={12} /> Токен сессии (Session Token)
                   </label>
-                  <input 
-                    type="text"
-                    value={sessionToken}
-                    onChange={(e) => {
-                      const val = e.target.value.trim();
-                      setSessionToken(val);
-                      localStorage.setItem('app_session_token', val);
-                    }}
-                    placeholder="Вставьте токен из браузера..."
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                  />
+                  <div className="flex gap-2">
+                    <input 
+                      type="text"
+                      value={sessionToken}
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        setSessionToken(val);
+                        localStorage.setItem('app_session_token', val);
+                      }}
+                      placeholder="Вставьте токен из браузера..."
+                      className="flex-1 bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                    />
+                    <button
+                      onClick={async () => {
+                        const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+                        const syncUrl = `${currentBaseUrl}/api/auth/sync`;
+                        await Browser.open({ url: syncUrl });
+                      }}
+                      className="px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all flex items-center justify-center"
+                      title="Открыть страницу синхронизации"
+                    >
+                      <RefreshCw size={18} />
+                    </button>
+                  </div>
                   <p className="text-[10px] text-neutral-500">
-                    Используйте кнопку "Синхронизировать", чтобы получить этот токен в Chrome.
+                    Нажмите на синюю кнопку, чтобы открыть страницу синхронизации в браузере, затем скопируйте результат сюда.
                   </p>
                 </div>
 
@@ -1544,6 +1619,14 @@ export default function App() {
                 >
                   {isTestingConnection ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
                   Проверить соединение
+                </button>
+                <button 
+                  onClick={testSync}
+                  disabled={isTestingConnection || !baseUrl}
+                  className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700"
+                >
+                  <ShieldCheck size={18} />
+                  Проверить синхронизацию (Auth)
                 </button>
                 <button 
                   onClick={() => {

@@ -17,8 +17,19 @@ const TOKEN_FILE = path.join(process.cwd(), 'bot_token.txt');
 // v5.0: Хранилище сессий для ручной синхронизации
 const activeSessions = new Set<string>();
 
-// Middleware для проверки сессии
+// 1. CORS (Должен быть первым!)
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Session-Token', 'X-App-Version']
+}));
+
+app.use(express.json({ limit: '50mb' }));
+
+// 2. Middleware для проверки сессии
 app.use((req, res, next) => {
+  res.setHeader('X-App-Version', '5.0');
   const token = req.headers['x-session-token'] as string || 
                 (req.headers['authorization'] as string)?.replace('Bearer ', '');
   
@@ -91,6 +102,30 @@ app.get("/api/ping", (req, res) => {
   res.json({ status: "pong", time: new Date().toISOString(), version: "5.0" });
 });
 
+app.get("/api/sync-check", (req, res) => {
+  const cookies = req.headers.cookie || '';
+  const hasSess = cookies.includes('SESS=');
+  const hasStudio = cookies.includes('AI_STUDIO_AUTH');
+  res.json({
+    authenticated: hasSess || hasStudio,
+    cookies: cookies.split('; ').map(c => c.split('=')[0]),
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+    version: "5.0"
+  });
+});
+
+app.get("/api/debug", (req, res) => {
+  res.json({
+    headers: req.headers,
+    cookies: req.headers.cookie,
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+    version: "5.0"
+  });
+});
+
 app.get("/api/logs", (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.json({ logs });
@@ -160,19 +195,6 @@ app.get("/api/auth/login", (req, res) => {
   res.json({ status: "ok", token: sessionToken });
 });
 
-// 1. CORS
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Session-Token, X-App-Version');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  next();
-});
-
-app.use(express.json({ limit: '50mb' }));
-
 // Bot Logic & Other APIs
 function addLog(msg: string) {
   const timestamp = new Date().toLocaleTimeString();
@@ -181,8 +203,118 @@ function addLog(msg: string) {
   console.log(msg);
 }
 
-// ... (Rest of the bot logic would go here, but keeping it minimal for now to fix the server)
-// I will re-add the bot logic in a separate step if needed to avoid large file issues.
+let bot: Telegraf | null = null;
+
+async function initBot(token: string) {
+  addLog(`initBot called with token: ${token.substring(0, 5)}...`);
+  if (bot) {
+    try {
+      addLog("Stopping existing bot instance...");
+      await bot.stop();
+    } catch (e) {
+      addLog(`Error stopping bot: ${e}`);
+    }
+  }
+
+  if (!token || token.trim().length < 10) {
+    botStatus = 'offline';
+    addLog("❌ Bot token is empty or invalid.");
+    return;
+  }
+
+  try {
+    botStatus = 'starting';
+    addLog(`Initializing bot with token length ${token.length}...`);
+    bot = new Telegraf(token);
+
+    bot.start((ctx) => {
+      lastChatId = ctx.chat.id;
+      addLog(`✅ Bot started in chat: ${lastChatId}`);
+      ctx.reply("Бот активен и готов к работе!");
+    });
+
+    bot.command('status', (ctx) => {
+      ctx.reply(`Статус: Активен\nВерсия: 5.0\nЗадач в очереди: ${tasks.filter(t => t.status === 'pending').length}`);
+    });
+
+    bot.on('text', (ctx) => {
+      lastChatId = ctx.chat.id;
+      addLog(`📩 Message from ${ctx.chat.id}: ${ctx.message.text}`);
+    });
+
+    addLog("Launching bot...");
+    await bot.launch();
+    botStatus = 'active';
+    currentBotToken = token;
+    savePersistentToken(token);
+    addLog("🚀 Bot successfully launched and active!");
+  } catch (err: any) {
+    botStatus = 'offline';
+    addLog(`❌ Bot launch error: ${err.message}`);
+    if (err.message.includes('401')) {
+      addLog("⚠️ Invalid bot token (401). Please check your token from @BotFather.");
+    }
+    if (err.message.includes('404')) {
+      addLog("⚠️ Bot token not found (404).");
+    }
+  }
+}
+
+// Initial bot start
+if (currentBotToken) {
+  initBot(currentBotToken).catch(e => addLog(`Initial bot start failed: ${e}`));
+}
+
+app.get("/api/config/token", (req, res) => {
+  res.json({ message: "Use POST to update token", status: "ready", botStatus });
+});
+
+app.post(["/api/config/update", "/api/config/token"], async (req, res) => {
+  const { token, chatId } = req.body;
+  addLog(`Config update request received at ${req.path} from ${req.ip}. Body: ${JSON.stringify(req.body).substring(0, 50)}...`);
+  
+  if (token) {
+    addLog(`Updating bot token...`);
+    await initBot(token);
+  }
+  
+  if (chatId) {
+    lastChatId = chatId;
+    addLog(`Chat ID updated to: ${chatId}`);
+  }
+  
+  res.json({ 
+    status: "ok", 
+    botStatus, 
+    chatId: lastChatId,
+    tokenSet: !!token 
+  });
+});
+
+app.post("/api/tasks", (req, res) => {
+  const { type, data } = req.body;
+  const newTask = {
+    id: uuidv4(),
+    type,
+    data,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  };
+  tasks.push(newTask);
+  addLog(`New task added: ${type} (${newTask.id})`);
+  res.json(newTask);
+});
+
+// 404 Handler
+app.use((req, res) => {
+  addLog(`⚠️ 404 Not Found: ${req.method} ${req.url} from ${req.ip}`);
+  res.status(404).json({ 
+    error: "API Route Not Found", 
+    path: req.url,
+    method: req.method,
+    version: "5.0"
+  });
+});
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
