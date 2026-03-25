@@ -314,6 +314,7 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
     if (bot && lastChatId) {
       try {
         const imageUrls = task.data.images || [];
+        const sourceUrl = task.data.url || "";
         if (imageUrls.length > 0) {
           addLog(`📸 Downloading ${imageUrls.length} images to send as buffers...`);
           
@@ -325,18 +326,24 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
               const imgUrl = imageUrls[i];
               const imgRes = await axios.get(imgUrl, { 
                 responseType: 'arraybuffer',
-                timeout: 5000,
+                timeout: 10000, // Increased timeout
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                  'Referer': url // Some sites (like WeChat) check Referer
+                  'Referer': sourceUrl, // Fixed: use task.data.url
+                  'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                  'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
                 }
               });
               
-              mediaGroup.push({
-                type: 'photo',
-                media: { source: Buffer.from(imgRes.data) },
-                caption: i === 0 ? caption : undefined
-              });
+              if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
+                mediaGroup.push({
+                  type: 'photo',
+                  media: { source: Buffer.from(imgRes.data) },
+                  caption: i === 0 ? caption : undefined
+                });
+              } else {
+                addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
+              }
             } catch (imgErr: any) {
               addLog(`⚠️ Failed to download image ${i+1}: ${imgErr.message}`);
             }
