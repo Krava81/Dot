@@ -313,10 +313,38 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
     
     if (bot && lastChatId) {
       try {
-        await bot.telegram.sendMessage(lastChatId, adaptedText);
+        const images = task.data.images || [];
+        if (images.length > 0) {
+          addLog(`📸 Sending media group with ${images.length} images...`);
+          
+          // Telegram caption limit is 1024 characters
+          const caption = adaptedText.length <= 1024 ? adaptedText : "";
+          
+          const mediaGroup = images.map((url: string, index: number) => ({
+            type: 'photo',
+            media: url,
+            caption: index === 0 ? caption : undefined
+          }));
+
+          await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
+          
+          // If text was too long for caption, send it as a separate message
+          if (adaptedText.length > 1024) {
+            await bot.telegram.sendMessage(lastChatId, adaptedText);
+          }
+        } else {
+          await bot.telegram.sendMessage(lastChatId, adaptedText);
+        }
         addLog(`✅ Message sent to Telegram (${lastChatId})`);
       } catch (e: any) {
         addLog(`❌ Error sending to Telegram: ${e.message}`);
+        // Fallback: try sending just text if media group fails
+        try {
+          await bot.telegram.sendMessage(lastChatId, adaptedText);
+          addLog(`✅ Fallback: Text-only message sent.`);
+        } catch (e2: any) {
+          addLog(`❌ Fallback failed: ${e2.message}`);
+        }
       }
     } else {
       addLog(`⚠️ Cannot send to Telegram: bot or chatId missing.`);
@@ -352,16 +380,61 @@ app.post("/api/process-url", async (req, res) => {
     if (text.length < 100) {
       text = $('article').text() || $('main').text() || $('body').text();
     }
+
+    // Image extraction (up to 5)
+    const images: string[] = [];
+    const baseUrl = new URL(url).origin;
+
+    const addImage = (src: string | undefined) => {
+      if (!src || images.length >= 5) return;
+
+      // Resolve relative URLs
+      if (src.startsWith('//')) src = 'https:' + src;
+      else if (src.startsWith('/')) src = baseUrl + src;
+      else if (!src.startsWith('http')) src = url.substring(0, url.lastIndexOf('/') + 1) + src;
+
+      // Filter out small icons, trackers, or base64
+      if (src.includes('base64') || src.includes('icon') || src.includes('logo') || src.includes('avatar') || src.includes('pixel')) return;
+      
+      // Basic check for common image extensions (including webp)
+      if (src.match(/\.(jpeg|jpg|gif|png|webp)/i)) {
+        if (!images.includes(src)) {
+          images.push(src);
+        }
+      }
+    };
+
+    // 1. Standard img tags
+    $('img').each((i, el) => {
+      const src = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original');
+      addImage(src);
+    });
+
+    // 2. Picture source tags (often used for webp)
+    if (images.length < 5) {
+      $('picture source').each((i, el) => {
+        const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
+        if (srcset) {
+          const firstUrl = srcset.split(',')[0].trim().split(' ')[0];
+          addImage(firstUrl);
+        }
+      });
+    }
+
+    // 3. Meta tags (og:image) if still need images
+    if (images.length === 0) {
+      addImage($('meta[property="og:image"]').attr('content'));
+    }
     
     const newTask = {
       id: uuidv4(),
       type: 'news_adaptation',
-      data: { url, title, text: text.substring(0, 10000) },
+      data: { url, title, text: text.substring(0, 10000), images },
       status: 'pending',
       createdAt: new Date().toISOString()
     };
     tasks.push(newTask);
-    addLog(`➕ New task added from URL: ${title} (${newTask.id})`);
+    addLog(`➕ New task added from URL: ${title} (${newTask.id}) with ${images.length} images`);
     res.json({ status: "ok", taskId: newTask.id });
   } catch (e: any) {
     addLog(`❌ Error processing URL: ${e.message}`);
