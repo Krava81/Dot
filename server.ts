@@ -313,23 +313,41 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
     
     if (bot && lastChatId) {
       try {
-        const images = task.data.images || [];
-        if (images.length > 0) {
-          addLog(`📸 Sending media group with ${images.length} images...`);
+        const imageUrls = task.data.images || [];
+        if (imageUrls.length > 0) {
+          addLog(`📸 Downloading ${imageUrls.length} images to send as buffers...`);
           
-          // Telegram caption limit is 1024 characters
+          const mediaGroup: any[] = [];
           const caption = adaptedText.length <= 1024 ? adaptedText : "";
           
-          const mediaGroup = images.map((url: string, index: number) => ({
-            type: 'photo',
-            media: url,
-            caption: index === 0 ? caption : undefined
-          }));
+          for (let i = 0; i < imageUrls.length; i++) {
+            try {
+              const imgUrl = imageUrls[i];
+              const imgRes = await axios.get(imgUrl, { 
+                responseType: 'arraybuffer',
+                timeout: 5000,
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+              });
+              
+              mediaGroup.push({
+                type: 'photo',
+                media: { source: Buffer.from(imgRes.data) },
+                caption: i === 0 ? caption : undefined
+              });
+            } catch (imgErr: any) {
+              addLog(`⚠️ Failed to download image ${i+1}: ${imgErr.message}`);
+            }
+          }
 
-          await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
-          
-          // If text was too long for caption, send it as a separate message
-          if (adaptedText.length > 1024) {
+          if (mediaGroup.length > 0) {
+            await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
+            if (adaptedText.length > 1024) {
+              await bot.telegram.sendMessage(lastChatId, adaptedText);
+            }
+          } else {
+            // If all downloads failed, send text only
             await bot.telegram.sendMessage(lastChatId, adaptedText);
           }
         } else {
@@ -367,6 +385,7 @@ app.post("/api/process-url", async (req, res) => {
       },
       timeout: 10000
     });
+    addLog(`📄 Page loaded (Status: ${response.status}). Parsing...`);
     const $ = cheerio.load(response.data);
     const title = $('title').text() || $('h1').first().text() || 'Без названия';
     
@@ -388,19 +407,16 @@ app.post("/api/process-url", async (req, res) => {
     const addImage = (src: string | undefined) => {
       if (!src || images.length >= 5) return;
       src = src.trim();
-      if (!src) return;
+      if (!src || src.startsWith('data:')) return;
 
       try {
-        // Resolve relative URLs properly using URL constructor
         const absoluteUrl = new URL(src, url).href;
         src = absoluteUrl;
       } catch (e) {
         return;
       }
 
-      // Filter out base64 and very obvious non-news images
-      if (src.startsWith('data:image')) return;
-      if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker')) return;
+      if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
       
       // Check for common image extensions or "image" in path
       const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp)/i);
@@ -409,37 +425,37 @@ app.post("/api/process-url", async (req, res) => {
       if (isLikelyImage) {
         if (!images.includes(src)) {
           images.push(src);
-          addLog(`📸 Found image candidate: ${src.split('/').pop()?.substring(0, 30) || 'image'}`);
+          addLog(`📸 Found image: ${src.substring(0, 60)}...`);
         }
       }
     };
 
-    // 1. Meta tags (og:image, twitter:image) - often best quality
+    // 1. Meta tags (og:image, twitter:image)
     addImage($('meta[property="og:image"]').attr('content'));
     addImage($('meta[name="twitter:image"]').attr('content'));
+    addImage($('meta[property="og:image:secure_url"]').attr('content'));
+    addImage($('meta[itemprop="image"]').attr('content'));
+    addImage($('meta[name="image"]').attr('content'));
     addImage($('link[rel="image_src"]').attr('href'));
+    addImage($('link[rel="shortcut icon"]').attr('href')); // Last resort
 
-    // 2. Standard img tags with various lazy-load attributes
-    $('img').each((i, el) => {
+    // 2. Article/Main content images (prioritize these)
+    $('article img, main img, .content img, .post img, .entry img').each((i, el) => {
       if (images.length >= 5) return;
-      
-      // Check common attributes
-      const src = $(el).attr('src');
-      const dataSrc = $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original') || $(el).attr('data-fallback');
-      const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
-
-      if (srcset) {
-        // Take the largest image from srcset if possible, or just the first one
-        const parts = srcset.split(',');
-        const lastPart = parts[parts.length - 1].trim().split(' ')[0];
-        addImage(lastPart);
-      }
-      
-      addImage(dataSrc);
+      const src = $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original') || $(el).attr('src') || $(el).attr('data-src-2x');
       addImage(src);
     });
 
-    // 3. Picture source tags
+    // 3. All other images
+    if (images.length < 5) {
+      $('img').each((i, el) => {
+        if (images.length >= 5) return;
+        const src = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original');
+        addImage(src);
+      });
+    }
+
+    // 4. Picture source tags
     if (images.length < 5) {
       $('picture source').each((i, el) => {
         const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
@@ -450,11 +466,18 @@ app.post("/api/process-url", async (req, res) => {
       });
     }
 
-    // 4. Article-specific images (if any)
+    // 5. Links to images (often high quality)
     if (images.length < 5) {
-      $('article img, .post-content img, .entry-content img').each((i, el) => {
-        addImage($(el).attr('src'));
+      $('a').each((i, el) => {
+        const href = $(el).attr('href');
+        if (href && href.match(/\.(jpeg|jpg|png|webp)/i)) {
+          addImage(href);
+        }
       });
+    }
+
+    if (images.length === 0) {
+      addLog(`⚠️ No images found on the page.`);
     }
     
     const newTask = {
