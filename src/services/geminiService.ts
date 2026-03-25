@@ -28,16 +28,15 @@ export async function processNewsText(title: string, text: string, manualApiKey?
   console.log(`Provider Detection: Gemini=${isGemini}, OpenRouter=${isOpenRouter}, Grok=${isGrok}, Groq=${isGroq}, OpenAI=${isOpenAI}`);
 
   const prompt = `Translate the following news article to Russian and adapt it for a Telegram channel. 
-  Make it engaging, readable, and concise. Use emojis and format it using basic HTML tags (<b>, <i>, <a>).
+  Make it engaging, readable, and concise. Use emojis.
   
   CRITICAL INSTRUCTIONS:
-  1. EXCLUDE unnecessary symbols and technical artifacts like "<i>FJ</i>" or similar noise. The text must be clean and readable.
+  1. DO NOT use any HTML tags (like <b>, <i>, <a>, etc.) or any other technical symbols and artifacts. The output must be pure plain text.
   2. Divide the text into clear paragraphs based on topics/themes.
   3. All brand names, technical names, and car brand names MUST remain in English (e.g., BMW, Turbocharger, etc.).
   4. The rest of the text must be in Russian.
   5. EXCLUDE any links to the source article or external websites from the generated text.
   6. At the end of the post, add relevant hashtags related to cars and the specific topic of the news.
-  7. Do not use any other formatting. Ensure all tags are properly closed.
   
   Title: ${title}
   Content: ${text}`;
