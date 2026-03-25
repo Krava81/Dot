@@ -327,7 +327,8 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
                 responseType: 'arraybuffer',
                 timeout: 5000,
                 headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                  'Referer': url // Some sites (like WeChat) check Referer
                 }
               });
               
@@ -418,9 +419,10 @@ app.post("/api/process-url", async (req, res) => {
 
       if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
       
-      // Check for common image extensions or "image" in path
+      // Check for common image extensions or "image" in path, or WeChat specific patterns
       const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp)/i);
-      const isLikelyImage = hasImageExt || src.toLowerCase().includes('image') || src.toLowerCase().includes('img');
+      const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=');
+      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img');
 
       if (isLikelyImage) {
         if (!images.includes(src)) {
