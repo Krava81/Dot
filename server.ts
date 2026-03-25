@@ -387,30 +387,59 @@ app.post("/api/process-url", async (req, res) => {
 
     const addImage = (src: string | undefined) => {
       if (!src || images.length >= 5) return;
+      src = src.trim();
+      if (!src) return;
 
-      // Resolve relative URLs
-      if (src.startsWith('//')) src = 'https:' + src;
-      else if (src.startsWith('/')) src = baseUrl + src;
-      else if (!src.startsWith('http')) src = url.substring(0, url.lastIndexOf('/') + 1) + src;
+      try {
+        // Resolve relative URLs properly using URL constructor
+        const absoluteUrl = new URL(src, url).href;
+        src = absoluteUrl;
+      } catch (e) {
+        return;
+      }
 
-      // Filter out small icons, trackers, or base64
-      if (src.includes('base64') || src.includes('icon') || src.includes('logo') || src.includes('avatar') || src.includes('pixel')) return;
+      // Filter out base64 and very obvious non-news images
+      if (src.startsWith('data:image')) return;
+      if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker')) return;
       
-      // Basic check for common image extensions (including webp)
-      if (src.match(/\.(jpeg|jpg|gif|png|webp)/i)) {
+      // Check for common image extensions or "image" in path
+      const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp)/i);
+      const isLikelyImage = hasImageExt || src.toLowerCase().includes('image') || src.toLowerCase().includes('img');
+
+      if (isLikelyImage) {
         if (!images.includes(src)) {
           images.push(src);
+          addLog(`📸 Found image candidate: ${src.split('/').pop()?.substring(0, 30) || 'image'}`);
         }
       }
     };
 
-    // 1. Standard img tags
+    // 1. Meta tags (og:image, twitter:image) - often best quality
+    addImage($('meta[property="og:image"]').attr('content'));
+    addImage($('meta[name="twitter:image"]').attr('content'));
+    addImage($('link[rel="image_src"]').attr('href'));
+
+    // 2. Standard img tags with various lazy-load attributes
     $('img').each((i, el) => {
-      const src = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original');
+      if (images.length >= 5) return;
+      
+      // Check common attributes
+      const src = $(el).attr('src');
+      const dataSrc = $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original') || $(el).attr('data-fallback');
+      const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
+
+      if (srcset) {
+        // Take the largest image from srcset if possible, or just the first one
+        const parts = srcset.split(',');
+        const lastPart = parts[parts.length - 1].trim().split(' ')[0];
+        addImage(lastPart);
+      }
+      
+      addImage(dataSrc);
       addImage(src);
     });
 
-    // 2. Picture source tags (often used for webp)
+    // 3. Picture source tags
     if (images.length < 5) {
       $('picture source').each((i, el) => {
         const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
@@ -421,9 +450,11 @@ app.post("/api/process-url", async (req, res) => {
       });
     }
 
-    // 3. Meta tags (og:image) if still need images
-    if (images.length === 0) {
-      addImage($('meta[property="og:image"]').attr('content'));
+    // 4. Article-specific images (if any)
+    if (images.length < 5) {
+      $('article img, .post-content img, .entry-content img').each((i, el) => {
+        addImage($(el).attr('src'));
+      });
     }
     
     const newTask = {
