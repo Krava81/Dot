@@ -46,22 +46,34 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     const ai = new GoogleGenAI({ apiKey: cleanKey });
     
     // Try primary model, fallback to stable models if it fails
-    const models = ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-1.5-flash"];
+    // v5.0: Prioritize flash for speed, and add timeout
+    const models = ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-1.5-flash"];
     
     let lastError = null;
     for (const modelName of models) {
       try {
         console.log(`Trying Gemini model: ${modelName}`);
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt
-        });
+        
+        // v5.0: Add 30s timeout for Gemini
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Gemini timeout")), 30000)
+        );
+        
+        const response = await Promise.race([
+          ai.models.generateContent({
+            model: modelName,
+            contents: prompt
+          }),
+          timeoutPromise
+        ]) as any;
+
         if (response && response.text) return response.text;
         throw new Error("Empty response from Gemini");
       } catch (err: any) {
         lastError = err;
         console.warn(`Model ${modelName} failed:`, err.message);
         if (err.message?.includes("API key not valid")) throw err;
+        if (err.message?.includes("Gemini timeout")) continue;
         continue;
       }
     }

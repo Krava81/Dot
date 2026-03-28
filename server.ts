@@ -336,9 +336,13 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
               });
               
               if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
+                const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
                 mediaGroup.push({
                   type: 'photo',
-                  media: { source: Buffer.from(imgRes.data) },
+                  media: { 
+                    source: Buffer.from(imgRes.data),
+                    filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
+                  },
                   caption: i === 0 ? caption : undefined
                 });
               } else {
@@ -387,15 +391,16 @@ app.post("/api/process-url", async (req, res) => {
   addLog(`🌐 Processing URL: ${url}`);
   
   try {
+    addLog(`🌐 Fetching URL: ${url}...`);
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
       },
-      timeout: 10000
+      timeout: 15000 // Increased to 15s
     });
-    addLog(`📄 Page loaded (Status: ${response.status}). Parsing...`);
+    addLog(`📄 Page loaded (Status: ${response.status}, Size: ${Math.round(response.data.length / 1024)}KB). Parsing...`);
     const $ = cheerio.load(response.data);
     const title = $('title').text() || $('h1').first().text() || 'Без названия';
     
@@ -419,6 +424,13 @@ app.post("/api/process-url", async (req, res) => {
       src = src.trim();
       if (!src || src.startsWith('data:')) return;
 
+      // Handle srcset strings
+      if (src.includes(',') && (src.includes(' ') || src.includes('.webp') || src.includes('.jpg'))) {
+        const parts = src.split(',');
+        const webpPart = parts.find(p => p.toLowerCase().includes('.webp'));
+        src = (webpPart || parts[0]).trim().split(/\s+/)[0];
+      }
+
       try {
         const absoluteUrl = new URL(src, url).href;
         src = absoluteUrl;
@@ -431,12 +443,12 @@ app.post("/api/process-url", async (req, res) => {
       // Check for common image extensions or "image" in path, or WeChat specific patterns
       const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
       const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
-      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp');
+      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp') || src.includes('ext=webp');
 
       if (isLikelyImage) {
         if (!images.includes(src)) {
           images.push(src);
-          addLog(`📸 Found image: ${src.substring(0, 60)}...`);
+          addLog(`📸 Found image (${src.toLowerCase().includes('webp') ? 'WEBP' : 'IMG'}): ${src.substring(0, 60)}...`);
         }
       }
     };
@@ -453,7 +465,15 @@ app.post("/api/process-url", async (req, res) => {
     // 2. Article/Main content images (prioritize these)
     $('article img, main img, .content img, .post img, .entry img').each((i, el) => {
       if (images.length >= 10) return;
-      const src = $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original') || $(el).attr('src') || $(el).attr('data-src-2x');
+      const $el = $(el);
+      const src = $el.attr('data-src') || 
+                  $el.attr('data-lazy-src') || 
+                  $el.attr('data-original') || 
+                  $el.attr('src') || 
+                  $el.attr('data-src-2x') ||
+                  $el.attr('data-actualsrc') ||
+                  $el.attr('data-srcset') ||
+                  $el.attr('srcset');
       addImage(src);
     });
 
@@ -461,7 +481,13 @@ app.post("/api/process-url", async (req, res) => {
     if (images.length < 10) {
       $('img').each((i, el) => {
         if (images.length >= 10) return;
-        const src = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original');
+        const $el = $(el);
+        const src = $el.attr('src') || 
+                    $el.attr('data-src') || 
+                    $el.attr('data-lazy-src') || 
+                    $el.attr('data-original') ||
+                    $el.attr('data-actualsrc') ||
+                    $el.attr('srcset');
         addImage(src);
       });
     }

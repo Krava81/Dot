@@ -88,6 +88,7 @@ export default function App() {
         requestUrl.searchParams.set('v', '5.0');
         if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
 
+        addClientLog(`[Native] Requesting ${requestUrl.pathname}...`);
         const res = await http.request({
           url: requestUrl.toString(),
           method: options.method || 'GET',
@@ -116,6 +117,11 @@ export default function App() {
           throw new Error(`API_NOT_FOUND: ${requestUrl.pathname}`);
         }
 
+        if (res.status === 401) {
+          addClientLog(`❌ 401 Unauthorized: ${requestUrl.pathname}`);
+          throw new Error("AI_STUDIO_AUTH_REQUIRED");
+        }
+
         return {
           ok: res.status >= 200 && res.status < 300,
           status: res.status,
@@ -136,7 +142,12 @@ export default function App() {
       }
     } else {
       try {
-        const res = await fetch(url, { ...options, headers });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        
+        addClientLog(`[Web] Requesting ${url}...`);
+        const res = await fetch(url, { ...options, headers, signal: controller.signal });
+        clearTimeout(timeoutId);
         
         // v4.1: Detect AI Studio Proxy "Cookie Check" in Web mode
         const contentType = res.headers.get('content-type');
@@ -146,9 +157,18 @@ export default function App() {
             throw new Error("AI_STUDIO_COOKIE_CHECK");
           }
         }
+
+        if (res.status === 401) {
+          addClientLog(`❌ 401 Unauthorized: ${url}`);
+          throw new Error("AI_STUDIO_AUTH_REQUIRED");
+        }
         
         return res;
       } catch (err: any) {
+        if (err.name === 'AbortError') {
+          addClientLog(`❌ Timeout requesting ${url}`);
+          throw new Error("TIMEOUT_ERROR");
+        }
         if (err.message === "AI_STUDIO_COOKIE_CHECK") throw err;
         throw err;
       }
@@ -650,7 +670,13 @@ export default function App() {
       }
     } catch (e: any) {
       addClientLog(`❌ Sync Check Error: ${e.message}`);
-      setSubmitMsg({ type: 'error', text: `Ошибка проверки синхронизации: ${e.message}` });
+      let msg = e.message;
+      if (msg === "AI_STUDIO_AUTH_REQUIRED" || msg === "AI_STUDIO_COOKIE_CHECK") {
+        msg = "Требуется авторизация Google. Нажмите 'Авторизовать браузер' в настройках.";
+      } else if (msg === "TIMEOUT_ERROR") {
+        msg = "Превышено время ожидания ответа от сервера (15с).";
+      }
+      setSubmitMsg({ type: 'error', text: `Ошибка проверки синхронизации: ${msg}` });
     } finally {
       setIsTestingConnection(false);
     }
@@ -678,8 +704,17 @@ export default function App() {
         const errText = await res.text();
         setSubmitMsg({ type: 'error', text: `Ошибка: ${errText}` });
       }
-    } catch (err) {
-      setSubmitMsg({ type: 'error', text: 'Сетевая ошибка при отправке ссылки.' });
+    } catch (err: any) {
+      addClientLog(`❌ Submit Error: ${err.message}`);
+      let msg = err.message;
+      if (msg === "AI_STUDIO_AUTH_REQUIRED" || msg === "AI_STUDIO_COOKIE_CHECK") {
+        msg = "Требуется авторизация Google. Нажмите 'Авторизовать браузер' в настройках.";
+      } else if (msg === "TIMEOUT_ERROR") {
+        msg = "Превышено время ожидания ответа от сервера (15с).";
+      } else {
+        msg = "Сетевая ошибка при отправке ссылки.";
+      }
+      setSubmitMsg({ type: 'error', text: msg });
     } finally {
       setIsSubmitting(false);
       fetchData();
@@ -752,11 +787,13 @@ export default function App() {
               }
             }
 
+            addClientLog(`🤖 Начинаю обработку задачи ${task.id}...`);
             const adaptedText = await processNewsText(
               task.data.title, 
               task.data.text, 
               keyToUse
             );
+            addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
             
             const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
