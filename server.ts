@@ -76,6 +76,7 @@ let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
 let botWaitRemaining = 0;
 let currentBotToken = getPersistentToken();
+let isInitializing = false;
 
 // ==========================================
 // 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
@@ -206,11 +207,28 @@ function addLog(msg: string) {
 let bot: Telegraf | null = null;
 
 async function initBot(token: string) {
+  if (isInitializing) {
+    addLog("⚠️ Bot initialization already in progress, skipping...");
+    return;
+  }
+
+  if (botStatus === 'active' && token === currentBotToken && bot) {
+    addLog("ℹ️ Bot already active with same token, skipping re-init.");
+    return;
+  }
+
+  isInitializing = true;
+  botStatus = 'starting';
   addLog(`initBot called with token: ${token.substring(0, 5)}...`);
+  
   if (bot) {
     try {
       addLog("Stopping existing bot instance...");
+      // v5.4: Use a more robust stop sequence
       await bot.stop();
+      bot = null;
+      // Give Telegram a moment to close the connection
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (e) {
       addLog(`Error stopping bot: ${e}`);
     }
@@ -218,46 +236,75 @@ async function initBot(token: string) {
 
   if (!token || token.trim().length < 10) {
     botStatus = 'offline';
+    isInitializing = false;
     addLog("❌ Bot token is empty or invalid.");
     return;
   }
 
-  try {
-    botStatus = 'starting';
-    addLog(`Initializing bot with token length ${token.length}...`);
-    bot = new Telegraf(token);
+  let retryCount = 0;
+  const maxRetries = 3;
 
-    bot.start((ctx) => {
-      lastChatId = ctx.chat.id;
-      addLog(`✅ Bot started in chat: ${lastChatId}`);
-      ctx.reply("Бот активен и готов к работе!");
-    });
+  while (retryCount < maxRetries) {
+    try {
+      botStatus = 'starting';
+      addLog(`Initializing bot (Attempt ${retryCount + 1}/${maxRetries}) with token length ${token.length}...`);
+      bot = new Telegraf(token);
 
-    bot.command('status', (ctx) => {
-      ctx.reply(`Статус: Активен\nВерсия: 5.0\nЗадач в очереди: ${tasks.filter(t => t.status === 'pending').length}`);
-    });
+      bot.start((ctx) => {
+        lastChatId = ctx.chat.id;
+        addLog(`✅ Bot started in chat: ${lastChatId}`);
+        ctx.reply("Бот активен и готов к работе!");
+      });
 
-    bot.on('text', (ctx) => {
-      lastChatId = ctx.chat.id;
-      addLog(`📩 Message from ${ctx.chat.id}: ${ctx.message.text}`);
-    });
+      bot.command('status', (ctx) => {
+        ctx.reply(`Статус: Активен\nВерсия: 5.0\nЗадач в очереди: ${tasks.filter(t => t.status === 'pending').length}`);
+      });
 
-    addLog("Launching bot...");
-    await bot.launch();
-    botStatus = 'active';
-    currentBotToken = token;
-    savePersistentToken(token);
-    addLog("🚀 Bot successfully launched and active!");
-  } catch (err: any) {
-    botStatus = 'offline';
-    addLog(`❌ Bot launch error: ${err.message}`);
-    if (err.message.includes('401')) {
-      addLog("⚠️ Invalid bot token (401). Please check your token from @BotFather.");
-    }
-    if (err.message.includes('404')) {
-      addLog("⚠️ Bot token not found (404).");
+      bot.on('text', (ctx) => {
+        lastChatId = ctx.chat.id;
+        addLog(`📩 Message from ${ctx.chat.id}: ${ctx.message.text}`);
+      });
+
+      addLog("Launching bot...");
+      try {
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        addLog("Webhook deleted successfully.");
+      } catch (e) {
+        addLog(`Note: Could not delete webhook: ${e}`);
+      }
+      await bot.launch();
+      botStatus = 'active';
+      currentBotToken = token;
+      savePersistentToken(token);
+      addLog("🚀 Bot successfully launched and active!");
+      isInitializing = false;
+      return;
+    } catch (err: any) {
+      addLog(`❌ Bot launch error: ${err.message}`);
+      
+      if (err.message.includes('409') || err.message.includes('Conflict')) {
+        addLog("⚠️ Conflict detected (409). Waiting before retry...");
+        retryCount++;
+        await new Promise(resolve => setTimeout(resolve, 5000 * retryCount));
+        continue;
+      }
+
+      botStatus = 'offline';
+      isInitializing = false;
+      
+      if (err.message.includes('401')) {
+        addLog("⚠️ Invalid bot token (401). Please check your token from @BotFather.");
+      }
+      if (err.message.includes('404')) {
+        addLog("⚠️ Bot token not found (404).");
+      }
+      return;
     }
   }
+  
+  botStatus = 'offline';
+  isInitializing = false;
+  addLog("❌ Failed to launch bot after multiple retries.");
 }
 
 // Initial bot start

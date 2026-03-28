@@ -743,7 +743,7 @@ export default function App() {
       }
     };
     if (status) syncToken();
-  }, [status, botToken, baseUrl]);
+  }, [status?.bot, botToken, baseUrl]);
 
   // AI Worker Logic
   useEffect(() => {
