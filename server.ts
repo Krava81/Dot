@@ -408,12 +408,12 @@ app.post("/api/process-url", async (req, res) => {
       text = $('article').text() || $('main').text() || $('body').text();
     }
 
-    // Image extraction (up to 5)
+    // Image extraction (up to 10)
     const images: string[] = [];
     const baseUrl = new URL(url).origin;
 
     const addImage = (src: string | undefined) => {
-      if (!src || images.length >= 5) return;
+      if (!src || images.length >= 10) return;
       src = src.trim();
       if (!src || src.startsWith('data:')) return;
 
@@ -450,22 +450,22 @@ app.post("/api/process-url", async (req, res) => {
 
     // 2. Article/Main content images (prioritize these)
     $('article img, main img, .content img, .post img, .entry img').each((i, el) => {
-      if (images.length >= 5) return;
+      if (images.length >= 10) return;
       const src = $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original') || $(el).attr('src') || $(el).attr('data-src-2x');
       addImage(src);
     });
 
     // 3. All other images
-    if (images.length < 5) {
+    if (images.length < 10) {
       $('img').each((i, el) => {
-        if (images.length >= 5) return;
+        if (images.length >= 10) return;
         const src = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original');
         addImage(src);
       });
     }
 
     // 4. Picture source tags
-    if (images.length < 5) {
+    if (images.length < 10) {
       $('picture source').each((i, el) => {
         const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
         if (srcset) {
@@ -476,7 +476,7 @@ app.post("/api/process-url", async (req, res) => {
     }
 
     // 5. Links to images (often high quality)
-    if (images.length < 5) {
+    if (images.length < 10) {
       $('a').each((i, el) => {
         const href = $(el).attr('href');
         if (href && href.match(/\.(jpeg|jpg|png|webp)/i)) {

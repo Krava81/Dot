@@ -46,7 +46,7 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     const ai = new GoogleGenAI({ apiKey: cleanKey });
     
     // Try primary model, fallback to stable models if it fails
-    const models = ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.0-flash-exp"];
+    const models = ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-1.5-flash"];
     
     let lastError = null;
     for (const modelName of models) {
@@ -77,7 +77,7 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     
     if (isOpenRouter) {
       endpoint = "https://openrouter.ai/api/v1/chat/completions";
-      model = "google/gemini-2.0-flash-exp:free";
+      model = "google/gemini-2.0-flash-001";
     } else if (isGrok) {
       endpoint = "https://api.x.ai/v1/chat/completions";
       model = "grok-beta";
