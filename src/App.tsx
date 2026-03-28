@@ -25,7 +25,7 @@ const getInitialBaseUrl = () => {
   }
   const saved = localStorage.getItem('tg_bot_server_url');
   if (saved) return saved;
-  return process.env.VITE_APP_URL || '';
+  return import.meta.env.VITE_APP_URL || '';
 };
 
 export default function App() {
@@ -1686,7 +1686,7 @@ export default function App() {
                 </button>
                 <button 
                   onClick={() => {
-                    const defaultUrl = process.env.VITE_APP_URL || '';
+                    const defaultUrl = import.meta.env.VITE_APP_URL || '';
                     setBaseUrl(defaultUrl);
                   }}
                   className="w-full px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-medium rounded-xl transition-all border border-neutral-700"

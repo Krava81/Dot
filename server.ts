@@ -248,7 +248,10 @@ async function initBot(token: string) {
     try {
       botStatus = 'starting';
       addLog(`Initializing bot (Attempt ${retryCount + 1}/${maxRetries}) with token length ${token.length}...`);
-      bot = new Telegraf(token);
+      
+      // v5.5: Ensure any previous instance from THIS loop is stopped before creating a new one
+      const currentInstance = new Telegraf(token);
+      bot = currentInstance;
 
       bot.start((ctx) => {
         lastChatId = ctx.chat.id;
@@ -267,11 +270,13 @@ async function initBot(token: string) {
 
       addLog("Launching bot...");
       try {
+        // v5.5: More aggressive drop_pending_updates
         await bot.telegram.deleteWebhook({ drop_pending_updates: true });
         addLog("Webhook deleted successfully.");
       } catch (e) {
         addLog(`Note: Could not delete webhook: ${e}`);
       }
+      
       await bot.launch();
       botStatus = 'active';
       currentBotToken = token;
@@ -282,10 +287,20 @@ async function initBot(token: string) {
     } catch (err: any) {
       addLog(`❌ Bot launch error: ${err.message}`);
       
+      // v5.5: If launch failed, try to stop the instance we just created
+      if (bot) {
+        try {
+          await bot.stop();
+        } catch (e) {}
+        bot = null;
+      }
+
       if (err.message.includes('409') || err.message.includes('Conflict')) {
+        botStatus = 'waiting';
         addLog("⚠️ Conflict detected (409). Waiting before retry...");
         retryCount++;
-        await new Promise(resolve => setTimeout(resolve, 5000 * retryCount));
+        // v5.5: Increased wait time (10s, 20s, 30s)
+        await new Promise(resolve => setTimeout(resolve, 10000 * retryCount));
         continue;
       }
 
