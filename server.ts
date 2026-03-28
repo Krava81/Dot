@@ -389,7 +389,9 @@ app.post("/api/process-url", async (req, res) => {
   try {
     const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
       },
       timeout: 10000
     });
@@ -427,9 +429,9 @@ app.post("/api/process-url", async (req, res) => {
       if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
       
       // Check for common image extensions or "image" in path, or WeChat specific patterns
-      const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp)/i);
-      const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=');
-      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img');
+      const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
+      const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
+      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp');
 
       if (isLikelyImage) {
         if (!images.includes(src)) {
@@ -479,7 +481,7 @@ app.post("/api/process-url", async (req, res) => {
     if (images.length < 10) {
       $('a').each((i, el) => {
         const href = $(el).attr('href');
-        if (href && href.match(/\.(jpeg|jpg|png|webp)/i)) {
+        if (href && href.match(/\.(jpeg|jpg|png|webp|avif|jfif|bmp)/i)) {
           addImage(href);
         }
       });
