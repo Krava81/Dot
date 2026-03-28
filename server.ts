@@ -316,50 +316,52 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
         const imageUrls = task.data.images || [];
         const sourceUrl = task.data.url || "";
         if (imageUrls.length > 0) {
-          addLog(`📸 Downloading ${imageUrls.length} images to send as buffers...`);
+          addLog(`📸 Downloading ${imageUrls.length} images in parallel...`);
           
-          const mediaGroup: any[] = [];
-          const caption = adaptedText.length <= 1024 ? adaptedText : "";
-          
-          for (let i = 0; i < imageUrls.length; i++) {
+          const downloadPromises = imageUrls.map(async (imgUrl: string, i: number) => {
             try {
-              const imgUrl = imageUrls[i];
               const imgRes = await axios.get(imgUrl, { 
                 responseType: 'arraybuffer',
-                timeout: 10000, // Increased timeout
+                timeout: 15000, // 15s per image
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                  'Referer': sourceUrl, // Fixed: use task.data.url
+                  'Referer': sourceUrl,
                   'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
                   'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
                 }
               });
               
-              if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
+              if (imgRes.data && imgRes.data.byteLength > 1000) {
                 const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
-                mediaGroup.push({
+                return {
                   type: 'photo',
                   media: { 
                     source: Buffer.from(imgRes.data),
                     filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
-                  },
-                  caption: i === 0 ? caption : undefined
-                });
-              } else {
-                addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
+                  }
+                };
               }
+              return null;
             } catch (imgErr: any) {
               addLog(`⚠️ Failed to download image ${i+1}: ${imgErr.message}`);
+              return null;
             }
-          }
+          });
 
+          const results = await Promise.all(downloadPromises);
+          const mediaGroup = results.filter(r => r !== null) as any[];
+          
           if (mediaGroup.length > 0) {
+            // Add caption to the first image
+            const caption = adaptedText.length <= 1024 ? adaptedText : "";
+            mediaGroup[0].caption = caption;
+
+            addLog(`📤 Sending media group with ${mediaGroup.length} images...`);
             await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
             if (adaptedText.length > 1024) {
               await bot.telegram.sendMessage(lastChatId, adaptedText);
             }
           } else {
-            // If all downloads failed, send text only
             await bot.telegram.sendMessage(lastChatId, adaptedText);
           }
         } else {
@@ -368,7 +370,6 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
         addLog(`✅ Message sent to Telegram (${lastChatId})`);
       } catch (e: any) {
         addLog(`❌ Error sending to Telegram: ${e.message}`);
-        // Fallback: try sending just text if media group fails
         try {
           await bot.telegram.sendMessage(lastChatId, adaptedText);
           addLog(`✅ Fallback: Text-only message sent.`);
@@ -398,7 +399,7 @@ app.post("/api/process-url", async (req, res) => {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
       },
-      timeout: 15000 // Increased to 15s
+      timeout: 30000 // Increased to 30s for slow sites like WeChat
     });
     addLog(`📄 Page loaded (Status: ${response.status}, Size: ${Math.round(response.data.length / 1024)}KB). Parsing...`);
     const $ = cheerio.load(response.data);

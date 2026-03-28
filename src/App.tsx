@@ -50,12 +50,14 @@ export default function App() {
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isDebugMode, setIsDebugMode] = useState(false);
 
-  // Универсальный загрузчик v5.0
+  // Универсальный загрузчик v5.3
   const universalFetch = async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
     const isNativePlatform = Capacitor.isNativePlatform();
     const isWebMirror = window.location.href.includes('run.app');
+    
+    const customTimeout = options.timeout || 120000; // v5.3: Default 120s, but can be overridden
     
     const headers = {
       'Content-Type': 'application/json',
@@ -95,7 +97,7 @@ export default function App() {
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
           connectTimeout: 30000,
-          readTimeout: 120000 // v5.1: Increased to 120s for long AI tasks
+          readTimeout: customTimeout // v5.3: Use custom timeout
         });
         
         // v4.4: Если сервер вернул HTML вместо JSON — это почти всегда страница логина Google или ошибка прокси
@@ -143,7 +145,7 @@ export default function App() {
     } else {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000); // v5.1: Increased to 120s for long AI tasks
+        const timeoutId = setTimeout(() => controller.abort(), customTimeout); // v5.3: Use custom timeout
         
         addClientLog(`[Web] Requesting ${url}...`);
         const res = await fetch(url, { ...options, headers, signal: controller.signal });
@@ -654,22 +656,25 @@ export default function App() {
   const testSync = async () => {
     setIsTestingConnection(true);
     setSubmitMsg(null);
+    addClientLog("🔍 Запуск проверки синхронизации...");
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      addClientLog(`🔍 Запрос к ${currentBaseUrl}/api/sync-check...`);
       const res = await universalFetch(`${currentBaseUrl}/api/sync-check`);
       if (res.ok) {
         const data = await res.json();
-        addClientLog(`🔍 Sync Check: ${JSON.stringify(data)}`);
+        addClientLog(`🔍 Ответ от сервера: ${JSON.stringify(data)}`);
         if (data.authenticated) {
           setSubmitMsg({ type: 'success', text: 'Синхронизация подтверждена сервером!' });
         } else {
           setSubmitMsg({ type: 'error', text: 'Сервер не видит вашу сессию. Проверьте куки.' });
         }
       } else {
+        addClientLog(`❌ Ошибка проверки синхронизации: Статус ${res.status}`);
         throw new Error(`Ошибка: ${res.status}`);
       }
     } catch (e: any) {
-      addClientLog(`❌ Sync Check Error: ${e.message}`);
+      addClientLog(`❌ Ошибка Sync Check: ${e.message}`);
       let msg = e.message;
       if (msg === "AI_STUDIO_AUTH_REQUIRED" || msg === "AI_STUDIO_COOKIE_CHECK") {
         msg = "Требуется авторизация Google. Нажмите 'Авторизовать браузер' в настройках.";
@@ -805,10 +810,12 @@ export default function App() {
 
             addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
             
+            // v5.3: Increased timeout to 180s for completion call (includes image downloads)
             const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText, images: task.data.images })
+              body: JSON.stringify({ adaptedText, images: task.data.images }),
+              timeout: 180000 
             });
 
             if (!completeRes.ok) {

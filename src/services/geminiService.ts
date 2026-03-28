@@ -50,13 +50,15 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     const models = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-3.1-pro-preview"];
     
     let lastError = null;
-    for (const modelName of models) {
+    for (let i = 0; i < models.length; i++) {
+      const modelName = models[i];
       try {
         console.log(`[GeminiService] Trying model: ${modelName}. Prompt length: ${prompt.length}`);
         
-        // v5.2: Add 90s timeout for Gemini (increased from 60s for free tier)
+        // v5.3: 60s timeout for first model, 90s for others
+        const currentTimeout = i === 0 ? 60000 : 90000;
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 90000)
+          setTimeout(() => reject(new Error(`Gemini timeout (${modelName}) after ${currentTimeout/1000}s`)), currentTimeout)
         );
         
         const response = await Promise.race([
