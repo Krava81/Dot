@@ -46,34 +46,40 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     const ai = new GoogleGenAI({ apiKey: cleanKey });
     
     // Try primary model, fallback to stable models if it fails
-    // v5.0: Prioritize flash for speed, and add timeout
-    const models = ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-1.5-flash"];
+    // v5.2: Use gemini-3.1-flash-lite-preview as first choice for free tier (faster, lighter)
+    const models = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-3.1-pro-preview"];
     
     let lastError = null;
     for (const modelName of models) {
       try {
-        console.log(`Trying Gemini model: ${modelName}`);
+        console.log(`[GeminiService] Trying model: ${modelName}. Prompt length: ${prompt.length}`);
         
-        // v5.0: Add 30s timeout for Gemini
+        // v5.2: Add 90s timeout for Gemini (increased from 60s for free tier)
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Gemini timeout")), 30000)
+          setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 90000)
         );
         
         const response = await Promise.race([
           ai.models.generateContent({
             model: modelName,
-            contents: prompt
+            contents: prompt,
+            config: {
+              // v5.2: Lite model is already minimal thinking
+            }
           }),
           timeoutPromise
         ]) as any;
 
-        if (response && response.text) return response.text;
-        throw new Error("Empty response from Gemini");
+        if (response && response.text) {
+          console.log(`[GeminiService] Success with model: ${modelName}. Response length: ${response.text.length}`);
+          return response.text;
+        }
+        throw new Error(`Empty response from Gemini (${modelName})`);
       } catch (err: any) {
         lastError = err;
-        console.warn(`Model ${modelName} failed:`, err.message);
+        console.warn(`[GeminiService] Model ${modelName} failed:`, err.message);
         if (err.message?.includes("API key not valid")) throw err;
-        if (err.message?.includes("Gemini timeout")) continue;
+        // If it's a timeout or other error, try the next model
         continue;
       }
     }

@@ -94,8 +94,8 @@ export default function App() {
           method: options.method || 'GET',
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
-          connectTimeout: 15000,
-          readTimeout: 15000
+          connectTimeout: 30000,
+          readTimeout: 120000 // v5.1: Increased to 120s for long AI tasks
         });
         
         // v4.4: Если сервер вернул HTML вместо JSON — это почти всегда страница логина Google или ошибка прокси
@@ -143,7 +143,7 @@ export default function App() {
     } else {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // v5.1: Increased to 120s for long AI tasks
         
         addClientLog(`[Web] Requesting ${url}...`);
         const res = await fetch(url, { ...options, headers, signal: controller.signal });
@@ -770,7 +770,8 @@ export default function App() {
 
         if (task) {
           setIsWorking(true);
-          console.log("Processing task:", task.id);
+          addClientLog(`🤖 Найдена задача: ${task.id}. Обработка через ИИ...`);
+          console.log(`[AI Worker] Processing task ${task.id}. Text length: ${task.data?.text?.length || 0}`);
           
           try {
             if (!task.data.text || task.data.text.trim().length < 10) {
@@ -787,30 +788,41 @@ export default function App() {
               }
             }
 
-            addClientLog(`🤖 Начинаю обработку задачи ${task.id}...`);
+            if (!keyToUse || keyToUse.trim().length < 10) {
+              throw new Error("API ключ не настроен или слишком короткий. Пожалуйста, добавьте ключ в настройках.");
+            }
+
             const adaptedText = await processNewsText(
               task.data.title, 
               task.data.text, 
               keyToUse
             );
+            console.log(`[AI Worker] AI processing complete for task ${task.id}. Result length: ${adaptedText?.length || 0}`);
+            
+            if (!adaptedText || adaptedText.length < 10) {
+              throw new Error("AI вернул пустой или слишком короткий результат.");
+            }
+
             addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
             
             const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText })
+              body: JSON.stringify({ adaptedText, images: task.data.images })
             });
 
             if (!completeRes.ok) {
               throw new Error(`Ошибка при завершении задачи: ${completeRes.statusText}`);
             }
+            addClientLog(`✅ Задача ${task.id} успешно завершена.`);
           } catch (e) {
-            console.error("Task processing failed", e);
+            console.error(`[AI Worker] Error processing task ${task.id}:`, e);
+            addClientLog(`⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}`);
             // Report error back to server so it can be logged and task can be removed
             await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}` })
+              body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}`, images: task.data.images })
             });
           } finally {
             setIsWorking(false);

@@ -415,6 +415,15 @@ app.post("/api/process-url", async (req, res) => {
       text = $('article').text() || $('main').text() || $('body').text();
     }
 
+    // v5.2: Check for bot detection (WeChat etc)
+    const botDetectionKeywords = ['环境异常', '验证', 'Verification', 'Robot', 'Captcha', 'Access Denied'];
+    const isBotDetected = botDetectionKeywords.some(kw => text.includes(kw) || title.includes(kw));
+    
+    if (isBotDetected) {
+      addLog(`⚠️ Bot detection detected on page! AI might fail or return error.`);
+      text = `[ОШИБКА: Сайт заблокировал доступ бота. Пожалуйста, попробуйте другую ссылку или скопируйте текст вручную.]\n\n` + text;
+    }
+
     // Image extraction (up to 10)
     const images: string[] = [];
     const baseUrl = new URL(url).origin;
@@ -440,15 +449,25 @@ app.post("/api/process-url", async (req, res) => {
 
       if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
       
-      // Check for common image extensions or "image" in path, or WeChat specific patterns
+      // v5.1: Handle WeChat specific image formats and determine extension
       const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
       const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
+      
+      // Determine extension for WeChat images if missing
+      let finalSrc = src;
+      if (isWeChatImage && !hasImageExt) {
+        const fmtMatch = src.match(/wx_fmt=([a-z]+)/);
+        const fmt = fmtMatch ? fmtMatch[1] : 'webp'; // Default to webp for WeChat
+        addLog(`📸 WeChat image detected, format: ${fmt}`);
+      }
+
       const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp') || src.includes('ext=webp');
 
       if (isLikelyImage) {
-        if (!images.includes(src)) {
-          images.push(src);
-          addLog(`📸 Found image (${src.toLowerCase().includes('webp') ? 'WEBP' : 'IMG'}): ${src.substring(0, 60)}...`);
+        if (!images.includes(finalSrc)) {
+          images.push(finalSrc);
+          const ext = finalSrc.toLowerCase().includes('webp') ? 'WEBP' : 'IMG';
+          addLog(`📸 Found image (${ext}): ${finalSrc.substring(0, 60)}...`);
         }
       }
     };
