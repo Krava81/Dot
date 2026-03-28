@@ -1,7 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import axios from "axios";
 
-// ✅ ДОБАВЛЯЕМ export
 export async function processNewsText(title: string, text: string, manualApiKey?: string) {
   const resolveKey = () => {
     if (manualApiKey && manualApiKey.trim().length > 10) return manualApiKey.trim();
@@ -43,9 +42,9 @@ Title: ${title}
 Content: ${text}`;
 
   if (isGemini) {
-    console.log("Using Google Gemini API");
-    const ai = new GoogleGenAI({ apiKey: cleanKey });
+    console.log("Using Google Gemini API with REST endpoint");
     
+    // ✅ ИСПОЛЬЗУЕМ REST API НАПРЯМУЮ БЕЗ SDK (более надежно)
     const models = ["gemini-1.5-flash", "gemini-1.5-pro"];
     
     let lastError = null;
@@ -54,41 +53,63 @@ Content: ${text}`;
       try {
         console.log(`[GeminiService] Trying model: ${modelName}. Prompt length: ${prompt.length}`);
         
-        const currentTimeout = i === 0 ? 60000 : 90000;
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Gemini timeout (${modelName}) after ${currentTimeout/1000}s`)), currentTimeout)
+        // Используем REST API Gemini
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${cleanKey}`,
+          {
+            contents: [
+              {
+                parts: [
+                  {
+                    text: prompt
+                  }
+                ]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 4096
+            }
+          },
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            timeout: 60000
+          }
         );
-        
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model: modelName,
-            contents: prompt,
-            config: {}
-          }),
-          timeoutPromise
-        ]) as any;
 
-        if (response && response.text && response.text.trim().length > 0) {
-          console.log(`[GeminiService] Success with model: ${modelName}. Response length: ${response.text.length}`);
-          return response.text;
+        if (response.status === 200 && response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+          const text = response.data.candidates[0].content.parts[0].text.trim();
+          if (text.length > 0) {
+            console.log(`[GeminiService] Success with model: ${modelName}. Response length: ${text.length}`);
+            return text;
+          }
         }
         throw new Error(`Empty response from Gemini (${modelName})`);
       } catch (err: any) {
         lastError = err;
-        console.warn(`[GeminiService] Model ${modelName} failed:`, err.message);
+        const errMsg = err.response?.data?.error?.message || err.message;
+        console.warn(`[GeminiService] Model ${modelName} failed:`, errMsg);
         
-        if (err.message?.includes("API key") || err.message?.includes("not valid") || err.message?.includes("401") || err.message?.includes("403")) {
-          throw err;
+        // Если ошибка в ключе - сразу выбрасываем
+        if (err.response?.status === 400 && errMsg?.includes("API key")) {
+          throw new Error("🚫 Gemini: Неверный или неактивный API ключ. Проверьте ключ на console.cloud.google.com");
         }
         
-        if (err.message?.includes("timeout")) {
-          continue;
+        if (err.response?.status === 403) {
+          throw new Error("🚫 Gemini: Ключ не имеет доступа к Gemini API. Включите API в Cloud Console.");
         }
         
+        if (err.response?.status === 429) {
+          throw new Error("🚫 Gemini: Лимит запросов исчерпан. Подождите или используйте другой ключ.");
+        }
+        
+        // Пробуем следующую модель
         continue;
       }
     }
-    throw lastError || new Error("Не удалось получить ответ от Gemini.");
+    throw lastError || new Error("❌ Gemini: Не удалось получить ответ от Gemini.");
   }
   
   if (isOpenRouter || isGrok || isGroq || isOpenAI || isNvidia) {
@@ -148,7 +169,7 @@ Content: ${text}`;
       let errMsg = "";
       
       if (err.response?.status === 429) {
-        errMsg = `${provider}: 🚫 Лимит запросов исчерпан (rate limit). Используйте другой ключ или подождите.`;
+        errMsg = `${provider}: 🚫 Лимит запросов и��черпан (rate limit). Используйте другой ключ или подождите.`;
       } else if (err.response?.status === 400) {
         const errorData = err.response?.data?.error?.message || String(err.response?.data);
         if (errorData.includes('quota') || errorData.includes('limit') || errorData.includes('exceeded')) {
