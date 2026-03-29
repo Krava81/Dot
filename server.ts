@@ -9,7 +9,6 @@ import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-// FIX 1: Исправлен путь импорта
 import { parseWeChat, getLogs as getWechatLogs } from './wechatParser.js';
 import { processNewsText } from './src/services/geminiService.js';
 
@@ -18,10 +17,8 @@ dotenv.config();
 const app = express();
 const TOKEN_FILE = path.join(process.cwd(), 'bot_token.txt');
 
-// v5.0: Хранилище сессий для ручной синхронизации
 const activeSessions = new Set<string>();
 
-// 1. CORS
 app.use(cors({
   origin: true,
   credentials: true,
@@ -31,7 +28,6 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 
-// 2. Middleware для проверки сессии
 app.use((req, res, next) => {
   res.setHeader('X-App-Version', '5.0');
   const token = req.headers['x-session-token'] as string ||
@@ -201,7 +197,8 @@ app.get("/api/logs", (req, res) => {
 app.get("/api/config/status", async (req, res) => {
   const envKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
   let keyValid = false;
-  let keyError = null;
+  // FIX 2: Явный тип string | null — иначе TypeScript выводит тип как null
+  let keyError: string | null = null;
 
   if (envKey && envKey.startsWith('AIza') && envKey.trim().length > 10) {
     try {
@@ -364,7 +361,8 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
                   timeout: 15000,
                   headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': 'https://mp.weixin.qq.com/ ',
+                    // FIX 1: Убран пробел в конце URL
+                    'Referer': 'https://mp.weixin.qq.com/',
                   }
                 });
 
@@ -455,7 +453,7 @@ app.post("/api/process-url", async (req, res) => {
         if (pText.length > 20) text += pText + '\n';
       });
       if (text.length < 100) text = $('article').text() || $('main').text() || $('body').text();
-      
+
       const images: string[] = [];
       $('img').each((i, el) => {
         if (images.length >= 10) return;
@@ -508,6 +506,7 @@ app.post('/api/test-key', async (req, res) => {
   }
 });
 
+// 404 — должен быть последним среди /api роутов
 app.use('/api', (req, res) => {
   addLog(`⚠️ 404 Not Found: ${req.method} ${req.url}`);
   res.status(404).json({ error: "API Route Not Found", path: req.url, method: req.method, version: "5.0" });
