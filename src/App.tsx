@@ -388,7 +388,7 @@ if (sessionToken.includes('=')) {
   
   // УДАЛИТЕ СЮДА ЗАКРЫВАЮЩУЮ СКОБКУ }, если она там есть!
   
-} else { // Теперь else корректно относится к if выше
+ else { // Теперь else корректно относится к if выше
   // Одиночный токен SESS
   await CapacitorCookies.setCookie({
     url: url,
