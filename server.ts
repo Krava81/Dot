@@ -277,10 +277,10 @@ async function initBot(token: string) {
         }
         await bot.launch();
         botStatus = 'active';
+        isInitializing = false;
         currentBotToken = token;
         savePersistentToken(token);
         addLog("🚀 Bot successfully launched and active!");
-        isInitializing = false;
         return; // Success
       } catch (err: any) {
         if (err.message.includes('409') || err.message.includes('Conflict')) {
@@ -402,12 +402,8 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
   withCredentials: false, // WeChat не требует cookies в запросе
   maxRedirects: 5 // Некоторые изображения редиректят
 });
-                  'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                  'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
-                }
-              });
-              
-              if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
+
+if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
                 const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
                 mediaGroup.push({
                   type: 'photo',
