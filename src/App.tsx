@@ -344,38 +344,36 @@ export default function App() {
   // v5.0: Принудительная установка Cookie (включая прокси-куки)
   useEffect(() => {
     const syncNativeCookies = async () => {
-      if (sessionToken && baseUrl && (Capacitor.isNativePlatform())) {
+      if (sessionToken && baseUrl && Capacitor.isNativePlatform()) {
         try {
           let url = baseUrl.trim();
           if (!url.startsWith('http')) url = `https://${url}`;
-          const domain = new URL(url).hostname;
           
-          addClientLog(`Синхронизация нативных Cookie для ${domain}...`);
+          addClientLog(`Синхронизация нативных Cookie...`);
           
           // v5.0: Если токен содержит '=', это полный набор Cookie
           if (sessionToken.includes('=')) {
-  const cookiePairs = sessionToken.split('; ');
-  for (const pair of cookiePairs) {
-    // ✅ НОВОЕ: Находим ПЕРВЫЙ '=' вместо split
-    const eqIndex = pair.indexOf('=');
-    if (eqIndex > 0) {
-      const key = pair.substring(0, eqIndex).trim();
-      const value = pair.substring(eqIndex + 1).trim();
-      
-if (sessionToken.includes('=')) {
-  const cookiePairs = sessionToken.split('; ');
-  for (const pair of cookiePairs) {
-    const eqIndex = pair.indexOf('=');
-    if (eqIndex > 0) {
-    }
-  }
-  addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
-}
-else {
-  await CapacitorCookies.setCookie({
-  });
-  addClientLog("✅ Нативные Cookie синхронизированы (SESS).");
-} // <--- Вот здесь должна быть закрывающая скобка для всего if/else          } else {
+            const cookiePairs = sessionToken.split('; ');
+            for (const pair of cookiePairs) {
+              const eqIndex = pair.indexOf('=');
+              if (eqIndex > 0) {
+                const key = pair.substring(0, eqIndex).trim();
+                const value = pair.substring(eqIndex + 1).trim();
+                
+                if (key && value && /^[a-zA-Z0-9_-]+$/.test(key)) {
+                  await CapacitorCookies.setCookie({
+                    url: url,
+                    key: key,
+                    value: value,
+                    expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+                    path: '/',
+                  });
+                  addClientLog(`✅ Cookie set: ${key}`);
+                }
+              }
+            }
+            addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
+          } else {
             // Одиночный токен SESS
             await CapacitorCookies.setCookie({
               url: url,
