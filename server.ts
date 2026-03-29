@@ -227,7 +227,7 @@ async function initBot(token: string) {
       addLog("Stopping existing bot instance...");
       await bot.stop();
       // Give Telegram a moment to close the connection
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise(resolve => setTimeout(resolve, 20000));
       addLog("Existing bot stopped.");
     } catch (e) {
       addLog(`Error stopping bot: ${e}`);
@@ -387,13 +387,21 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
           
           for (let i = 0; i < imageUrls.length; i++) {
             try {
-              const imgUrl = imageUrls[i];
               const imgRes = await axios.get(imgUrl, { 
-                responseType: 'arraybuffer',
-                timeout: 10000, // Increased timeout
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                  'Referer': sourceUrl, // Fixed: use task.data.url
+  responseType: 'arraybuffer',
+  timeout: 15000, // увеличиваем timeout для WeChat
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://mp.weixin.qq.com/', // ← ПРАВИЛЬНЫЙ referer для WeChat!
+    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
+  },
+  withCredentials: false, // WeChat не требует cookies в запросе
+  maxRedirects: 5 // Некоторые изображения редиректят
+});
                   'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
                   'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
                 }
