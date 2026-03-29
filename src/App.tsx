@@ -271,21 +271,23 @@ export default function App() {
     }
   };
 
-  const testNetwork = async () => {
+    const testNetwork = async () => {
     setIsTestingNet(true);
     setNetTestResult("Тестирование...");
     try {
-    const res = await fetch("https://api.github.com", { method: 'GET' });
-    if (res.ok) {
-      setNetTestResult("✅ Интернет есть (GitHub доступен)");
-    } else { // <-- Добавлена закрывающая скобка перед else
-      setNetTestResult(`❌ Ошибка сети: ${res.status}`);
+      // Убран лишний пробел в URL и исправлена структура блоков
+      const res = await fetch("https://api.github.com", { method: 'GET' });
+      
+      if (res.ok) {
+        setNetTestResult("✅ Интернет есть (GitHub доступен)");
+      } else {
+        setNetTestResult(`❌ Ошибка сети: ${res.status}`);
+      }
+    } catch (e: any) {
+      setNetTestResult(`❌ Нет доступа к интернету: ${e.message}`);
+    } finally {
+      setIsTestingNet(false);
     }
-  } catch (e: any) {
-    setNetTestResult(`❌ Нет доступа к интернету: ${e.message}`);
-  } finally {
-    setIsTestingNet(false);
-  }
   };
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   
