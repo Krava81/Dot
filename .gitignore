@@ -1,8 +1,63 @@
+```gitignore
+# Dependencies
 node_modules/
-build/
+
+# Build outputs
 dist/
-coverage/
-.DS_Store
+build/
+*.js.map
+
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
 *.log
-.env*
-!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Testing
+.mypy_cache/
+.pytest_cache/
+.nyc_output/
+coverage-final.json
+
+# Compiled JavaScript
+*.min.js
+*.bundle.js
+
+# TypeScript
+*.tsbuildinfo
+```
+
+Wait, I need to reconsider. Looking at the modified files (`server.ts`, `src/App.tsx`, `src/services/geminiService.ts`), these are TypeScript/JavaScript source files. Let me check if there are any build artifacts or dependency directories in the changes...
+
+The changes only show source code files (.ts, .tsx) and no build artifacts, dependencies, or temporary files. According to rule 6, if the change list contains ONLY source or config files and NO build artifacts, dependencies, or temp files, I should output an EMPTY .gitignore.
+
+```gitignore
+
+```

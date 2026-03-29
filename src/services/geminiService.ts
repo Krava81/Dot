@@ -6,9 +6,72 @@ import axios from "axios";
  * In-memory cache: API key -> working model name
  * (process restarts will clear it)
  */
+
+/**
+ * Circuit Breaker state to prevent cascade failures
+ */
+interface CircuitBreakerState {
+  failures: number;
+  lastFailureTime: number;
+  state: 'closed' | 'open' | 'half-open';
+}
+
+const circuitBreaker: CircuitBreakerState = {
+  failures: 0,
+  lastFailureTime: 0,
+  state: 'closed'
+};
+
+const CIRCUIT_BREAKER_THRESHOLD = 5; // failures before opening
+const CIRCUIT_BREAKER_RESET_TIMEOUT = 60000; // 1 minute before trying again
+
+function shouldAllowRequest(): boolean {
+  const now = Date.now();
+  
+  if (circuitBreaker.state === 'closed') {
+    return true;
+  }
+  
+  if (circuitBreaker.state === 'open') {
+    if (now - circuitBreaker.lastFailureTime > CIRCUIT_BREAKER_RESET_TIMEOUT) {
+      console.log('[CircuitBreaker] Moving to half-open state');
+      circuitBreaker.state = 'half-open';
+      return true;
+    }
+    return false;
+  }
+  
+  // half-open: allow one request
+  return true;
+}
+
+function recordSuccess() {
+  circuitBreaker.failures = 0;
+  circuitBreaker.state = 'closed';
+}
+
+function recordFailure() {
+  circuitBreaker.failures++;
+  circuitBreaker.lastFailureTime = Date.now();
+  
+  if (circuitBreaker.failures >= CIRCUIT_BREAKER_THRESHOLD) {
+    console.warn(`[CircuitBreaker] Opening circuit after ${circuitBreaker.failures} failures`);
+    circuitBreaker.state = 'open';
+  }
+}
+
 const modelCache = new Map<string, string>();
 
 export async function processNewsText(title: string, text: string, manualApiKey?: string) {
+  console.log(`[GeminiService] Processing request: title="${title.substring(0, 50)}...", text length=${text.length}`);
+  
+  // Check circuit breaker before processing
+  if (!shouldAllowRequest()) {
+    const waitTime = Math.round((CIRCUIT_BREAKER_RESET_TIMEOUT - (Date.now() - circuitBreaker.lastFailureTime)) / 1000);
+    console.warn(`[GeminiService] Circuit breaker is open. Rejecting request.`);
+    throw new Error(`Circuit breaker is open. Too many recent failures. Try again in ${waitTime}s`);
+  }
+  
   const resolveKey = () => {
     if (manualApiKey && manualApiKey.trim().length > 10) {
       console.log("[GeminiService] Using manual API key");
@@ -26,13 +89,25 @@ export async function processNewsText(title: string, text: string, manualApiKey?
   if (!apiKey) throw new Error("API ключ не найден. Введите ключ в настройках.");
 
   const cleanKey = apiKey.trim();
-  const isGemini = cleanKey.startsWith("AIza");
-  const isOpenRouter = cleanKey.startsWith("sk-or-");
-  const isGrok = cleanKey.startsWith("xai-");
-  const isGroq = cleanKey.startsWith("gsk_");
-  const isOpenAI = cleanKey.startsWith("sk-proj-") || (cleanKey.startsWith("sk-") && !isOpenRouter);
+  
+  // Validate API key format before proceeding
+  const isValidGemini = cleanKey.startsWith("AIza") && cleanKey.length >= 30;
+  const isOpenRouter = cleanKey.startsWith("sk-or-") && cleanKey.length >= 20;
+  const isGrok = cleanKey.startsWith("xai-") && cleanKey.length >= 20;
+  const isGroq = cleanKey.startsWith("gsk_") && cleanKey.length >= 20;
+  const isOpenAI = (cleanKey.startsWith("sk-proj-") || (cleanKey.startsWith("sk-") && !isOpenRouter)) && cleanKey.length >= 20;
+  
+  const isValidKey = isValidGemini || isOpenRouter || isGrok || isGroq || isOpenAI;
+  
+  if (!isValidKey) {
+    console.error(`[GeminiService] Invalid API key format. Length: ${cleanKey.length}, starts with: "${cleanKey.substring(0, 8)}..."`);
+    throw new Error("Неверный формат API ключа. Проверьте, что ключ скопирован полностью.");
+  }
 
-  console.log(`Provider Detection: Gemini=${isGemini}, OpenRouter=${isOpenRouter}, Grok=${isGrok}, Groq=${isGroq}, OpenAI=${isOpenAI}`);
+  const isGemini = isValidGemini;
+
+  console.log(`[GeminiService] Provider Detection: Gemini=${isGemini}, OpenRouter=${isOpenRouter}, Grok=${isGrok}, Groq=${isGroq}, OpenAI=${isOpenAI}`);
+console.log(`[GeminiService] API Key format: starts with "${cleanKey.substring(0, 8)}...", length=${cleanKey.length}`);
 
   const prompt = `Translate the following news article to Russian and adapt it for a Telegram channel.
 Make it engaging, readable, and concise. Use emojis.
@@ -79,98 +154,96 @@ Content: ${text}`;
     // For each model, try up to N attempts for transient errors
     for (const modelName of models) {
       let attempt = 0;
-      const maxAttempts = 3; // allow up to 3 attempts for transient issues (503), but not for 429
+      const maxAttempts = 3;
       while (attempt < maxAttempts) {
         attempt++;
         try {
           console.log(`[GeminiService] Trying model: ${modelName} (attempt ${attempt}/${maxAttempts})`);
-          const timeoutMs = 120000; // 120s
-let timeoutId: NodeJS.Timeout | null = null;
+          const timeoutMs = 120000;
+          let timeoutId: NodeJS.Timeout | null = null;
 
-try {
-  // ✅ НОВОЕ: Сохраняем ID таймера
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Gemini timeout (${modelName})`));
-    }, timeoutMs);
-  });
+          try {
+            const timeoutPromise = new Promise((_, reject) => {
+              timeoutId = setTimeout(() => {
+                reject(new Error(`Gemini timeout (${modelName})`));
+              }, timeoutMs);
+            });
 
-  const response = (await Promise.race([
-    ai.models.generateContent({
-      model: modelName,
-      contents: prompt
-    }),
-    timeoutPromise
-  ])) as any;
+            const response = (await Promise.race([
+              ai.models.generateContent({
+                model: modelName,
+                contents: prompt
+              }),
+              timeoutPromise
+            ])) as any;
 
-  if (response && response.text && response.text.trim().length > 0) {
-    console.log(`[GeminiService] Success with model: ${modelName}`);
-    return response.text.trim();
-  }
-  throw new Error(`Empty response from Gemini (${modelName})`);
-  
-} finally {
-  // ✅ НОВОЕ: ВСЕГДА очищаем таймер!
-  if (timeoutId) {
-    clearTimeout(timeoutId);
-    timeoutId = null;
-  }
-}
+            if (response && response.text && response.text.trim().length > 0) {
+              console.log(`[GeminiService] Success with model: ${modelName}`);
+              modelCache.set(cleanKey, modelName);
+              recordSuccess(); // Reset circuit breaker on success
+              return response.text.trim();
+            }
+            throw new Error(`Empty response from Gemini (${modelName})`);
+            
+          } catch (err: any) {
+            lastError = err;
+            const statusCode =
+              err?.response?.data?.error?.code ||
+              err?.response?.status ||
+              err?.code ||
+              err?.status ||
+              null;
+            const msg = (err?.response?.data?.error?.message || err?.message || JSON.stringify(err)).toString();
 
-          if (response && response.text && response.text.trim().length > 0) {
-            console.log(`[GeminiService] ✅ Success with model: ${modelName}`);
-            // Cache successful model for this key
-            modelCache.set(cleanKey, modelName);
-            return response.text.trim();
+            console.warn(`[GeminiService] Model ${modelName} failed`);
+            console.warn(`  Status/Code: ${statusCode}`);
+            console.warn(`  Message: ${msg.substring(0, 200)}`);
+
+            // Model not supported for this key -> skip model entirely
+            if (statusCode === 404 || /not found/i.test(msg)) {
+              console.warn(`[GeminiService] Model ${modelName} not available for this key, skipping.`);
+              break; // go to next model
+            }
+
+            // Quota exceeded: do NOT retry same model many times; move to next model
+            if (statusCode === 429 || /quota/i.test(msg) || /quota exceeded/i.test(msg)) {
+              console.warn(`[GeminiService] Quota exceeded for model ${modelName}, moving to next model.`);
+              break; // don't retry same model on 429
+            }
+
+            // Service unavailable: retry with backoff
+            if ((statusCode === 503 || /unavailable/i.test(msg)) && attempt < maxAttempts) {
+              const backoff = Math.pow(2, attempt) * 1000;
+              console.warn(`[GeminiService] Service unavailable. Backoff ${backoff}ms and retrying...`);
+              await sleep(backoff);
+              continue;
+            }
+
+            // API key / permissions errors -> stop completely (don't count towards circuit breaker)
+            if (/API key/i.test(msg) || /permission/i.test(msg) || /denied/i.test(msg) || /invalid/i.test(msg)) {
+              throw new Error(`API key error: ${msg}`);
+            }
+            
+            // Record failure for transient errors (will trigger circuit breaker if too many)
+            recordFailure();
+
+            // For timeout/other errors -> try next model
+            console.warn(`[GeminiService] Moving to next model after error.`);
+            break;
+          } finally {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
           }
-
-          throw new Error(`Empty response from Gemini (${modelName})`);
-        } catch (err: any) {
-          lastError = err;
-          const statusCode =
-            err?.response?.data?.error?.code ||
-            err?.response?.status ||
-            err?.code ||
-            err?.status ||
-            null;
-          const msg = (err?.response?.data?.error?.message || err?.message || JSON.stringify(err)).toString();
-
-          console.warn(`[GeminiService] Model ${modelName} failed`);
-          console.warn(`  Status/Code: ${statusCode}`);
-          console.warn(`  Message: ${msg.substring(0, 200)}`);
-
-          // Model not supported for this key -> skip model entirely
-          if (statusCode === 404 || /not found/i.test(msg)) {
-            console.warn(`[GeminiService] Model ${modelName} not available for this key, skipping.`);
-            break; // go to next model
-          }
-
-          // Quota exceeded: do NOT retry same model many times; move to next model
-          if (statusCode === 429 || /quota/i.test(msg) || /quota exceeded/i.test(msg)) {
-            console.warn(`[GeminiService] Quota exceeded for model ${modelName}, moving to next model.`);
-            break; // don't retry same model on 429
-          }
-
-          // Service unavailable: retry with backoff
-          if ((statusCode === 503 || /unavailable/i.test(msg)) && attempt < maxAttempts) {
-            const backoff = Math.pow(2, attempt) * 1000;
-            console.warn(`[GeminiService] Service unavailable. Backoff ${backoff}ms and retrying...`);
-            await sleep(backoff);
-            continue;
-          }
-
-          // API key / permissions errors -> stop completely
-          if (/API key/i.test(msg) || /permission/i.test(msg) || /denied/i.test(msg) || /invalid/i.test(msg)) {
-            throw new Error(`API key error: ${msg}`);
-          }
-
-          // For timeout/other errors -> try next model
-          console.warn(`[GeminiService] Moving to next model after error.`);
-          break;
-        }
       } // end attempts for model
     } // end models loop
 
+    // Record failure if we exhausted all models without success
+    if (lastError) {
+      recordFailure();
+    }
+    
     throw lastError || new Error("Не удалось получить ответ от Gemini. Попробуйте позже.");
   }
 
@@ -219,20 +292,7 @@ try {
     }
   }
 
-  // fallback: try gemini-2.5-flash as last resort
-  if (apiKey.length > 20) {
-    console.log("[GeminiService] Unknown key format, trying gemini-2.5-flash as fallback");
-    const ai = new GoogleGenAI({ apiKey });
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt
-      });
-      return response.text;
-    } catch (e: any) {
-      throw new Error("Неверный формат ключа или модель недоступна: " + (e?.message || JSON.stringify(e)));
-    }
-  }
-
-  throw new Error("Неверный формат API ключа.");
+  // This point should never be reached due to validation above
+  // Removed fallback for unknown key formats to prevent invalid requests
+  throw new Error("Неверный формат API ключа. Поддерживаются: Google Gemini (AIza...), OpenRouter (sk-or-...), Grok (xai-...), Groq (gsk_...), OpenAI (sk-proj-...).");
 }

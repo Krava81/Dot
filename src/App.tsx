@@ -741,10 +741,20 @@ export default function App() {
     }
   };
 
-  // AI Worker Logic
+  // AI Worker Logic with debounce to prevent request avalanche
   useEffect(() => {
+    let lastTaskCheck = 0;
+    const MIN_CHECK_INTERVAL = 2000; // Minimum 2s between task checks
+    
     const workerInterval = setInterval(async () => {
       if (isWorking || !baseUrl) return;
+      
+      // Debounce: skip if too soon since last check
+      const now = Date.now();
+      if (now - lastTaskCheck < MIN_CHECK_INTERVAL) {
+        return;
+      }
+      lastTaskCheck = now;
 
       try {
         const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -781,10 +791,12 @@ export default function App() {
             // Fallback: if active key is empty, try to find any non-empty key
             let keyToUse = apiKeys[activeKeyIndex]?.key;
             if (!keyToUse || keyToUse.trim().length < 10) {
-              const fallbackKey = apiKeys.find((k: any) => k.key && k.key.trim().length > 10);
-              if (fallbackKey) {
-                console.log("Active key is empty, using fallback key:", fallbackKey.label);
-                keyToUse = fallbackKey.key;
+              const fallbackIndex = apiKeys.findIndex((k: any) => k.key && k.key.trim().length > 10);
+              if (fallbackIndex !== -1 && fallbackIndex !== activeKeyIndex) {
+                console.log("Active key is empty, using fallback key:", apiKeys[fallbackIndex].label);
+                keyToUse = apiKeys[fallbackIndex].key;
+                // Update activeKeyIndex to prevent repeated failures
+                setActiveKeyIndex(fallbackIndex);
               }
             }
 
@@ -799,14 +811,34 @@ export default function App() {
               throw new Error(`Ошибка при завершении задачи: ${completeRes.statusText}`);
             }
             addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
-          } catch (e) {
+          } catch (e: any) {
             console.error("Task processing failed", e);
-            // Report error back to server so it can be logged and task can be removed
-            await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}` })
-            });
+            
+            // Rotate to next key on API errors
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            const isApiKeyError = /API key|quota|permission|denied|invalid|unauthorized/i.test(errorMsg);
+            
+            if (isApiKeyError && apiKeys.length > 1) {
+              const nextIndex = (activeKeyIndex + 1) % apiKeys.length;
+              // Only rotate if we haven't tried all keys
+              if (nextIndex !== activeKeyIndex) {
+                console.log(`⚠️ API error detected, rotating to next key (index ${nextIndex})`);
+                setActiveKeyIndex(nextIndex);
+              }
+            }
+            
+            // Prevent race condition: only report error if still working
+            if (isWorking) {
+              try {
+                await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${errorMsg}` })
+                });
+              } catch (reportErr) {
+                console.error("Failed to report error:", reportErr);
+              }
+            }
           } finally {
             setIsWorking(false);
             fetchData();
@@ -820,10 +852,10 @@ export default function App() {
         }
         setIsWorking(false);
       }
-    }, 1000); // Faster polling (1s)
+    }, 3000); // Polling with 3s delay + debounce to prevent request avalanche
 
     return () => clearInterval(workerInterval);
-  }, [isWorking, baseUrl, activeKeyIndex, apiKeys]);
+  }, [isWorking, baseUrl, activeKeyIndex, apiKeys, setActiveKeyIndex]);
 
   useEffect(() => {
     fetchData();

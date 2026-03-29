@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { parseWeChat, getLogs as getWechatLogs, clearLogs } from './wechatParser';
-import { processNewsText } from './src/services/geminiService.js';
+import { processNewsText } from './src/services/geminiService';
 // import puppeteer from "puppeteer";
 
 dotenv.config();
