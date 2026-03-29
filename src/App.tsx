@@ -362,7 +362,15 @@ export default function App() {
       const key = pair.substring(0, eqIndex).trim();
       const value = pair.substring(eqIndex + 1).trim();
       
-      // ✅ НОВОЕ: Валидация имени cookie
+      // v5.0: Если токен содержит '=', это полный набор Cookie
+if (sessionToken.includes('=')) {
+  const cookiePairs = sessionToken.split('; ');
+  for (const pair of cookiePairs) {
+    const eqIndex = pair.indexOf('=');
+    if (eqIndex > 0) {
+      const key = pair.substring(0, eqIndex).trim();
+      const value = pair.substring(eqIndex + 1).trim();
+      
       if (key && value && /^[a-zA-Z0-9_-]+$/.test(key)) {
         await CapacitorCookies.setCookie({
           url: url,
@@ -372,12 +380,21 @@ export default function App() {
           path: '/',
         });
         addClientLog(`✅ Cookie set: ${key}`);
-      } else {
-        addClientLog(`⚠️ Skipped invalid cookie pair: ${key}=${value}`);
       }
     }
   }
   addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
+} else { 
+  // <-- Убедитесь, что здесь НЕТ лишней скобки } перед else
+  // Одиночный токен SESS
+  await CapacitorCookies.setCookie({
+    url: url,
+    key: 'SESS',
+    value: sessionToken,
+    expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    path: '/',
+  });
+  addClientLog("✅ Нативные Cookie синхронизированы (SESS).");
 }
           } else {
             // Одиночный токен SESS
