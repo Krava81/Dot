@@ -217,8 +217,8 @@ let isInitializing = false;
 
 async function initBot(token: string) {
   if (isInitializing) {
-    addLog("⚠️ Bot initialization already in progress, skipping...");
-    return;
+    addLog("⚠️ Bot initialization already in progress, force resetting...");
+    isInitializing = false; // Allow force reset
   }
   isInitializing = true;
   addLog(`initBot called with token: ${token.substring(0, 5)}...`);
@@ -315,6 +315,17 @@ if (currentBotToken) {
 
 app.get("/api/config/token", (req, res) => {
   res.json({ message: "Use POST to update token", status: "ready", botStatus });
+});
+
+app.get("/api/config/reset", (req, res) => {
+  addLog("⚠️ Manual reset requested.");
+  isInitializing = false;
+  botStatus = 'offline';
+  if (bot) {
+    bot.stop().catch(e => addLog(`Error stopping bot during reset: ${e}`));
+    bot = null;
+  }
+  res.json({ status: "reset", message: "Bot state reset successfully." });
 });
 
 app.post(["/api/config/update", "/api/config/token"], async (req, res) => {
