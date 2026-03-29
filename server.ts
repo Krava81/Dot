@@ -75,7 +75,7 @@ const DEFAULT_CHAT_ID = "-1002603084916";
 let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
 let botWaitRemaining = 0;
-let currentBotToken = getPersistentToken();
+let currentBotToken = '';
 
 // ==========================================
 // 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
@@ -213,21 +213,32 @@ function addLog(msg: string) {
 }
 
 let bot: Telegraf | null = null;
+let isInitializing = false;
 
 async function initBot(token: string) {
+  if (isInitializing) {
+    addLog("⚠️ Bot initialization already in progress, skipping...");
+    return;
+  }
+  isInitializing = true;
   addLog(`initBot called with token: ${token.substring(0, 5)}...`);
   if (bot) {
     try {
       addLog("Stopping existing bot instance...");
       await bot.stop();
+      // Give Telegram a moment to close the connection
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      addLog("Existing bot stopped.");
     } catch (e) {
       addLog(`Error stopping bot: ${e}`);
     }
+    bot = null;
   }
 
   if (!token || token.trim().length < 10) {
     botStatus = 'offline';
     addLog("❌ Bot token is empty or invalid.");
+    isInitializing = false;
     return;
   }
 
@@ -252,11 +263,38 @@ async function initBot(token: string) {
     });
 
     addLog("Launching bot...");
-    await bot.launch();
-    botStatus = 'active';
-    currentBotToken = token;
-    savePersistentToken(token);
-    addLog("🚀 Bot successfully launched and active!");
+    
+    // Retry mechanism for 409 Conflict
+    let retries = 0;
+    const maxRetries = 3;
+    while (retries < maxRetries) {
+      try {
+        try {
+          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          addLog("Webhook deleted successfully.");
+        } catch (e) {
+          addLog(`Note: Could not delete webhook: ${e}`);
+        }
+        await bot.launch();
+        botStatus = 'active';
+        currentBotToken = token;
+        savePersistentToken(token);
+        addLog("🚀 Bot successfully launched and active!");
+        isInitializing = false;
+        return; // Success
+      } catch (err: any) {
+        if (err.message.includes('409') || err.message.includes('Conflict')) {
+          retries++;
+          const waitTime = retries * 5000;
+          addLog(`⚠️ Conflict detected (409). Retrying in ${waitTime/1000}s... (Attempt ${retries}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        } else {
+          throw err; // Not a conflict error, rethrow
+        }
+      }
+    }
+    throw new Error("Failed to launch bot after multiple retries due to conflicts.");
+
   } catch (err: any) {
     botStatus = 'offline';
     addLog(`❌ Bot launch error: ${err.message}`);
@@ -266,6 +304,7 @@ async function initBot(token: string) {
     if (err.message.includes('404')) {
       addLog("⚠️ Bot token not found (404).");
     }
+    isInitializing = false;
   }
 }
 
