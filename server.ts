@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { parseWeChat, getLogs as getWechatLogs } from './wechatParser.js';
+// Убедитесь, что путь правильный. Если server.ts в корне, а сервис в src/services, то путь верный.
 import { processNewsText } from './src/services/geminiService.js';
 
 dotenv.config();
@@ -197,7 +198,6 @@ app.get("/api/logs", (req, res) => {
 app.get("/api/config/status", async (req, res) => {
   const envKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
   let keyValid = false;
-  // FIX 2: Явный тип string | null — иначе TypeScript выводит тип как null
   let keyError: string | null = null;
 
   if (envKey && envKey.startsWith('AIza') && envKey.trim().length > 10) {
@@ -353,15 +353,13 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
           if (imageUrls.length > 0) {
             for (let i = 0; i < imageUrls.length; i++) {
               const imgUrl = imageUrls[i];
-              let imgRes: any = null;
-
+              // FIX: Переменная объявляется и используется только внутри этого блока
               try {
-                imgRes = await axios.get(imgUrl, {
+                const imgRes: any = await axios.get(imgUrl, {
                   responseType: 'arraybuffer',
                   timeout: 15000,
                   headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    // FIX 1: Убран пробел в конце URL
                     'Referer': 'https://mp.weixin.qq.com/',
                   }
                 });
@@ -385,6 +383,7 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
               }
             }
 
+            // Логика отправки теперь сразу после цикла, без дублирования кода
             if (mediaGroup.length > 0) {
               await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
               if (adaptedText.length > 1024) {
