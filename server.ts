@@ -497,16 +497,19 @@ if (imgRes.data && imgRes.data.byteLength > 1000) {
             await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
             addLog(`✅ Media group sent.`);
             if (adaptedText.length > 1024) {
-              await bot.telegram.sendMessage(lastChatId, adaptedText);
+              const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
+              await bot.telegram.sendMessage(lastChatId, cleanText);
               addLog(`✅ Caption sent.`);
             }
           } else {
             addLog(`⚠️ No media to send, sending text only.`);
-            await bot.telegram.sendMessage(lastChatId, adaptedText);
+            const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
+            await bot.telegram.sendMessage(lastChatId, cleanText);
           }
         } else {
           addLog(`📤 Sending text only to Telegram...`);
-          await bot.telegram.sendMessage(lastChatId, adaptedText);
+          const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
+          await bot.telegram.sendMessage(lastChatId, cleanText);
           addLog(`✅ Text sent.`);
         }
         addLog(`✅ Message sent to Telegram (${lastChatId})`);
