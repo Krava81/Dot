@@ -560,8 +560,8 @@ app.post("/api/tasks", (req, res) => {
   res.json(newTask);
 });
 
-// 404 Handler
-app.use((req, res) => {
+// 404 Handler for API routes
+app.use('/api', (req, res) => {
   addLog(`⚠️ 404 Not Found: ${req.method} ${req.url} from ${req.ip}`);
   res.status(404).json({ 
     error: "API Route Not Found", 
