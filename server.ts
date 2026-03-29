@@ -9,8 +9,9 @@ import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import { parseWeChat, getLogs as getWechatLogs } from './wechatParser'; // FIX 4: removed unused clearLogs
-import { processNewsText } from './src/services/geminiService';
+// FIX 1: Исправлен путь импорта (убрано дублирование src и добавлено .js для ESM)
+import { parseWeChat, getLogs as getWechatLogs } from './wechatParser.js';
+import { processNewsText } from './services/geminiService.js';
 
 dotenv.config();
 
@@ -411,7 +412,6 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
                   maxRedirects: 5
                 });
 
-                // FIX 1: Removed orphaned duplicate block — this is the single correct version
                 if (imgRes.data && imgRes.data.byteLength > 1000) {
                   const contentType = imgRes.headers['content-type'] || '';
                   if (!contentType || !contentType.includes('image/')) {
