@@ -8,6 +8,7 @@ import * as cheerio from "cheerio";
 import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
+import { GoogleGenAI } from "@google/genai";
 // import puppeteer from "puppeteer";
 
 dotenv.config();
@@ -142,10 +143,29 @@ app.get("/api/logs", (req, res) => {
   res.json({ logs });
 });
 
-app.get("/api/config/status", (req, res) => {
+app.get("/api/config/status", async (req, res) => {
   const envKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  let keyValid = false;
+  let keyError = null;
+
+  if (envKey && envKey.trim().length > 10) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: envKey });
+      await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: "ping",
+      });
+      keyValid = true;
+    } catch (e: any) {
+      keyError = e.message;
+      addLog(`⚠️ API Key check failed: ${e.message}`);
+    }
+  }
+
   res.json({
     hasServerKey: !!(envKey && envKey.trim().length > 10),
+    keyValid,
+    keyError,
     serverKeyMasked: envKey ? `${envKey.substring(0, 4)}...${envKey.substring(envKey.length - 4)}` : null,
     botTokenSet: !!currentBotToken,
     chatId: lastChatId || DEFAULT_CHAT_ID
@@ -419,6 +439,7 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
     }
     
     if (bot && lastChatId) {
+      addLog(`🔍 Attempting to send to Telegram. ChatID: ${lastChatId}, Images: ${task.data.images?.length || 0}`);
       try {
         const imageUrls = task.data.images || [];
         const sourceUrl = task.data.url || "";
@@ -429,25 +450,26 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
           const caption = adaptedText.length <= 1024 ? adaptedText : "";
           
           for (let i = 0; i < imageUrls.length; i++) {
+            const imgUrl = imageUrls[i];
             try {
-              const imgUrl = imageUrls[i];
+              addLog(`⬇️ Downloading image ${i+1}: ${imgUrl.substring(0, 50)}...`);
               const imgRes = await axios.get(imgUrl, { 
   responseType: 'arraybuffer',
-  timeout: 15000, // увеличиваем timeout для WeChat
+  timeout: 15000,
   headers: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://mp.weixin.qq.com/', // ← ПРАВИЛЬНЫЙ referer для WeChat!
+    'Referer': 'https://mp.weixin.qq.com/',
     'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br',
     'Cache-Control': 'no-cache',
     'Pragma': 'no-cache'
   },
-  withCredentials: false, // WeChat не требует cookies в запросе
-  maxRedirects: 5 // Некоторые изображения редиректят
+  withCredentials: false,
+  maxRedirects: 5
 });
 
-if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
+if (imgRes.data && imgRes.data.byteLength > 1000) {
                 const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
                 mediaGroup.push({
                   type: 'photo',
@@ -457,6 +479,7 @@ if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placehol
                   },
                   caption: i === 0 ? caption : undefined
                 });
+                addLog(`✅ Image ${i+1} downloaded.`);
               } else {
                 addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
               }
@@ -465,22 +488,26 @@ if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placehol
             }
           }
 
+          addLog(`📤 Sending media group to Telegram...`);
           if (mediaGroup.length > 0) {
             await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
+            addLog(`✅ Media group sent.`);
             if (adaptedText.length > 1024) {
               await bot.telegram.sendMessage(lastChatId, adaptedText);
+              addLog(`✅ Caption sent.`);
             }
           } else {
-            // If all downloads failed, send text only
+            addLog(`⚠️ No media to send, sending text only.`);
             await bot.telegram.sendMessage(lastChatId, adaptedText);
           }
         } else {
+          addLog(`📤 Sending text only to Telegram...`);
           await bot.telegram.sendMessage(lastChatId, adaptedText);
+          addLog(`✅ Text sent.`);
         }
         addLog(`✅ Message sent to Telegram (${lastChatId})`);
       } catch (e: any) {
         addLog(`❌ Error sending to Telegram: ${e.message}`);
-        // Fallback: try sending just text if media group fails
         try {
           await bot.telegram.sendMessage(lastChatId, adaptedText);
           addLog(`✅ Fallback: Text-only message sent.`);
@@ -489,7 +516,7 @@ if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placehol
         }
       }
     } else {
-      addLog(`⚠️ Cannot send to Telegram: bot or chatId missing.`);
+      addLog(`⚠️ Cannot send to Telegram: bot or chatId missing. Bot: ${!!bot}, ChatId: ${lastChatId}`);
     }
     
     res.json({ status: "ok" });
