@@ -8,7 +8,7 @@ import * as cheerio from "cheerio";
 import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
-import puppeteer from "puppeteer";
+// import puppeteer from "puppeteer";
 
 dotenv.config();
 
@@ -214,14 +214,30 @@ function addLog(msg: string) {
   console.log(msg);
 }
 
+// ✅ Просто загружаем страницу обычным способом
 async function fetchWithBrowser(url: string): Promise<string> {
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-  const page = await browser.newPage();
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
-  const content = await page.content();
-  await browser.close();
-  return content;
+  try {
+    addLog(`🌐 Загружаем страницу: ${url}`);
+    
+    const response = await axios.get(url, {
+      timeout: 20000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      maxRedirects: 10,
+      validateStatus: (status) => status < 400
+    });
+
+    addLog(`✅ Страница загружена успешно (${response.data.length} bytes)`);
+    return response.data;
+  } catch (err: any) {
+    addLog(`⚠️ Ошибка загрузки: ${err.message}`);
+    throw err;
+  }
 }
 
 let isInitializing = false;
@@ -371,8 +387,10 @@ app.get("/api/tasks", (req, res) => {
   const pendingTask = tasks.find(t => t.status === 'pending');
   if (pendingTask) {
     pendingTask.status = 'processing';
+    botStatus = 'active';
     res.json(pendingTask);
   } else {
+    botStatus = 'waiting';
     res.json(null);
   }
 });
@@ -386,6 +404,11 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
     task.status = 'completed';
     task.adaptedText = adaptedText;
     addLog(`✅ Task ${id} completed.`);
+    
+    const pendingTask = tasks.find(t => t.status === 'pending');
+    if (!pendingTask) {
+      botStatus = 'waiting';
+    }
     
     if (bot && lastChatId) {
       try {
@@ -476,17 +499,18 @@ app.post("/api/process-url", async (req, res) => {
 
     // Пробуем сначала браузер для WeChat, потом обычный fetch
     if (url.includes('weixin.qq.com') || url.includes('mmbiz')) {
+      addLog(`📱 Используем мобильный парсинг для WeChat...`);
       try {
         const htmlContent = await fetchWithBrowser(url);
         response = { data: htmlContent, status: 200 };
       } catch (err) {
-        addLog(`⚠️ Браузер не сработал для WeChat, используем axios...`);
+        addLog(`⚠️ Мобильный парсинг не сработал, пробуем обычный axios...`);
+        // Fallback на обычный запрос
         response = await axios.get(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Referer': 'https://mp.weixin.qq.com/'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9'
           },
           timeout: 15000
         });
@@ -507,114 +531,140 @@ app.post("/api/process-url", async (req, res) => {
     const $ = cheerio.load(response.data);
     const title = $('title').text() || $('h1').first().text() || 'Без названия';
     
-    // Simple text extraction: get all paragraphs
-    let text = '';
-    $('p').each((i, el) => {
-      const pText = $(el).text().trim();
-      if (pText.length > 20) text += pText + '\n';
-    });
-    
-    if (text.length < 100) {
-      text = $('article').text() || $('main').text() || $('body').text();
+// ✅ Improved text extraction for WeChat
+addLog(`📝 Извлекаем текст...`);
+let text = '';
+
+// Сначала пробуем article/main
+$('article, main, .news-article, .rich_media').each((i, el) => {
+  const $el = $(el);
+  $el.find('p').each((j, p) => {
+    const pText = $(p).text().trim();
+    if (pText.length > 15) text += pText + '\n';
+  });
+});
+
+// Если не нашли - берём все параграфы
+if (text.length < 50) {
+  $('p').each((i, el) => {
+    const pText = $(el).text().trim();
+    if (pText.length > 15 && !pText.includes('Share') && !pText.includes('阅读') && !pText.includes('文章')) {
+      text += pText + '\n';
     }
+  });
+}
 
-    // Image extraction (up to 10)
-    const images: string[] = [];
-    const baseUrl = new URL(url).origin;
+// Fallback
+if (text.length < 50) {
+  text = $('body').text();
+}
 
-    const addImage = (src: string | undefined) => {
-      if (!src || images.length >= 10) return;
-      src = src.trim();
-      if (!src || src.startsWith('data:')) return;
+// Очищаем текст от мусора
+text = text.replace(/\n\n+/g, '\n').trim().substring(0, 10000);
+addLog(`✅ Текст извлечён (${text.length} символов)`);
 
-      // Handle srcset strings
-      if (src.includes(',') && (src.includes(' ') || src.includes('.webp') || src.includes('.jpg'))) {
-        const parts = src.split(',');
-        const webpPart = parts.find(p => p.toLowerCase().includes('.webp'));
-        src = (webpPart || parts[0]).trim().split(/\s+/)[0];
-      }
+// 📸 Image extraction - специально для WeChat
+const images: string[] = [];
+const baseUrl = new URL(url).origin;
 
-      try {
-        const absoluteUrl = new URL(src, url).href;
-        src = absoluteUrl;
-      } catch (e) {
-        return;
-      }
+const addImage = (src: string | undefined) => {
+  if (!src || images.length >= 20) return;
+  src = src.trim();
+  if (!src || src.startsWith('data:')) return;
 
-      if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
-      
-      // Check for common image extensions or "image" in path, or WeChat specific patterns
-      const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
-      const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
-      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp') || src.includes('ext=webp');
+  // Handle srcset strings
+  if (src.includes(',') && (src.includes(' ') || src.includes('.webp') || src.includes('.jpg'))) {
+    const parts = src.split(',');
+    const webpPart = parts.find(p => p.toLowerCase().includes('.webp'));
+    src = (webpPart || parts[0]).trim().split(/\s+/)[0];
+  }
 
-      if (isLikelyImage) {
-        if (!images.includes(src)) {
-          images.push(src);
-          addLog(`📸 Found image (${src.toLowerCase().includes('webp') ? 'WEBP' : 'IMG'}): ${src.substring(0, 60)}...`);
-        }
-      }
-    };
+  try {
+    const absoluteUrl = new URL(src, baseUrl).href;
+    src = absoluteUrl;
+  } catch (e) {
+    return;
+  }
 
-    // 1. Meta tags (og:image, twitter:image)
-    addImage($('meta[property="og:image"]').attr('content'));
-    addImage($('meta[name="twitter:image"]').attr('content'));
-    addImage($('meta[property="og:image:secure_url"]').attr('content'));
-    addImage($('meta[itemprop="image"]').attr('content'));
-    addImage($('meta[name="image"]').attr('content'));
-    addImage($('link[rel="image_src"]').attr('href'));
-    addImage($('link[rel="shortcut icon"]').attr('href')); // Last resort
+  if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
+  
+  // ✅ СПЕЦИАЛЬНО ДЛЯ WECHAT - проверяем mmbiz.qpic.cn
+  const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
+  const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
+  const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp') || src.includes('ext=webp');
 
-    // 2. Article/Main content images (prioritize these)
-    $('article img, main img, .content img, .post img, .entry img').each((i, el) => {
-      if (images.length >= 10) return;
-      const $el = $(el);
-      const src = $el.attr('data-src') || 
-                  $el.attr('data-lazy-src') || 
-                  $el.attr('data-original') || 
-                  $el.attr('src') || 
-                  $el.attr('data-src-2x') ||
-                  $el.attr('data-actualsrc') ||
-                  $el.attr('data-srcset') ||
-                  $el.attr('srcset');
-      addImage(src);
-    });
-
-    // 3. All other images
-    if (images.length < 10) {
-      $('img').each((i, el) => {
-        if (images.length >= 10) return;
-        const $el = $(el);
-        const src = $el.attr('src') || 
-                    $el.attr('data-src') || 
-                    $el.attr('data-lazy-src') || 
-                    $el.attr('data-original') ||
-                    $el.attr('data-actualsrc') ||
-                    $el.attr('srcset');
-        addImage(src);
-      });
+  if (isLikelyImage) {
+    if (!images.includes(src)) {
+      images.push(src);
+      addLog(`📸 Found image: ${src.substring(0, 80)}...`);
     }
+  }
+};
 
-    // 4. Picture source tags
-    if (images.length < 10) {
-      $('picture source').each((i, el) => {
-        const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
-        if (srcset) {
-          const firstUrl = srcset.split(',')[0].trim().split(' ')[0];
-          addImage(firstUrl);
-        }
-      });
-    }
+// 1. Meta tags (og:image, twitter:image) - высокий приоритет
+addLog(`🔍 Ищем изображения в мета-тегах...`);
+addImage($('meta[property="og:image"]').attr('content'));
+addImage($('meta[name="twitter:image"]').attr('content'));
+addImage($('meta[property="og:image:secure_url"]').attr('content'));
+addImage($('meta[itemprop="image"]').attr('content'));
+addImage($('meta[name="image"]').attr('content'));
 
-    // 5. Links to images (often high quality)
-    if (images.length < 10) {
-      $('a').each((i, el) => {
-        const href = $(el).attr('href');
-        if (href && href.match(/\.(jpeg|jpg|png|webp|avif|jfif|bmp)/i)) {
-          addImage(href);
-        }
-      });
-    }
+// 2. Article/Main content images (WeChat articles)
+addLog(`🔍 Ищем изображения в контенте...`);
+$('article img, main img, .news-article img, .rich_media img, .js_medialist img, [data-src*="mmbiz"]').each((i, el) => {
+  if (images.length >= 20) return;
+  const $el = $(el);
+  const src = $el.attr('data-src') || 
+              $el.attr('src') || 
+              $el.attr('data-lazy-src') || 
+              $el.attr('data-original') || 
+              $el.attr('data-src-2x') ||
+              $el.attr('data-actualsrc') ||
+              $el.attr('data-srcset') ||
+              $el.attr('srcset');
+  addImage(src);
+});
+
+// 3. All img tags with data attributes (WeChat uses lazy loading)
+addLog(`🔍 Ищем все img теги...`);
+$('img').each((i, el) => {
+  if (images.length >= 20) return;
+  const $el = $(el);
+  const src = $el.attr('src') || 
+              $el.attr('data-src') || 
+              $el.attr('data-lazy-src') || 
+              $el.attr('data-original') || 
+              $el.attr('data-src-2x') ||
+              $el.attr('data-actualsrc');
+  addImage(src);
+});
+
+// 4. Picture source tags
+addLog(`🔍 Ищем picture source теги...`);
+$('picture source').each((i, el) => {
+  const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
+  if (srcset) {
+    const firstUrl = srcset.split(',')[0].trim().split(' ')[0];
+    addImage(firstUrl);
+  }
+});
+
+// 5. Links to images
+addLog(`🔍 Ищем ссылки на изображения...`);
+$('a').each((i, el) => {
+  const href = $(el).attr('href');
+  if (href && href.match(/\.(jpeg|jpg|png|webp|avif|jfif|bmp)/i)) {
+    addImage(href);
+  }
+});
+
+if (images.length === 0) {
+  addLog(`⚠️ Изображения не найдены на странице.`);
+} else {
+  addLog(`✅ Найдено ${images.length} изображений`);
+}
+
+
 
     if (images.length === 0) {
       addLog(`⚠️ No images found on the page.`);
