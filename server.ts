@@ -8,6 +8,7 @@ import * as cheerio from "cheerio";
 import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
+import puppeteer from "puppeteer";
 
 dotenv.config();
 
@@ -213,12 +214,22 @@ function addLog(msg: string) {
   console.log(msg);
 }
 
+async function fetchWithBrowser(url: string): Promise<string> {
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  const page = await browser.newPage();
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+  const content = await page.content();
+  await browser.close();
+  return content;
+}
+
 let isInitializing = false;
 
 async function initBot(token: string) {
   if (isInitializing) {
-    addLog("⚠️ Bot initialization already in progress, force resetting...");
-    isInitializing = false; // Allow force reset
+    addLog("⚠️ Bot initialization already in progress, skipping...");
+    return;
   }
   isInitializing = true;
   addLog(`initBot called with token: ${token.substring(0, 5)}...`);
@@ -296,6 +307,7 @@ async function initBot(token: string) {
     throw new Error("Failed to launch bot after multiple retries due to conflicts.");
 
   } catch (err: any) {
+    isInitializing = false;
     botStatus = 'offline';
     addLog(`❌ Bot launch error: ${err.message}`);
     if (err.message.includes('401')) {
@@ -460,14 +472,37 @@ app.post("/api/process-url", async (req, res) => {
   
   try {
     addLog(`🌐 Fetching URL: ${url}...`);
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
-      },
-      timeout: 15000 // Increased to 15s
-    });
+    let response;
+
+    // Пробуем сначала браузер для WeChat, потом обычный fetch
+    if (url.includes('weixin.qq.com') || url.includes('mmbiz')) {
+      try {
+        const htmlContent = await fetchWithBrowser(url);
+        response = { data: htmlContent, status: 200 };
+      } catch (err) {
+        addLog(`⚠️ Браузер не сработал для WeChat, используем axios...`);
+        response = await axios.get(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Referer': 'https://mp.weixin.qq.com/'
+          },
+          timeout: 15000
+        });
+      }
+    } else {
+      // Обычные ссылки загружаем обычным способом
+      response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        timeout: 15000
+      });
+    }
+
     addLog(`📄 Page loaded (Status: ${response.status}, Size: ${Math.round(response.data.length / 1024)}KB). Parsing...`);
     const $ = cheerio.load(response.data);
     const title = $('title').text() || $('h1').first().text() || 'Без названия';
