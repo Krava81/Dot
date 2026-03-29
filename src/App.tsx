@@ -348,8 +348,6 @@ export default function App() {
           if (!url.startsWith('http')) url = `https://${url}`;
           
           addClientLog(`Синхронизация нативных Cookie...`);
-          
-          // v5.0: Если токен содержит '=', это полный набор Cookie
           if (sessionToken.includes('=')) {
             const cookiePairs = sessionToken.split('; ');
             for (const pair of cookiePairs) {
@@ -371,8 +369,7 @@ export default function App() {
               }
             }
             addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
-          } else {
-            // Одиночный токен SESS
+           else {
             await CapacitorCookies.setCookie({
               url: url,
               key: 'SESS',
