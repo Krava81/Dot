@@ -303,7 +303,7 @@ app.get("/api/config/reset", async (req, res) => {
       addLog("Stopping existing bot instance...");
       await bot.stop();
       // Give Telegram a moment to close the connection
-      await new Promise(resolve => setTimeout(resolve, 20000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       addLog("Existing bot stopped.");
     } catch (e) {
       addLog(`Error stopping bot: ${e}`);
