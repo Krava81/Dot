@@ -25,7 +25,7 @@ const getInitialBaseUrl = () => {
   }
   const saved = localStorage.getItem('tg_bot_server_url');
   if (saved) return saved;
-  return import.meta.env.VITE_APP_URL || '';
+  return process.env.VITE_APP_URL || '';
 };
 
 export default function App() {
@@ -50,14 +50,12 @@ export default function App() {
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isDebugMode, setIsDebugMode] = useState(false);
 
-  // Универсальный загрузчик v5.3
+  // Универсальный загрузчик v5.0
   const universalFetch = async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
     const isNativePlatform = Capacitor.isNativePlatform();
     const isWebMirror = window.location.href.includes('run.app');
-    
-    const customTimeout = options.timeout || 120000; // v5.3: Default 120s, but can be overridden
     
     const headers = {
       'Content-Type': 'application/json',
@@ -96,8 +94,8 @@ export default function App() {
           method: options.method || 'GET',
           headers,
           data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
-          connectTimeout: 30000,
-          readTimeout: customTimeout // v5.3: Use custom timeout
+          connectTimeout: 15000,
+          readTimeout: 15000
         });
         
         // v4.4: Если сервер вернул HTML вместо JSON — это почти всегда страница логина Google или ошибка прокси
@@ -145,7 +143,7 @@ export default function App() {
     } else {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), customTimeout); // v5.3: Use custom timeout
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         
         addClientLog(`[Web] Requesting ${url}...`);
         const res = await fetch(url, { ...options, headers, signal: controller.signal });
@@ -656,25 +654,22 @@ export default function App() {
   const testSync = async () => {
     setIsTestingConnection(true);
     setSubmitMsg(null);
-    addClientLog("🔍 Запуск проверки синхронизации...");
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-      addClientLog(`🔍 Запрос к ${currentBaseUrl}/api/sync-check...`);
       const res = await universalFetch(`${currentBaseUrl}/api/sync-check`);
       if (res.ok) {
         const data = await res.json();
-        addClientLog(`🔍 Ответ от сервера: ${JSON.stringify(data)}`);
+        addClientLog(`🔍 Sync Check: ${JSON.stringify(data)}`);
         if (data.authenticated) {
           setSubmitMsg({ type: 'success', text: 'Синхронизация подтверждена сервером!' });
         } else {
           setSubmitMsg({ type: 'error', text: 'Сервер не видит вашу сессию. Проверьте куки.' });
         }
       } else {
-        addClientLog(`❌ Ошибка проверки синхронизации: Статус ${res.status}`);
         throw new Error(`Ошибка: ${res.status}`);
       }
     } catch (e: any) {
-      addClientLog(`❌ Ошибка Sync Check: ${e.message}`);
+      addClientLog(`❌ Sync Check Error: ${e.message}`);
       let msg = e.message;
       if (msg === "AI_STUDIO_AUTH_REQUIRED" || msg === "AI_STUDIO_COOKIE_CHECK") {
         msg = "Требуется авторизация Google. Нажмите 'Авторизовать браузер' в настройках.";
@@ -726,25 +721,6 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const syncToken = async () => {
-      if (status && status.bot === 'offline' && botToken) {
-        console.log("Syncing bot token to server...");
-        try {
-          const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-          await universalFetch(`${cleanBaseUrl}/api/config/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: botToken })
-          });
-        } catch (e) {
-          console.error("Failed to sync bot token", e);
-        }
-      }
-    };
-    if (status) syncToken();
-  }, [status?.bot, botToken, baseUrl]);
-
   // AI Worker Logic
   useEffect(() => {
     const workerInterval = setInterval(async () => {
@@ -775,8 +751,7 @@ export default function App() {
 
         if (task) {
           setIsWorking(true);
-          addClientLog(`🤖 Найдена задача: ${task.id}. Обработка через ИИ...`);
-          console.log(`[AI Worker] Processing task ${task.id}. Text length: ${task.data?.text?.length || 0}`);
+          console.log("Processing task:", task.id);
           
           try {
             if (!task.data.text || task.data.text.trim().length < 10) {
@@ -793,43 +768,30 @@ export default function App() {
               }
             }
 
-            if (!keyToUse || keyToUse.trim().length < 10) {
-              throw new Error("API ключ не настроен или слишком короткий. Пожалуйста, добавьте ключ в настройках.");
-            }
-
+            addClientLog(`🤖 Начинаю обработку задачи ${task.id}...`);
             const adaptedText = await processNewsText(
               task.data.title, 
               task.data.text, 
               keyToUse
             );
-            console.log(`[AI Worker] AI processing complete for task ${task.id}. Result length: ${adaptedText?.length || 0}`);
-            
-            if (!adaptedText || adaptedText.length < 10) {
-              throw new Error("AI вернул пустой или слишком короткий результат.");
-            }
-
             addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
             
-            // v5.3: Increased timeout to 180s for completion call (includes image downloads)
             const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText, images: task.data.images }),
-              timeout: 180000 
+              body: JSON.stringify({ adaptedText })
             });
 
             if (!completeRes.ok) {
               throw new Error(`Ошибка при завершении задачи: ${completeRes.statusText}`);
             }
-            addClientLog(`✅ Задача ${task.id} успешно завершена.`);
           } catch (e) {
-            console.error(`[AI Worker] Error processing task ${task.id}:`, e);
-            addClientLog(`⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}`);
+            console.error("Task processing failed", e);
             // Report error back to server so it can be logged and task can be removed
             await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}`, images: task.data.images })
+              body: JSON.stringify({ adaptedText: `⚠️ Ошибка при обработке новости: ${e instanceof Error ? e.message : String(e)}` })
             });
           } finally {
             setIsWorking(false);
@@ -1686,7 +1648,7 @@ export default function App() {
                 </button>
                 <button 
                   onClick={() => {
-                    const defaultUrl = import.meta.env.VITE_APP_URL || '';
+                    const defaultUrl = process.env.VITE_APP_URL || '';
                     setBaseUrl(defaultUrl);
                   }}
                   className="w-full px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-medium rounded-xl transition-all border border-neutral-700"

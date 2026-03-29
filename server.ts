@@ -76,6 +76,7 @@ let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
 let botWaitRemaining = 0;
 let currentBotToken = '';
+let bot: Telegraf | null = null;
 
 // ==========================================
 // 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
@@ -212,7 +213,6 @@ function addLog(msg: string) {
   console.log(msg);
 }
 
-let bot: Telegraf | null = null;
 let isInitializing = false;
 
 async function initBot(token: string) {
@@ -333,8 +333,13 @@ app.post(["/api/config/update", "/api/config/token"], async (req, res) => {
   addLog(`Config update request received at ${req.path} from ${req.ip}. Body: ${JSON.stringify(req.body).substring(0, 50)}...`);
   
   if (token) {
-    addLog(`Updating bot token...`);
-    initBot(token).catch(err => addLog(`❌ Background bot init error: ${err.message}`));
+    if (token === currentBotToken && botStatus === 'active') {
+      addLog("Bot is already active with this token, skipping re-init.");
+    } else {
+      addLog(`Updating bot token...`);
+      currentBotToken = token;
+      initBot(token).catch(err => addLog(`❌ Background bot init error: ${err.message}`));
+    }
   }
   
   if (chatId) {
