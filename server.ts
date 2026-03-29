@@ -392,11 +392,15 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
             const mediaGroup: any[] = [];
             const caption = adaptedText.length <= 1024 ? adaptedText : "";
 
-            for (let i = 0; i < imageUrls.length; i++) {
+                        for (let i = 0; i < imageUrls.length; i++) {
               const imgUrl = imageUrls[i];
+              let imgRes: any = null; // 1. Объявляем переменную заранее
+
               try {
                 addLog(`⬇️ Downloading image ${i + 1}: ${imgUrl.substring(0, 50)}...`);
-                const imgRes = await axios.get(imgUrl, {
+                
+                // 2. Скачиваем и сохраняем в ту же переменную
+                imgRes = await axios.get(imgUrl, {
                   responseType: 'arraybuffer',
                   timeout: 15000,
                   headers: {
@@ -412,12 +416,31 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
                   maxRedirects: 5
                 });
 
+                // 3. Теперь обращение безопасно
                 if (imgRes.data && imgRes.data.byteLength > 1000) {
                   const contentType = imgRes.headers['content-type'] || '';
                   if (!contentType || !contentType.includes('image/')) {
                     addLog(`⚠️ Invalid content type for image ${i + 1}: ${contentType}, skipping`);
                     continue;
                   }
+
+                  const isWebp = imgUrl.toLowerCase().includes('webp') || contentType.includes('webp');
+                  mediaGroup.push({
+                    type: 'photo',
+                    media: {
+                      source: Buffer.from(imgRes.data),
+                      filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
+                    },
+                    caption: i === 0 ? caption : undefined
+                  });
+                  addLog(`✅ Image ${i + 1} downloaded.`);
+                } else {
+                  addLog(`⚠️ Image ${i + 1} is too small or empty, skipping.`);
+                }
+              } catch (imgErr: any) {
+                addLog(`⚠️ Failed to download image ${i + 1}: ${imgErr.message}`);
+              }
+            }
 
                   const isWebp = imgUrl.toLowerCase().includes('webp') || contentType.includes('webp');
                   mediaGroup.push({
