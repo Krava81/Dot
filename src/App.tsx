@@ -362,22 +362,17 @@ export default function App() {
       const key = pair.substring(0, eqIndex).trim();
       const value = pair.substring(eqIndex + 1).trim();
       
-      // v5.0: Если токен содержит '=', это полный набор Cookie
-// Внутри useEffect([...], [sessionToken, baseUrl])// ... предыдущий код ...
-if (sessionToken.includes('=')) {  // <--- 1. Открывающая скобка IF
+if (sessionToken.includes('=')) {
   const cookiePairs = sessionToken.split('; ');
   for (const pair of cookiePairs) {
     const eqIndex = pair.indexOf('=');
     if (eqIndex > 0) {
-      // ... логика ...
     }
   }
   addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
-}   // <--- 2. Закрывающая скобка IF (обязательно перед else!)
-else {  // <--- 3. Else сразу после закрывающей скобки
-  // Одиночный токен SESS
+}
+else {
   await CapacitorCookies.setCookie({
-     // ...
   });
   addClientLog("✅ Нативные Cookie синхронизированы (SESS).");
 } // <--- Вот здесь должна быть закрывающая скобка для всего if/else          } else {
