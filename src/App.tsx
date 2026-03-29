@@ -340,7 +340,6 @@ export default function App() {
       fetchData();
     }
   };
-  // v5.0: Принудительная установка Cookie (включая прокси-куки)
   useEffect(() => {
     const syncNativeCookies = async () => {
       if (sessionToken && baseUrl && Capacitor.isNativePlatform()) {
@@ -349,7 +348,7 @@ export default function App() {
           if (!url.startsWith('http')) url = `https://${url}`;
           
           addClientLog(`Синхронизация нативных Cookie...`);
-          
+
           if (sessionToken.includes('=')) {
             const cookiePairs = sessionToken.split('; ');
             for (const pair of cookiePairs) {
@@ -366,11 +365,12 @@ export default function App() {
                     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
                     path: '/',
                   });
+                  addClientLog(`✅ Cookie set: ${key}`);
                 }
               }
             }
             addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
-          } else {
+           else {
             await CapacitorCookies.setCookie({
               url: url,
               key: 'SESS',
