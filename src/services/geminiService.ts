@@ -108,15 +108,8 @@ try {
     return response.text.trim();
   }
   throw new Error(`Empty response from Gemini (${modelName})`);
-  
-} finally {
-  // ✅ НОВОЕ: ВСЕГДА очищаем таймер!
-  if (timeoutId) {
-    clearTimeout(timeoutId);
-    timeoutId = null;
-  }
 }
-
+   
           if (response && response.text && response.text.trim().length > 0) {
             console.log(`[GeminiService] ✅ Success with model: ${modelName}`);
             // Cache successful model for this key
