@@ -33,11 +33,12 @@ export async function processNewsText(title: string, text: string, manualApiKey?
   
   CRITICAL INSTRUCTIONS:
   1. DO NOT use any HTML tags (like <b>, <i>, <a>, etc.) or any other technical symbols and artifacts. The output must be pure plain text.
-  2. Divide the text into clear paragraphs based on topics/themes.
-  3. All brand names, technical names, and car brand names MUST remain in English (e.g., BMW, Turbocharger, etc.).
-  4. The rest of the text must be in Russian.
-  5. EXCLUDE any links to the source article or external websites from the generated text.
-  6. At the end of the post, add relevant hashtags related to cars and the specific topic of the news.
+  2. IF THE INPUT TEXT LOOKS LIKE CSS, JAVASCRIPT, OR TECHNICAL CODE, IGNORE IT AND REPLY WITH "Ошибка: присланный текст не является новостью."
+  3. Divide the text into clear paragraphs based on topics/themes.
+  4. All brand names, technical names, and car brand names MUST remain in English (e.g., BMW, Turbocharger, etc.).
+  5. The rest of the text must be in Russian.
+  6. EXCLUDE any links to the source article or external websites from the generated text.
+  7. At the end of the post, add relevant hashtags related to cars and the specific topic of the news.
   
   Title: ${title}
   Content: ${text}`;

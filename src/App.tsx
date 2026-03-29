@@ -6,7 +6,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, ShieldCheck } from 'lucide-react';
-import { processNewsText } from './services/geminiService';
 import { Capacitor, CapacitorHttp, CapacitorCookies } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 
@@ -442,8 +441,18 @@ export default function App() {
     setIsTestingKey(index);
     setKeyTestResult(null);
     try {
-      // We'll use a simple prompt to test the key
-      await processNewsText("Test", "This is a test message to verify the API key.", key);
+      const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      const res = await universalFetch(`${currentBaseUrl}/api/test-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Ошибка: ${res.status}`);
+      }
+      
       setKeyTestResult({ index, success: true, message: 'Ключ работает!' });
     } catch (e: any) {
       let msg = e.message || String(e);
@@ -769,22 +778,16 @@ export default function App() {
             }
 
             addClientLog(`🤖 Начинаю обработку задачи ${task.id}...`);
-            const adaptedText = await processNewsText(
-              task.data.title, 
-              task.data.text, 
-              keyToUse
-            );
-            addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
-            
             const completeRes = await universalFetch(`${currentBaseUrl}/api/tasks/${task.id}/complete`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptedText })
+              body: JSON.stringify({ adaptedText: null, apiKey: keyToUse })
             });
 
             if (!completeRes.ok) {
               throw new Error(`Ошибка при завершении задачи: ${completeRes.statusText}`);
             }
+            addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
           } catch (e) {
             console.error("Task processing failed", e);
             // Report error back to server so it can be logged and task can be removed

@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { parseWeChat, getLogs as getWechatLogs, clearLogs } from './wechatParser';
+import { processNewsText } from './src/services/geminiService.js';
 // import puppeteer from "puppeteer";
 
 dotenv.config();
@@ -429,10 +430,24 @@ app.get("/api/tasks", (req, res) => {
 
 app.post("/api/tasks/:id/complete", async (req, res) => {
   const { id } = req.params;
-  const { adaptedText } = req.body;
+  let { adaptedText, apiKey } = req.body;
   const task = tasks.find(t => t.id === id);
   
   if (task) {
+    if (!adaptedText) {
+      if (!apiKey) {
+        return res.status(400).json({ error: "API key is required for server-side processing" });
+      }
+      try {
+        addLog(`🤖 Server-side processing for task ${id}...`);
+        adaptedText = await processNewsText(task.data.title, task.data.text, apiKey);
+        addLog(`✅ Server-side processing completed for task ${id}`);
+      } catch (e: any) {
+        addLog(`❌ Server-side processing failed for task ${id}: ${e.message}`);
+        adaptedText = `⚠️ Ошибка при обработке новости: ${e.message}`;
+      }
+    }
+
     task.status = 'completed';
     task.adaptedText = adaptedText;
     addLog(`✅ Task ${id} completed.`);
@@ -560,6 +575,10 @@ app.post("/api/process-url", async (req, res) => {
       });
 
       const $ = cheerio.load(response.data);
+      
+      // Удаляем технические теги
+      $('style, script, noscript, iframe, svg').remove();
+      
       const title = $('title').text() || $('h1').first().text() || 'No title';
       
       let text = '';
@@ -641,6 +660,19 @@ app.use('/api', (req, res) => {
     method: req.method,
     version: "5.0"
   });
+});
+
+app.post('/api/test-key', async (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey) {
+    return res.status(400).json({ error: "API key is required" });
+  }
+  try {
+    await processNewsText("Test", "This is a test message to verify the API key.", apiKey);
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 async function startServer() {

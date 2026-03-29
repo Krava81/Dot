@@ -32,6 +32,9 @@ export async function parseWeChat(url: string) {
 
     const $ = cheerio.load(response.data);
     
+    // Удаляем технические теги
+    $('style, script, noscript, iframe, svg').remove();
+    
     const title = $('meta[property="og:title"]').attr('content') || $('h1').text() || 'Без названия';
     log(`Заголовок: ${title}`);
 
