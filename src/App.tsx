@@ -340,8 +340,6 @@ export default function App() {
       fetchData();
     }
   };
-
-  // v5.0: Принудительная установка Cookie (включая прокси-куки)
   useEffect(() => {
     const syncNativeCookies = async () => {
       if (sessionToken && baseUrl && Capacitor.isNativePlatform()) {
