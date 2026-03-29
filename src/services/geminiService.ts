@@ -4,9 +4,10 @@ import axios from "axios";
 export async function processNewsText(title: string, text: string, manualApiKey?: string) {
   const resolveKey = () => {
     if (manualApiKey && manualApiKey.trim().length > 10) return manualApiKey.trim();
-    const envKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    // Игнорируем заполнители платформы, принимаем только ключи, начинающиеся с AIza
-    if (envKey && envKey.startsWith('AIza') && envKey.trim().length > 10) {
+    const envKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    // ✅ Исправлено: добавляем проверку на placeholder
+    if (envKey && envKey !== 'undefined' && envKey !== 'null' && !envKey.includes('{{') && envKey.trim().length > 20) {
+      console.log("[GeminiService] Using API key from environment");
       return envKey.trim();
     }
     return "";
@@ -48,20 +49,17 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     if (!cleanKey.startsWith('AIza')) {
       throw new Error("Неверный формат ключа Gemini. Ключ должен начинаться с AIza.");
     }
-    // ✅ Правильная инициализация для v1beta API
-const ai = new GoogleGenAI({ 
-  apiKey: cleanKey,
-  apiVersion: 'v1beta'  // Явно указываем версию
-});
     
-    // Try primary model, fallback to stable models if it fails
-    // v5.0: Prioritize flash for speed, and add timeout
-// ✅ РАБОЧИЕ МОДЕЛИ для Google Cloud
-const models = [
-  "gemini-1.5-flash",      // Самая быстрая
-  "gemini-1.5-pro",        // Более мощная
-  "gemini-2.0-flash-exp"   // Экспериментальная (может не работать)
-];
+    const ai = new GoogleGenAI({ 
+      apiKey: cleanKey
+    });
+    
+    // ✅ ИСПРАВЛЕНО: правильные модели для текущего API
+    const models = [
+      "gemini-1.5-flash",
+      "gemini-1.5-pro",
+      "gemini-pro"
+    ];
     
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     
@@ -72,11 +70,11 @@ const models = [
       
       while (retries <= maxRetries) {
         try {
-          console.log(`[GeminiService] Trying model: ${modelName} (attempt ${retries + 1})`);
+          console.log(`[GeminiService] Trying model: ${modelName} (attempt ${retries + 1}/${maxRetries + 1})`);
           
-          // v5.0: Add 60s timeout for Gemini (increased from 30s)
+          // ✅ ИСПРАВЛЕНО: timeout 180 секунд
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 18000)
+            setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 180000)
           );
           
           const response = await Promise.race([
@@ -87,34 +85,52 @@ const models = [
             timeoutPromise
           ]) as any;
 
-          if (response && response.text) {
-            console.log(`[GeminiService] Success with model: ${modelName}`);
-            return response.text;
+          if (response && response.text && response.text.trim().length > 10) {
+            console.log(`[GeminiService] ✅ Success with model: ${modelName}`);
+            return response.text.trim();
           }
           throw new Error(`Empty response from Gemini (${modelName})`);
+          
         } catch (err: any) {
           lastError = err;
-          const errorCode = err.code || (err.response?.data?.error?.code);
-          const isQuotaOrUnavailable = errorCode === 429 || errorCode === 503;
+          const errorCode = err.code || err.status || (err.error?.code);
+          const errorMsg = err.message || JSON.stringify(err);
           
-          console.warn(`[GeminiService] Model ${modelName} failed (code ${errorCode}):`, err.message);
+          console.warn(`[GeminiService] Model ${modelName} failed`);
+          console.warn(`  Code: ${errorCode}`);
+          console.warn(`  Message: ${errorMsg.substring(0, 100)}`);
           
-          if (isQuotaOrUnavailable && retries < maxRetries) {
-            retries++;
-            const delay = Math.pow(2, retries) * 2000; // Exponential backoff: 4s, 8s
-            console.warn(`[GeminiService] Retrying in ${delay}ms...`);
-            await sleep(delay);
-            continue;
+          // ✅ ИСПРАВЛЕНО: правильная обработка ошибок
+          if (errorCode === 429 || errorCode === 503) {
+            // Quota/Unavailable - retry
+            if (retries < maxRetries) {
+              retries++;
+              const delay = Math.pow(2, retries) * 2000;
+              console.warn(`[GeminiService] Retrying in ${delay}ms... (${retries}/${maxRetries})`);
+              await sleep(delay);
+              continue;
+            }
+          } 
+          
+          if (errorCode === 404 || errorMsg.includes("not found")) {
+            // Model not found - skip to next
+            console.warn(`[GeminiService] Model not found, trying next...`);
+            break;
           }
           
-          if (err.message?.includes("API key not valid")) throw err;
+          if (errorMsg.includes("API key") || errorMsg.includes("invalid") || errorMsg.includes("PERMISSION_DENIED")) {
+            // API key error - stop immediately
+            throw new Error(`❌ API ключ недействителен: ${errorMsg}`);
+          }
           
-          // If it's a timeout or other error, try the next model
-          break; 
+          // For other errors (timeout, etc) - try next model
+          console.warn(`[GeminiService] Trying next model...`);
+          break;
         }
       }
     }
-    throw lastError || new Error("Не удалось получить ответ от Gemini.");
+    
+    throw lastError || new Error("Не удалось получить ответ от Gemini. Попробуйте позже.");
   } 
   
   if (isOpenRouter || isGrok || isGroq || isOpenAI) {
@@ -139,7 +155,7 @@ const models = [
     }
 
     try {
-      console.log(`Sending request to ${provider} (${endpoint}) with model ${model}`);
+      console.log(`Sending request to ${provider} with model ${model}`);
       const response = await axios.post(endpoint, {
         model: model,
         messages: [{ role: "user", content: prompt }],
@@ -151,52 +167,32 @@ const models = [
           "HTTP-Referer": "https://github.com/capacitor-community/http",
           "X-Title": "Telegram News Bot"
         },
-        timeout: 20000
+        timeout: 60000
       });
       
       if (response.data?.choices?.[0]?.message?.content) {
         return response.data.choices[0].message.content;
       }
       throw new Error("Некорректный ответ от API: " + JSON.stringify(response.data));
-} catch (err: any) {
-  lastError = err;
-  console.warn(`[GeminiService] Model ${modelName} failed:`);
-  console.warn(`  Message: ${err.message}`);
-  console.warn(`  Code: ${(err as any).code}`);
-  console.warn(`  Status: ${(err as any).status}`);
-  
-  // ✅ Если это NOT_FOUND - пропускаем эту модель
-  if ((err as any).status === 'NOT_FOUND' || (err as any).code === 404) {
-    console.warn(`  → Model not found, trying next one...`);
-    continue;
-  }
-  
-  // ✅ Если UNAVAILABLE - ждём и пробуем заново
-  if ((err as any).status === 'UNAVAILABLE' || (err as any).code === 503) {
-    console.warn(`  → Service unavailable, waiting 5s...`);
-    await new Promise(r => setTimeout(r, 5000));
-    continue;
-  }
-  
-  if (err.message?.includes("API key not valid")) {
-    throw new Error("❌ API ключ неверный (не валиден)");
-  }
-  
-  console.warn(`  → Trying next model...`);
-  continue;
-}
+      
+    } catch (err: any) {
+      // ✅ ИСПРАВЛЕНО: правильная обработка ошибок в catch блоке
+      console.error(`${provider} Error:`);
+      console.error(`  Message: ${err.message}`);
+      console.error(`  Status: ${err.response?.status}`);
+      
       const errMsg = err.response?.data?.error?.message || err.response?.data?.error || err.message;
       throw new Error(`${provider} Error: ${errMsg}`);
     }
   }
 
-  // If it doesn't match any known prefix but looks like a key, try Gemini as default
+  // Fallback: если неизвестный формат ключа
   if (apiKey.length > 20) {
-    console.log("Unknown key format, defaulting to Gemini...");
+    console.log("Unknown key format, trying as Gemini...");
     const ai = new GoogleGenAI({ apiKey });
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-1.5-flash",  // ✅ ИСПРАВЛЕНО: правильная модель
         contents: prompt
       });
       return response.text;
