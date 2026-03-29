@@ -81,8 +81,8 @@ let currentBotToken = getPersistentToken();
 // 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
 // ==========================================
 
-// ✅ Главная страница
-app.get("/", (req, res) => {
+// ✅ Главная страница (API)
+app.get("/api/status-root", (req, res) => {
   res.json({ 
     status: "running", 
     version: "5.0",
