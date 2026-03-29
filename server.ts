@@ -11,7 +11,7 @@ import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 // FIX 1: Исправлен путь импорта (убрано дублирование src и добавлено .js для ESM)
 import { parseWeChat, getLogs as getWechatLogs } from './wechatParser.js';
-import { processNewsText } from './services/geminiService.js';
+import { processNewsText } from './src/services/geminiService.js';
 
 dotenv.config();
 
