@@ -76,6 +76,7 @@ let lastChatId: string | number | null = "-1002603084916";
 let botStatus: 'offline' | 'starting' | 'waiting' | 'active' = 'offline';
 let botWaitRemaining = 0;
 let currentBotToken = getPersistentToken();
+let isInitializing = false;
 
 // ==========================================
 // 0. АБСОЛЮТНЫЙ ПРИОРИТЕТ (API ДЛЯ ЭМУЛЯТОРА)
@@ -206,11 +207,28 @@ function addLog(msg: string) {
 let bot: Telegraf | null = null;
 
 async function initBot(token: string) {
+  if (isInitializing) {
+    addLog("⚠️ Bot initialization already in progress, skipping...");
+    return;
+  }
+
+  if (botStatus === 'active' && token === currentBotToken && bot) {
+    addLog("ℹ️ Bot already active with same token, skipping re-init.");
+    return;
+  }
+
+  isInitializing = true;
+  botStatus = 'starting';
   addLog(`initBot called with token: ${token.substring(0, 5)}...`);
+  
   if (bot) {
     try {
       addLog("Stopping existing bot instance...");
+      // v5.4: Use a more robust stop sequence
       await bot.stop();
+      bot = null;
+      // Give Telegram a moment to close the connection
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (e) {
       addLog(`Error stopping bot: ${e}`);
     }
@@ -218,46 +236,90 @@ async function initBot(token: string) {
 
   if (!token || token.trim().length < 10) {
     botStatus = 'offline';
+    isInitializing = false;
     addLog("❌ Bot token is empty or invalid.");
     return;
   }
 
-  try {
-    botStatus = 'starting';
-    addLog(`Initializing bot with token length ${token.length}...`);
-    bot = new Telegraf(token);
+  let retryCount = 0;
+  const maxRetries = 3;
 
-    bot.start((ctx) => {
-      lastChatId = ctx.chat.id;
-      addLog(`✅ Bot started in chat: ${lastChatId}`);
-      ctx.reply("Бот активен и готов к работе!");
-    });
+  while (retryCount < maxRetries) {
+    try {
+      botStatus = 'starting';
+      addLog(`Initializing bot (Attempt ${retryCount + 1}/${maxRetries}) with token length ${token.length}...`);
+      
+      // v5.5: Ensure any previous instance from THIS loop is stopped before creating a new one
+      const currentInstance = new Telegraf(token);
+      bot = currentInstance;
 
-    bot.command('status', (ctx) => {
-      ctx.reply(`Статус: Активен\nВерсия: 5.0\nЗадач в очереди: ${tasks.filter(t => t.status === 'pending').length}`);
-    });
+      bot.start((ctx) => {
+        lastChatId = ctx.chat.id;
+        addLog(`✅ Bot started in chat: ${lastChatId}`);
+        ctx.reply("Бот активен и готов к работе!");
+      });
 
-    bot.on('text', (ctx) => {
-      lastChatId = ctx.chat.id;
-      addLog(`📩 Message from ${ctx.chat.id}: ${ctx.message.text}`);
-    });
+      bot.command('status', (ctx) => {
+        ctx.reply(`Статус: Активен\nВерсия: 5.0\nЗадач в очереди: ${tasks.filter(t => t.status === 'pending').length}`);
+      });
 
-    addLog("Launching bot...");
-    await bot.launch();
-    botStatus = 'active';
-    currentBotToken = token;
-    savePersistentToken(token);
-    addLog("🚀 Bot successfully launched and active!");
-  } catch (err: any) {
-    botStatus = 'offline';
-    addLog(`❌ Bot launch error: ${err.message}`);
-    if (err.message.includes('401')) {
-      addLog("⚠️ Invalid bot token (401). Please check your token from @BotFather.");
-    }
-    if (err.message.includes('404')) {
-      addLog("⚠️ Bot token not found (404).");
+      bot.on('text', (ctx) => {
+        lastChatId = ctx.chat.id;
+        addLog(`📩 Message from ${ctx.chat.id}: ${ctx.message.text}`);
+      });
+
+      addLog("Launching bot...");
+      try {
+        // v5.5: More aggressive drop_pending_updates
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        addLog("Webhook deleted successfully.");
+      } catch (e) {
+        addLog(`Note: Could not delete webhook: ${e}`);
+      }
+      
+      await bot.launch();
+      botStatus = 'active';
+      currentBotToken = token;
+      savePersistentToken(token);
+      addLog("🚀 Bot successfully launched and active!");
+      isInitializing = false;
+      return;
+    } catch (err: any) {
+      addLog(`❌ Bot launch error: ${err.message}`);
+      
+      // v5.5: If launch failed, try to stop the instance we just created
+      if (bot) {
+        try {
+          await bot.stop();
+        } catch (e) {}
+        bot = null;
+      }
+
+      if (err.message.includes('409') || err.message.includes('Conflict')) {
+        botStatus = 'waiting';
+        addLog("⚠️ Conflict detected (409). Waiting before retry...");
+        retryCount++;
+        // v5.5: Increased wait time (10s, 20s, 30s)
+        await new Promise(resolve => setTimeout(resolve, 10000 * retryCount));
+        continue;
+      }
+
+      botStatus = 'offline';
+      isInitializing = false;
+      
+      if (err.message.includes('401')) {
+        addLog("⚠️ Invalid bot token (401). Please check your token from @BotFather.");
+      }
+      if (err.message.includes('404')) {
+        addLog("⚠️ Bot token not found (404).");
+      }
+      return;
     }
   }
+  
+  botStatus = 'offline';
+  isInitializing = false;
+  addLog("❌ Failed to launch bot after multiple retries.");
 }
 
 // Initial bot start
@@ -316,50 +378,52 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
         const imageUrls = task.data.images || [];
         const sourceUrl = task.data.url || "";
         if (imageUrls.length > 0) {
-          addLog(`📸 Downloading ${imageUrls.length} images to send as buffers...`);
+          addLog(`📸 Downloading ${imageUrls.length} images in parallel...`);
           
-          const mediaGroup: any[] = [];
-          const caption = adaptedText.length <= 1024 ? adaptedText : "";
-          
-          for (let i = 0; i < imageUrls.length; i++) {
+          const downloadPromises = imageUrls.map(async (imgUrl: string, i: number) => {
             try {
-              const imgUrl = imageUrls[i];
               const imgRes = await axios.get(imgUrl, { 
                 responseType: 'arraybuffer',
-                timeout: 10000, // Increased timeout
+                timeout: 15000, // 15s per image
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                  'Referer': sourceUrl, // Fixed: use task.data.url
+                  'Referer': sourceUrl,
                   'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
                   'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
                 }
               });
               
-              if (imgRes.data && imgRes.data.byteLength > 1000) { // Skip tiny images/placeholders
+              if (imgRes.data && imgRes.data.byteLength > 1000) {
                 const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
-                mediaGroup.push({
+                return {
                   type: 'photo',
                   media: { 
                     source: Buffer.from(imgRes.data),
                     filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
-                  },
-                  caption: i === 0 ? caption : undefined
-                });
-              } else {
-                addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
+                  }
+                };
               }
+              return null;
             } catch (imgErr: any) {
               addLog(`⚠️ Failed to download image ${i+1}: ${imgErr.message}`);
+              return null;
             }
-          }
+          });
 
+          const results = await Promise.all(downloadPromises);
+          const mediaGroup = results.filter(r => r !== null) as any[];
+          
           if (mediaGroup.length > 0) {
+            // Add caption to the first image
+            const caption = adaptedText.length <= 1024 ? adaptedText : "";
+            mediaGroup[0].caption = caption;
+
+            addLog(`📤 Sending media group with ${mediaGroup.length} images...`);
             await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
             if (adaptedText.length > 1024) {
               await bot.telegram.sendMessage(lastChatId, adaptedText);
             }
           } else {
-            // If all downloads failed, send text only
             await bot.telegram.sendMessage(lastChatId, adaptedText);
           }
         } else {
@@ -368,7 +432,6 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
         addLog(`✅ Message sent to Telegram (${lastChatId})`);
       } catch (e: any) {
         addLog(`❌ Error sending to Telegram: ${e.message}`);
-        // Fallback: try sending just text if media group fails
         try {
           await bot.telegram.sendMessage(lastChatId, adaptedText);
           addLog(`✅ Fallback: Text-only message sent.`);
@@ -398,7 +461,7 @@ app.post("/api/process-url", async (req, res) => {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
       },
-      timeout: 15000 // Increased to 15s
+      timeout: 30000 // Increased to 30s for slow sites like WeChat
     });
     addLog(`📄 Page loaded (Status: ${response.status}, Size: ${Math.round(response.data.length / 1024)}KB). Parsing...`);
     const $ = cheerio.load(response.data);
@@ -413,6 +476,15 @@ app.post("/api/process-url", async (req, res) => {
     
     if (text.length < 100) {
       text = $('article').text() || $('main').text() || $('body').text();
+    }
+
+    // v5.2: Check for bot detection (WeChat etc)
+    const botDetectionKeywords = ['环境异常', '验证', 'Verification', 'Robot', 'Captcha', 'Access Denied'];
+    const isBotDetected = botDetectionKeywords.some(kw => text.includes(kw) || title.includes(kw));
+    
+    if (isBotDetected) {
+      addLog(`⚠️ Bot detection detected on page! AI might fail or return error.`);
+      text = `[ОШИБКА: Сайт заблокировал доступ бота. Пожалуйста, попробуйте другую ссылку или скопируйте текст вручную.]\n\n` + text;
     }
 
     // Image extraction (up to 10)
@@ -440,15 +512,25 @@ app.post("/api/process-url", async (req, res) => {
 
       if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
       
-      // Check for common image extensions or "image" in path, or WeChat specific patterns
+      // v5.1: Handle WeChat specific image formats and determine extension
       const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
       const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
+      
+      // Determine extension for WeChat images if missing
+      let finalSrc = src;
+      if (isWeChatImage && !hasImageExt) {
+        const fmtMatch = src.match(/wx_fmt=([a-z]+)/);
+        const fmt = fmtMatch ? fmtMatch[1] : 'webp'; // Default to webp for WeChat
+        addLog(`📸 WeChat image detected, format: ${fmt}`);
+      }
+
       const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp') || src.includes('ext=webp');
 
       if (isLikelyImage) {
-        if (!images.includes(src)) {
-          images.push(src);
-          addLog(`📸 Found image (${src.toLowerCase().includes('webp') ? 'WEBP' : 'IMG'}): ${src.substring(0, 60)}...`);
+        if (!images.includes(finalSrc)) {
+          images.push(finalSrc);
+          const ext = finalSrc.toLowerCase().includes('webp') ? 'WEBP' : 'IMG';
+          addLog(`📸 Found image (${ext}): ${finalSrc.substring(0, 60)}...`);
         }
       }
     };

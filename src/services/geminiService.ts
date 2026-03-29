@@ -46,29 +46,34 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     const ai = new GoogleGenAI({ apiKey: cleanKey });
     
     // Try primary model, fallback to stable models if it fails
-    // v5.0: Prioritize flash for speed, and add timeout
-    const models = ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-1.5-flash"];
+    // v5.2: Use gemini-3.1-flash-lite-preview as first choice for free tier (faster, lighter)
+    const models = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-3.1-pro-preview"];
     
     let lastError = null;
-    for (const modelName of models) {
+    for (let i = 0; i < models.length; i++) {
+      const modelName = models[i];
       try {
-        console.log(`[GeminiService] Trying model: ${modelName}`);
+        console.log(`[GeminiService] Trying model: ${modelName}. Prompt length: ${prompt.length}`);
         
-        // v5.0: Add 60s timeout for Gemini (increased from 30s)
+        // v5.3: 60s timeout for first model, 90s for others
+        const currentTimeout = i === 0 ? 60000 : 90000;
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 60000)
+          setTimeout(() => reject(new Error(`Gemini timeout (${modelName}) after ${currentTimeout/1000}s`)), currentTimeout)
         );
         
         const response = await Promise.race([
           ai.models.generateContent({
             model: modelName,
-            contents: prompt
+            contents: prompt,
+            config: {
+              // v5.2: Lite model is already minimal thinking
+            }
           }),
           timeoutPromise
         ]) as any;
 
         if (response && response.text) {
-          console.log(`[GeminiService] Success with model: ${modelName}`);
+          console.log(`[GeminiService] Success with model: ${modelName}. Response length: ${response.text.length}`);
           return response.text;
         }
         throw new Error(`Empty response from Gemini (${modelName})`);
