@@ -5,7 +5,8 @@ export async function processNewsText(title: string, text: string, manualApiKey?
   const resolveKey = () => {
     if (manualApiKey && manualApiKey.trim().length > 10) return manualApiKey.trim();
     const envKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    if (envKey && envKey !== 'undefined' && envKey !== 'null' && envKey.trim().length > 10) {
+    // Игнорируем заполнители платформы, принимаем только ключи, начинающиеся с AIza
+    if (envKey && envKey.startsWith('AIza') && envKey.trim().length > 10) {
       return envKey.trim();
     }
     return "";
@@ -43,37 +44,35 @@ export async function processNewsText(title: string, text: string, manualApiKey?
 
   if (isGemini) {
     console.log("Using Google Gemini API");
+    if (!cleanKey.startsWith('AIza')) {
+      throw new Error("Неверный формат ключа Gemini. Ключ должен начинаться с AIza.");
+    }
     const ai = new GoogleGenAI({ apiKey: cleanKey });
     
     // Try primary model, fallback to stable models if it fails
-    // v5.2: Use gemini-3.1-flash-lite-preview as first choice for free tier (faster, lighter)
-    const models = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-3.1-pro-preview"];
+    // v5.0: Prioritize flash for speed, and add timeout
+    const models = ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-1.5-flash"];
     
     let lastError = null;
-    for (let i = 0; i < models.length; i++) {
-      const modelName = models[i];
+    for (const modelName of models) {
       try {
-        console.log(`[GeminiService] Trying model: ${modelName}. Prompt length: ${prompt.length}`);
+        console.log(`[GeminiService] Trying model: ${modelName}`);
         
-        // v5.3: 60s timeout for first model, 90s for others
-        const currentTimeout = i === 0 ? 60000 : 90000;
+        // v5.0: Add 60s timeout for Gemini (increased from 30s)
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Gemini timeout (${modelName}) after ${currentTimeout/1000}s`)), currentTimeout)
+          setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 60000)
         );
         
         const response = await Promise.race([
           ai.models.generateContent({
             model: modelName,
-            contents: prompt,
-            config: {
-              // v5.2: Lite model is already minimal thinking
-            }
+            contents: prompt
           }),
           timeoutPromise
         ]) as any;
 
         if (response && response.text) {
-          console.log(`[GeminiService] Success with model: ${modelName}. Response length: ${response.text.length}`);
+          console.log(`[GeminiService] Success with model: ${modelName}`);
           return response.text;
         }
         throw new Error(`Empty response from Gemini (${modelName})`);

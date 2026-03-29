@@ -9,6 +9,7 @@ import * as dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
+import { parseWeChat, getLogs as getWechatLogs, clearLogs } from './wechatParser';
 // import puppeteer from "puppeteer";
 
 dotenv.config();
@@ -148,7 +149,8 @@ app.get("/api/config/status", async (req, res) => {
   let keyValid = false;
   let keyError = null;
 
-  if (envKey && envKey.trim().length > 10) {
+  // Игнорируем заполнители платформы, принимаем только ключи, начинающиеся с AIza
+  if (envKey && envKey.startsWith('AIza') && envKey.trim().length > 10) {
     try {
       const ai = new GoogleGenAI({ apiKey: envKey });
       await ai.models.generateContent({
@@ -160,6 +162,8 @@ app.get("/api/config/status", async (req, res) => {
       keyError = e.message;
       addLog(`⚠️ API Key check failed: ${e.message}`);
     }
+  } else if (envKey && envKey.trim().length > 10) {
+    addLog(`⚠️ API Key check skipped: Placeholder detected or invalid format.`);
   }
 
   res.json({
@@ -530,175 +534,79 @@ app.post("/api/process-url", async (req, res) => {
   addLog(`🌐 Processing URL: ${url}`);
   
   try {
-    addLog(`🌐 Fetching URL: ${url}...`);
+    let result;
     
-    // ✅ СПЕЦИАЛЬНО ДЛЯ WECHAT
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-        'Accept-Encoding': 'gzip, deflate',
-        'Cache-Control': 'max-age=0',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer': 'https://mp.weixin.qq.com/',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin'
-      },
-      timeout: 20000
-    });
-
-    addLog(`📄 Page loaded (Status: ${response.status}, Size: ${Math.round(response.data.length / 1024)}KB). Parsing...`);
-    const $ = cheerio.load(response.data);
-    const title = $('title').text() || $('h1').first().text() || 'Без названия';
-    
-    // ✅ Improved text extraction for WeChat
-    addLog(`📝 Извлекаем текст...`);
-    let text = '';
-    
-    // Сначала пробуем article/main
-    $('article, main, .news-article, .rich_media').each((i, el) => {
-      const $el = $(el);
-      $el.find('p').each((j, p) => {
-        const pText = $(p).text().trim();
-        if (pText.length > 15) text += pText + '\n';
+    if (url.includes('weixin.qq.com') || url.includes('mp.weixin')) {
+      // WeChat парсер
+      addLog(`🔗 Обнаружена WeChat ссылка, используем специальный парсер...`);
+      result = await parseWeChat(url);
+      
+      // Выводим логи из парсера
+      const wechatLogs = getWechatLogs();
+      wechatLogs.forEach(log => addLog(log));
+    } else {
+      // Обычный парсер
+      addLog(`🌐 Загрузка обычной ссылки...`);
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        timeout: 15000
       });
-    });
-    
-    // Если не нашли - берём все параграфы
-    if (text.length < 50) {
+
+      const $ = cheerio.load(response.data);
+      const title = $('title').text() || $('h1').first().text() || 'No title';
+      
+      let text = '';
       $('p').each((i, el) => {
         const pText = $(el).text().trim();
-        if (pText.length > 15 && !pText.includes('Share') && !pText.includes('阅读') && !pText.includes('文章')) {
-          text += pText + '\n';
+        if (pText.length > 20) text += pText + '\n';
+      });
+      
+      if (text.length < 100) {
+        text = $('article').text() || $('main').text() || $('body').text();
+      }
+      
+      const images: string[] = [];
+      $('img').each((i, el) => {
+        if (images.length >= 10) return;
+        const src = $(el).attr('src') || $(el).attr('data-src');
+        if (src && !src.startsWith('data:')) {
+          images.push(src);
         }
       });
+
+      result = {
+        title,
+        text: text.substring(0, 10000),
+        images,
+        debug: []
+      };
     }
-    
-    // Fallback
-    if (text.length < 50) {
-      text = $('body').text();
-    }
-    
-    // Очищаем текст от мусора
-    text = text.replace(/\n\n+/g, '\n').trim().substring(0, 10000);
-    addLog(`✅ Текст извлечён (${text.length} символов)`);
-    
-    // 📸 Image extraction - специально для WeChat
-    const images: string[] = [];
-    const baseUrl = new URL(url).origin;
-    
-    const addImage = (src: string | undefined) => {
-      if (!src || images.length >= 20) return;
-      src = src.trim();
-      if (!src || src.startsWith('data:')) return;
-    
-      // Handle srcset strings
-      if (src.includes(',') && (src.includes(' ') || src.includes('.webp') || src.includes('.jpg'))) {
-        const parts = src.split(',');
-        const webpPart = parts.find(p => p.toLowerCase().includes('.webp'));
-        src = (webpPart || parts[0]).trim().split(/\s+/)[0];
-      }
-    
-      try {
-        const absoluteUrl = new URL(src, baseUrl).href;
-        src = absoluteUrl;
-      } catch (e) {
-        return;
-      }
-    
-      if (src.includes('adsystem') || src.includes('analytics') || src.includes('tracker') || src.includes('pixel')) return;
-      
-      // ✅ СПЕЦИАЛЬНО ДЛЯ WECHAT - проверяем mmbiz.qpic.cn
-      const hasImageExt = src.match(/\.(jpeg|jpg|gif|png|webp|avif|jfif|bmp|svg)/i);
-      const isWeChatImage = src.includes('mmbiz') || src.includes('qpic.cn') || src.includes('wx_fmt=') || src.includes('tp=webp');
-      const isLikelyImage = hasImageExt || isWeChatImage || src.toLowerCase().includes('image') || src.toLowerCase().includes('img') || src.includes('format=webp') || src.includes('ext=webp');
-    
-      if (isLikelyImage) {
-        if (!images.includes(src)) {
-          images.push(src);
-          addLog(`📸 Found image: ${src.substring(0, 80)}...`);
-        }
-      }
-    };
-    
-    // 1. Meta tags (og:image, twitter:image) - высокий приоритет
-    addLog(`🔍 Ищем изображения в мета-тегах...`);
-    addImage($('meta[property="og:image"]').attr('content'));
-    addImage($('meta[name="twitter:image"]').attr('content'));
-    addImage($('meta[property="og:image:secure_url"]').attr('content'));
-    addImage($('meta[itemprop="image"]').attr('content'));
-    addImage($('meta[name="image"]').attr('content'));
-    
-    // 2. Article/Main content images (WeChat articles)
-    addLog(`🔍 Ищем изображения в контенте...`);
-    $('article img, main img, .news-article img, .rich_media img, .js_medialist img, [data-src*="mmbiz"]').each((i, el) => {
-      if (images.length >= 20) return;
-      const $el = $(el);
-      const src = $el.attr('data-src') || 
-                  $el.attr('src') || 
-                  $el.attr('data-lazy-src') || 
-                  $el.attr('data-original') || 
-                  $el.attr('data-src-2x') ||
-                  $el.attr('data-actualsrc') ||
-                  $el.attr('data-srcset') ||
-                  $el.attr('srcset');
-      addImage(src);
-    });
-    
-    // 3. All img tags with data attributes (WeChat uses lazy loading)
-    addLog(`🔍 Ищем все img теги...`);
-    $('img').each((i, el) => {
-      if (images.length >= 20) return;
-      const $el = $(el);
-      const src = $el.attr('src') || 
-                  $el.attr('data-src') || 
-                  $el.attr('data-lazy-src') || 
-                  $el.attr('data-original') || 
-                  $el.attr('data-src-2x') ||
-                  $el.attr('data-actualsrc');
-      addImage(src);
-    });
-    
-    // 4. Picture source tags
-    addLog(`🔍 Ищем picture source теги...`);
-    $('picture source').each((i, el) => {
-      const srcset = $(el).attr('srcset') || $(el).attr('data-srcset');
-      if (srcset) {
-        const firstUrl = srcset.split(',')[0].trim().split(' ')[0];
-        addImage(firstUrl);
-      }
-    });
-    
-    // 5. Links to images
-    addLog(`🔍 Ищем ссылки на изображения...`);
-    $('a').each((i, el) => {
-      const href = $(el).attr('href');
-      if (href && href.match(/\.(jpeg|jpg|png|webp|avif|jfif|bmp)/i)) {
-        addImage(href);
-      }
-    });
-    
-    if (images.length === 0) {
-      addLog(`⚠️ Изображения не найдены на странице.`);
-    } else {
-      addLog(`✅ Найдено ${images.length} изображений`);
-    }
-    
+
+    const { title, text, images } = result;
+
+    addLog(`✅ Parsing complete:`);
+    addLog(`   📰 Title: ${title.substring(0, 60)}`);
+    addLog(`   📝 Text: ${text.length} chars`);
+    addLog(`   🖼️ Images: ${images.length}`);
+
     const newTask = {
       id: uuidv4(),
       type: 'news_adaptation',
-      data: { url, title, text: text.substring(0, 10000), images },
+      data: { url, title, text, images },
       status: 'pending',
       createdAt: new Date().toISOString()
     };
+    
     tasks.push(newTask);
-    addLog(`➕ New task added from URL: ${title} (${newTask.id}) with ${images.length} images`);
+    addLog(`➕ Task added: ${newTask.id}`);
     res.json({ status: "ok", taskId: newTask.id });
+
   } catch (e: any) {
-    addLog(`❌ Error processing URL: ${e.message}`);
+    addLog(`❌ Error: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
 });
