@@ -158,7 +158,7 @@ if (!envKey || envKey.includes('undefined') || envKey.includes('null')) {
     try {
       const ai = new GoogleGenAI({ apiKey: envKey });
       await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         contents: "ping",
       });
       keyValid = true;
@@ -248,7 +248,7 @@ async function fetchWithBrowser(url: string): Promise<string> {
     addLog(`🌐 Загружаем страницу: ${url}`);
     
     const response = await axios.get(url, {
-      timeout: 20000,
+      timeout: 2000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
@@ -270,98 +270,19 @@ async function fetchWithBrowser(url: string): Promise<string> {
 
 let isInitializing = false;
 
-async function initBot(token: string) {
-  if (isInitializing) {
-    addLog("⚠️ Bot initialization already in progress, skipping...");
-    return;
-  }
-  isInitializing = true;
-  addLog(`initBot called with token: ${token.substring(0, 5)}...`);
-  if (bot) {
-    try {
-      addLog("Stopping existing bot instance...");
-      await bot.stop();
-      // Give Telegram a moment to close the connection
-      await new Promise(resolve => setTimeout(resolve, 20000));
-      addLog("Existing bot stopped.");
-    } catch (e) {
-      addLog(`Error stopping bot: ${e}`);
-    }
-    bot = null;
-  }
-
-  if (!token || token.trim().length < 10) {
-    botStatus = 'offline';
-    addLog("❌ Bot token is empty or invalid.");
-    isInitializing = false;
-    return;
-  }
-
-  try {
-    botStatus = 'starting';
-    addLog(`Initializing bot with token length ${token.length}...`);
-    bot = new Telegraf(token);
-
-    bot.start((ctx) => {
-      lastChatId = ctx.chat.id;
-      addLog(`✅ Bot started in chat: ${lastChatId}`);
-      ctx.reply("Бот активен и готов к работе!");
-    });
-
-    bot.command('status', (ctx) => {
-      ctx.reply(`Статус: Активен\nВерсия: 5.0\nЗадач в очереди: ${tasks.filter(t => t.status === 'pending').length}`);
-    });
-
-    bot.on('text', (ctx) => {
-      lastChatId = ctx.chat.id;
-      addLog(`📩 Message from ${ctx.chat.id}: ${ctx.message.text}`);
-    });
-
-    addLog("Launching bot...");
-    
-    // Retry mechanism for 409 Conflict
-    let retries = 0;
-    const maxRetries = 3;
-    while (retries < maxRetries) {
-      try {
-        try {
-          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-          addLog("Webhook deleted successfully.");
-        } catch (e) {
-          addLog(`Note: Could not delete webhook: ${e}`);
-        }
-        await bot.launch();
-        botStatus = 'active';
-        isInitializing = false;
-        currentBotToken = token;
-        savePersistentToken(token);
-        addLog("🚀 Bot successfully launched and active!");
-        return; // Success
-      } catch (err: any) {
-        if (err.message.includes('409') || err.message.includes('Conflict')) {
-          retries++;
-          const waitTime = retries * 5000;
-          addLog(`⚠️ Conflict detected (409). Retrying in ${waitTime/1000}s... (Attempt ${retries}/${maxRetries})`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        } else {
-          throw err; // Not a conflict error, rethrow
-        }
-      }
-    }
-    throw new Error("Failed to launch bot after multiple retries due to conflicts.");
-
-  } catch (err: any) {
-    isInitializing = false;
-    botStatus = 'offline';
-    addLog(`❌ Bot launch error: ${err.message}`);
-    if (err.message.includes('401')) {
-      addLog("⚠️ Invalid bot token (401). Please check your token from @BotFather.");
-    }
-    if (err.message.includes('404')) {
-      addLog("⚠️ Bot token not found (404).");
-    }
-    isInitializing = false;
-  }
+if (imgRes.data && imgRes.data.byteLength > 1000) {
+  const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
+  mediaGroup.push({
+    type: 'photo',
+    media: { 
+      source: Buffer.from(imgRes.data),
+      filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
+    },
+    caption: i === 0 ? caption : undefined
+  });
+  addLog(`✅ Image ${i+1} downloaded.`);
+} else {
+  addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
 }
 
 // Initial bot start
@@ -437,114 +358,131 @@ app.post("/api/tasks/:id/complete", async (req, res) => {
   const task = tasks.find(t => t.id === id);
   
   if (task) {
-    if (!adaptedText) {
-      if (!apiKey) {
-        return res.status(400).json({ error: "API key is required for server-side processing" });
+    try {
+      // ✅ ЭТАП 1: Обработка текста
+      if (!adaptedText) {
+        if (!apiKey) {
+          return res.status(400).json({ error: "API key is required for server-side processing" });
+        }
+        try {
+          addLog(`🤖 Server-side processing for task ${id}...`);
+          adaptedText = await processNewsText(task.data.title, task.data.text, apiKey);
+          addLog(`✅ Server-side processing completed for task ${id}`);
+        } catch (e: any) {
+          addLog(`❌ Server-side processing failed for task ${id}: ${e.message}`);
+          adaptedText = `⚠️ Ошибка при обработке новости: ${e.message}`;
+        }
       }
-      try {
-        addLog(`🤖 Server-side processing for task ${id}...`);
-        adaptedText = await processNewsText(task.data.title, task.data.text, apiKey);
-        addLog(`✅ Server-side processing completed for task ${id}`);
-      } catch (e: any) {
-        addLog(`❌ Server-side processing failed for task ${id}: ${e.message}`);
-        adaptedText = `⚠️ Ошибка при обработке новости: ${e.message}`;
-      }
-    }
 
-    task.status = 'completed';
-    task.adaptedText = adaptedText;
-    addLog(`✅ Task ${id} completed.`);
-    
-    const pendingTask = tasks.find(t => t.status === 'pending');
-    if (!pendingTask) {
-      botStatus = 'waiting';
-    }
-    
-    if (bot && lastChatId) {
-      addLog(`🔍 Attempting to send to Telegram. ChatID: ${lastChatId}, Images: ${task.data.images?.length || 0}`);
-      try {
-        const imageUrls = task.data.images || [];
-        const sourceUrl = task.data.url || "";
-        if (imageUrls.length > 0) {
-          addLog(`📸 Downloading ${imageUrls.length} images to send as buffers...`);
-          
-          const mediaGroup: any[] = [];
-          const caption = adaptedText.length <= 1024 ? adaptedText : "";
-          
-          for (let i = 0; i < imageUrls.length; i++) {
-            const imgUrl = imageUrls[i];
-            try {
-              addLog(`⬇️ Downloading image ${i+1}: ${imgUrl.substring(0, 50)}...`);
-              const imgRes = await axios.get(imgUrl, { 
-  responseType: 'arraybuffer',
-  timeout: 15000,
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://mp.weixin.qq.com/',
-    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache'
-  },
-  withCredentials: false,
-  maxRedirects: 5
-});
-
-if (imgRes.data && imgRes.data.byteLength > 1000) {
-                const isWebp = imgUrl.toLowerCase().includes('webp') || (imgRes.headers['content-type'] && imgRes.headers['content-type'].includes('webp'));
-                mediaGroup.push({
-                  type: 'photo',
-                  media: { 
-                    source: Buffer.from(imgRes.data),
-                    filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
+      // ✅ ЭТАП 2: Отправка в Telegram (ПЕРЕД пометкой как completed!)
+      if (bot && lastChatId) {
+        addLog(`🔍 Attempting to send to Telegram. ChatID: ${lastChatId}, Images: ${task.data.images?.length || 0}`);
+        try {
+          const imageUrls = task.data.images || [];
+          const sourceUrl = task.data.url || "";
+          if (imageUrls.length > 0) {
+            addLog(`📸 Downloading ${imageUrls.length} images to send as buffers...`);
+            
+            const mediaGroup: any[] = [];
+            const caption = adaptedText.length <= 1024 ? adaptedText : "";
+            
+            for (let i = 0; i < imageUrls.length; i++) {
+              const imgUrl = imageUrls[i];
+              try {
+                addLog(`⬇️ Downloading image ${i+1}: ${imgUrl.substring(0, 50)}...`);
+                const imgRes = await axios.get(imgUrl, { 
+                  responseType: 'arraybuffer',
+                  timeout: 15000,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://mp.weixin.qq.com/',
+                    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
                   },
-                  caption: i === 0 ? caption : undefined
+                  withCredentials: false,
+                  maxRedirects: 5
                 });
-                addLog(`✅ Image ${i+1} downloaded.`);
-              } else {
-                addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
-              }
-            } catch (imgErr: any) {
-              addLog(`⚠️ Failed to download image ${i+1}: ${imgErr.message}`);
-            }
-          }
 
-          addLog(`📤 Sending media group to Telegram...`);
-          if (mediaGroup.length > 0) {
-            await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
-            addLog(`✅ Media group sent.`);
-            if (adaptedText.length > 1024) {
+                if (imgRes.data && imgRes.data.byteLength > 1000) {
+                  const contentType = imgRes.headers['content-type'] || '';
+                  if (!contentType || !contentType.includes('image/')) {
+                    addLog(`⚠️ Invalid content type for image ${i+1}: ${contentType}, skipping`);
+                    continue;
+                  }
+                  
+                  const isWebp = imgUrl.toLowerCase().includes('webp') || contentType.includes('webp');
+                  mediaGroup.push({
+                    type: 'photo',
+                    media: { 
+                      source: Buffer.from(imgRes.data),
+                      filename: `image_${i}.${isWebp ? 'webp' : 'jpg'}`
+                    },
+                    caption: i === 0 ? caption : undefined
+                  });
+                  addLog(`✅ Image ${i+1} downloaded.`);
+                } else {
+                  addLog(`⚠️ Image ${i+1} is too small or empty, skipping.`);
+                }
+              } catch (imgErr: any) {
+                addLog(`⚠️ Failed to download image ${i+1}: ${imgErr.message}`);
+              }
+            }
+
+            addLog(`📤 Sending media group to Telegram...`);
+            if (mediaGroup.length > 0) {
+              await bot.telegram.sendMediaGroup(lastChatId, mediaGroup);
+              addLog(`✅ Media group sent.`);
+              if (adaptedText.length > 1024) {
+                const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
+                await bot.telegram.sendMessage(lastChatId, cleanText);
+                addLog(`✅ Caption sent.`);
+              }
+            } else {
+              addLog(`⚠️ No media to send, sending text only.`);
               const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
               await bot.telegram.sendMessage(lastChatId, cleanText);
-              addLog(`✅ Caption sent.`);
             }
           } else {
-            addLog(`⚠️ No media to send, sending text only.`);
+            addLog(`📤 Sending text only to Telegram...`);
             const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
             await bot.telegram.sendMessage(lastChatId, cleanText);
+            addLog(`✅ Text sent.`);
           }
-        } else {
-          addLog(`📤 Sending text only to Telegram...`);
-          const cleanText = adaptedText.replace(/```[a-z]*\n/g, '').replace(/```/g, '').trim();
-          await bot.telegram.sendMessage(lastChatId, cleanText);
-          addLog(`✅ Text sent.`);
+          addLog(`✅ Message sent to Telegram (${lastChatId})`);
+        } catch (e: any) {
+          addLog(`❌ Error sending to Telegram: ${e.message}`);
+          try {
+            await bot.telegram.sendMessage(lastChatId, adaptedText);
+            addLog(`✅ Fallback: Text-only message sent.`);
+          } catch (e2: any) {
+            addLog(`❌ Fallback failed: ${e2.message}`);
+          }
         }
-        addLog(`✅ Message sent to Telegram (${lastChatId})`);
-      } catch (e: any) {
-        addLog(`❌ Error sending to Telegram: ${e.message}`);
-        try {
-          await bot.telegram.sendMessage(lastChatId, adaptedText);
-          addLog(`✅ Fallback: Text-only message sent.`);
-        } catch (e2: any) {
-          addLog(`❌ Fallback failed: ${e2.message}`);
-        }
+      } else {
+        addLog(`⚠️ Cannot send to Telegram: bot or chatId missing. Bot: ${!!bot}, ChatId: ${lastChatId}`);
       }
-    } else {
-      addLog(`⚠️ Cannot send to Telegram: bot or chatId missing. Bot: ${!!bot}, ChatId: ${lastChatId}`);
+
+      // ✅ ЭТАП 3: ТОЛЬКО ПОСЛЕ отправки помечаем как завершённую
+      task.status = 'completed';
+      task.adaptedText = adaptedText;
+      addLog(`✅ Task ${id} completed.`);
+      
+      const pendingTask = tasks.find(t => t.status === 'pending');
+      if (!pendingTask) {
+        botStatus = 'waiting';
+      }
+      
+      res.json({ status: "ok" });
+    } catch (error: any) {
+      // Если произошла ошибка - статус остаётся 'failed'
+      task.status = 'failed';
+      task.error = error.message;
+      addLog(`❌ Task ${id} failed: ${error.message}`);
+      res.status(500).json({ error: error.message });
     }
-    
-    res.json({ status: "ok" });
   } else {
     res.status(404).json({ error: "Task not found" });
   }

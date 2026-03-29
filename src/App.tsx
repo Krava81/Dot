@@ -352,20 +352,31 @@ export default function App() {
           
           // v5.0: Если токен содержит '=', это полный набор Cookie
           if (sessionToken.includes('=')) {
-            const cookiePairs = sessionToken.split('; ');
-            for (const pair of cookiePairs) {
-              const [key, value] = pair.split('=');
-              if (key && value) {
-                await CapacitorCookies.setCookie({
-                  url: url,
-                  key: key.trim(),
-                  value: value.trim(),
-                  expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                  path: '/',
-                });
-              }
-            }
-            addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
+  const cookiePairs = sessionToken.split('; ');
+  for (const pair of cookiePairs) {
+    // ✅ НОВОЕ: Находим ПЕРВЫЙ '=' вместо split
+    const eqIndex = pair.indexOf('=');
+    if (eqIndex > 0) {
+      const key = pair.substring(0, eqIndex).trim();
+      const value = pair.substring(eqIndex + 1).trim();
+      
+      // ✅ НОВОЕ: Валидация имени cookie
+      if (key && value && /^[a-zA-Z0-9_-]+$/.test(key)) {
+        await CapacitorCookies.setCookie({
+          url: url,
+          key: key,
+          value: value,
+          expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          path: '/',
+        });
+        addClientLog(`✅ Cookie set: ${key}`);
+      } else {
+        addClientLog(`⚠️ Skipped invalid cookie pair: ${key}=${value}`);
+      }
+    }
+  }
+  addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
+}
           } else {
             // Одиночный токен SESS
             await CapacitorCookies.setCookie({
