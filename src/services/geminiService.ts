@@ -52,37 +52,57 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     
     // Try primary model, fallback to stable models if it fails
     // v5.0: Prioritize flash for speed, and add timeout
-    const models = ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-1.5-flash"];
+    const models = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"];
+    
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     
     let lastError = null;
     for (const modelName of models) {
-      try {
-        console.log(`[GeminiService] Trying model: ${modelName}`);
-        
-        // v5.0: Add 60s timeout for Gemini (increased from 30s)
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 60000)
-        );
-        
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model: modelName,
-            contents: prompt
-          }),
-          timeoutPromise
-        ]) as any;
+      let retries = 0;
+      const maxRetries = 2;
+      
+      while (retries <= maxRetries) {
+        try {
+          console.log(`[GeminiService] Trying model: ${modelName} (attempt ${retries + 1})`);
+          
+          // v5.0: Add 60s timeout for Gemini (increased from 30s)
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 60000)
+          );
+          
+          const response = await Promise.race([
+            ai.models.generateContent({
+              model: modelName,
+              contents: prompt
+            }),
+            timeoutPromise
+          ]) as any;
 
-        if (response && response.text) {
-          console.log(`[GeminiService] Success with model: ${modelName}`);
-          return response.text;
+          if (response && response.text) {
+            console.log(`[GeminiService] Success with model: ${modelName}`);
+            return response.text;
+          }
+          throw new Error(`Empty response from Gemini (${modelName})`);
+        } catch (err: any) {
+          lastError = err;
+          const errorCode = err.code || (err.response?.data?.error?.code);
+          const isQuotaOrUnavailable = errorCode === 429 || errorCode === 503;
+          
+          console.warn(`[GeminiService] Model ${modelName} failed (code ${errorCode}):`, err.message);
+          
+          if (isQuotaOrUnavailable && retries < maxRetries) {
+            retries++;
+            const delay = Math.pow(2, retries) * 2000; // Exponential backoff: 4s, 8s
+            console.warn(`[GeminiService] Retrying in ${delay}ms...`);
+            await sleep(delay);
+            continue;
+          }
+          
+          if (err.message?.includes("API key not valid")) throw err;
+          
+          // If it's a timeout or other error, try the next model
+          break; 
         }
-        throw new Error(`Empty response from Gemini (${modelName})`);
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[GeminiService] Model ${modelName} failed:`, err.message);
-        if (err.message?.includes("API key not valid")) throw err;
-        // If it's a timeout or other error, try the next model
-        continue;
       }
     }
     throw lastError || new Error("Не удалось получить ответ от Gemini.");
@@ -142,7 +162,7 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     const ai = new GoogleGenAI({ apiKey });
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3-flash-preview",
         contents: prompt
       });
       return response.text;
