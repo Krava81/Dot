@@ -48,16 +48,19 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     if (!cleanKey.startsWith('AIza')) {
       throw new Error("Неверный формат ключа Gemini. Ключ должен начинаться с AIza.");
     }
-    const ai = new GoogleGenAI({ apiKey: cleanKey });
+    // ✅ Правильная инициализация для v1beta API
+const ai = new GoogleGenAI({ 
+  apiKey: cleanKey,
+  apiVersion: 'v1beta'  // Явно указываем версию
+});
     
     // Try primary model, fallback to stable models if it fails
     // v5.0: Prioritize flash for speed, and add timeout
-// ✅ ТОЛЬКО СУЩЕСТВУЮЩИЕ МОДЕЛИ
+// ✅ РАБОЧИЕ МОДЕЛИ для Google Cloud
 const models = [
-  "gemini-2.0-flash",
-  "gemini-1.5-flash", 
-  "gemini-1.5-pro",
-  "gemini-pro"
+  "gemini-1.5-flash",      // Самая быстрая
+  "gemini-1.5-pro",        // Более мощная
+  "gemini-2.0-flash-exp"   // Экспериментальная (может не работать)
 ];
     
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -155,8 +158,33 @@ const models = [
         return response.data.choices[0].message.content;
       }
       throw new Error("Некорректный ответ от API: " + JSON.stringify(response.data));
-    } catch (err: any) {
-      console.error(`${provider} Error Details:`, err.response?.data || err.message);
+} catch (err: any) {
+  lastError = err;
+  console.warn(`[GeminiService] Model ${modelName} failed:`);
+  console.warn(`  Message: ${err.message}`);
+  console.warn(`  Code: ${(err as any).code}`);
+  console.warn(`  Status: ${(err as any).status}`);
+  
+  // ✅ Если это NOT_FOUND - пропускаем эту модель
+  if ((err as any).status === 'NOT_FOUND' || (err as any).code === 404) {
+    console.warn(`  → Model not found, trying next one...`);
+    continue;
+  }
+  
+  // ✅ Если UNAVAILABLE - ждём и пробуем заново
+  if ((err as any).status === 'UNAVAILABLE' || (err as any).code === 503) {
+    console.warn(`  → Service unavailable, waiting 5s...`);
+    await new Promise(r => setTimeout(r, 5000));
+    continue;
+  }
+  
+  if (err.message?.includes("API key not valid")) {
+    throw new Error("❌ API ключ неверный (не валиден)");
+  }
+  
+  console.warn(`  → Trying next model...`);
+  continue;
+}
       const errMsg = err.response?.data?.error?.message || err.response?.data?.error || err.message;
       throw new Error(`${provider} Error: ${errMsg}`);
     }
