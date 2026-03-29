@@ -323,7 +323,7 @@ app.post(["/api/config/update", "/api/config/token"], async (req, res) => {
   
   if (token) {
     addLog(`Updating bot token...`);
-    await initBot(token);
+    initBot(token).catch(err => addLog(`❌ Background bot init error: ${err.message}`));
   }
   
   if (chatId) {
