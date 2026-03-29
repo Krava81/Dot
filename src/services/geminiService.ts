@@ -52,7 +52,13 @@ export async function processNewsText(title: string, text: string, manualApiKey?
     
     // Try primary model, fallback to stable models if it fails
     // v5.0: Prioritize flash for speed, and add timeout
-    const models = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"];
+// ✅ ТОЛЬКО СУЩЕСТВУЮЩИЕ МОДЕЛИ
+const models = [
+  "gemini-2.0-flash",
+  "gemini-1.5-flash", 
+  "gemini-1.5-pro",
+  "gemini-pro"
+];
     
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     
@@ -67,7 +73,7 @@ export async function processNewsText(title: string, text: string, manualApiKey?
           
           // v5.0: Add 60s timeout for Gemini (increased from 30s)
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 60000)
+            setTimeout(() => reject(new Error(`Gemini timeout (${modelName})`)), 18000)
           );
           
           const response = await Promise.race([

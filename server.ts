@@ -146,7 +146,10 @@ app.get("/api/logs", (req, res) => {
 });
 
 app.get("/api/config/status", async (req, res) => {
-  const envKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  const envKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+if (!envKey || envKey.includes('undefined') || envKey.includes('null')) {
+  addLog(`⚠️ No valid API key in environment. Using client-provided key.`);
+}
   let keyValid = false;
   let keyError = null;
 
