@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Link as LinkIcon, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, ShieldCheck } from 'lucide-react';
 import { Capacitor, CapacitorHttp, CapacitorCookies } from '@capacitor/core';
@@ -18,13 +18,26 @@ declare global {
   }
 }
 
+// FIX 3: Обёртка localStorage в try/catch для защиты от WebView-окружений
+const safeLocalStorage = {
+  getItem: (key: string): string | null => {
+    try { return localStorage.getItem(key); } catch { return null; }
+  },
+  setItem: (key: string, value: string): void => {
+    try { localStorage.setItem(key, value); } catch {}
+  },
+  clear: (): void => {
+    try { localStorage.clear(); } catch {}
+  }
+};
+
 const getInitialBaseUrl = () => {
   if (window.location.href.includes('run.app')) {
     return window.location.origin;
   }
-  const saved = localStorage.getItem('tg_bot_server_url');
+  const saved = safeLocalStorage.getItem('tg_bot_server_url');
   if (saved) return saved;
-  return process.env.VITE_APP_URL || '';
+  return import.meta.env.VITE_APP_URL || '';
 };
 
 export default function App() {
@@ -38,24 +51,24 @@ export default function App() {
     const timestamp = new Date().toLocaleTimeString();
     setLogs(prev => [`[${timestamp}] [Client] ${msg}`, ...prev].slice(0, 50));
   };
+
   const [isWorking, setIsWorking] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem('app_session_token') || '');
+  const [sessionToken, setSessionToken] = useState(() => safeLocalStorage.getItem('app_session_token') || '');
   const [showSettings, setShowSettings] = useState(false);
   const [showCookieFixer, setShowCookieFixer] = useState(false);
   const [showFullResponse, setShowFullResponse] = useState(false);
   const [fullResponse, setFullResponse] = useState<string | null>(null);
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
-  const [isDebugMode, setIsDebugMode] = useState(false);
 
   // Универсальный загрузчик v5.0
-  const universalFetch = async (url: string, options: any = {}) => {
+  const universalFetch = useCallback(async (url: string, options: any = {}) => {
     const platform = Capacitor.getPlatform();
     const isNative = platform === 'android' || platform === 'ios';
     const isNativePlatform = Capacitor.isNativePlatform();
     const isWebMirror = window.location.href.includes('run.app');
-    
+
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -67,22 +80,20 @@ export default function App() {
     if (sessionToken) {
       (headers as any)['Authorization'] = `Bearer ${sessionToken}`;
       (headers as any)['X-Session-Token'] = sessionToken;
-      // v5.0: Если токен содержит '=', передаем его как Cookie для обхода прокси
       if (isNative && sessionToken.includes('=')) {
         (headers as any)['Cookie'] = sessionToken;
       }
     }
-    
+
     if ((isNative || isNativePlatform) && !isWebMirror) {
       try {
         const http = CapacitorHttp || (Capacitor as any).Plugins?.CapacitorHttp;
-        
-        // v4.7: Принудительно добавляем метку версии и сессии в URL для обхода кэша прокси
+
         let finalUrl = url;
         if (!finalUrl.startsWith('http')) {
           finalUrl = `https://${finalUrl}`;
         }
-        
+
         const requestUrl = new URL(finalUrl);
         requestUrl.searchParams.set('v', '5.0');
         if (sessionToken) requestUrl.searchParams.set('sid', sessionToken.substring(0, 8));
@@ -96,16 +107,14 @@ export default function App() {
           connectTimeout: 15000,
           readTimeout: 15000
         });
-        
-        // v4.4: Если сервер вернул HTML вместо JSON — это почти всегда страница логина Google или ошибка прокси
+
         const isHtml = typeof res.data === 'string' && (res.data.includes('<!doctype html>') || res.data.includes('<html'));
-        
+
         if (isHtml) {
           if (res.data.includes('google-signin') || res.data.includes('Cookie check') || res.data.includes('login')) {
             addClientLog("⚠️ Обнаружена защита Google Cloud Run. Требуется вход.");
             throw new Error("AI_STUDIO_AUTH_REQUIRED");
           }
-          // Если это просто какая-то другая ошибка в виде HTML
           if (res.status === 403 || res.status === 401) {
             throw new Error("AI_STUDIO_AUTH_REQUIRED");
           }
@@ -143,12 +152,13 @@ export default function App() {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
-        
+
+        // FIX 2: Используем только внутренний controller, игнорируем внешний signal
+        // чтобы не конфликтовать с нативной веткой
         addClientLog(`[Web] Requesting ${url}...`);
         const res = await fetch(url, { ...options, headers, signal: controller.signal });
         clearTimeout(timeoutId);
-        
-        // v4.1: Detect AI Studio Proxy "Cookie Check" in Web mode
+
         const contentType = res.headers.get('content-type');
         if (contentType && contentType.includes('text/html')) {
           const text = await res.clone().text();
@@ -161,38 +171,35 @@ export default function App() {
           addClientLog(`❌ 401 Unauthorized: ${url}`);
           throw new Error("AI_STUDIO_AUTH_REQUIRED");
         }
-        
+
         return res;
       } catch (err: any) {
         if (err.name === 'AbortError') {
           addClientLog(`❌ Timeout requesting ${url}`);
           throw new Error("TIMEOUT_ERROR");
         }
-        if (err.message === "AI_STUDIO_COOKIE_CHECK") throw err;
         throw err;
       }
     }
-  };
+  }, [sessionToken]);
+
   const [isDeepLogin, setIsDeepLogin] = useState(() => {
     return new URLSearchParams(window.location.search).get('mode') === 'app_return';
   });
 
-  // v3.1: Handle return from Deep Login
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'app_return') {
       setIsDeepLogin(false);
-      // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
       fetchData();
     }
   }, []);
 
-  // v3.0: Safety timeout for loading screen
   useEffect(() => {
     const timer = setTimeout(() => {
       if (loading) {
-        console.log("[v3.0] Loading timeout reached, forcing UI display");
+        console.log("[v5.0] Loading timeout reached, forcing UI display");
         setLoading(false);
       }
     }, 4000);
@@ -204,7 +211,7 @@ export default function App() {
 
   const switchToUrl = (url: string) => {
     setBaseUrl(url);
-    localStorage.setItem('tg_bot_server_url', url);
+    safeLocalStorage.setItem('tg_bot_server_url', url);
     addClientLog(`Переключено на URL: ${url}`);
     fetchData();
   };
@@ -243,25 +250,21 @@ export default function App() {
 
     setIsWarmingUp(true);
     setWarmUpStatus("Открытие в Chrome...");
-    
+
     try {
-      // v4.7: Используем Browser.open для открытия во внешнем браузере (Chrome)
-      // Это решает проблему бесконечной загрузки во внутреннем WebView
       let finalBaseUrl = baseUrl.trim();
       if (!finalBaseUrl.startsWith('http')) {
         finalBaseUrl = `https://${finalBaseUrl}`;
       }
-      
+
       const syncUrl = new URL(`${finalBaseUrl.endsWith('/') ? finalBaseUrl.slice(0, -1) : finalBaseUrl}/api/auth/sync`);
       syncUrl.searchParams.set('app_mode', 'true');
       syncUrl.searchParams.set('v', '5.0');
       syncUrl.searchParams.set('ts', Date.now().toString());
-      
+
       addClientLog(`Открытие внешней ссылки: ${syncUrl.toString()}`);
-      
-      // Открываем во внешнем браузере через плагин Capacitor Browser
       await Browser.open({ url: syncUrl.toString() });
-      
+
       setWarmUpStatus("Скопируйте токен из браузера");
       setTimeout(() => setIsWarmingUp(false), 5000);
     } catch (e: any) {
@@ -271,6 +274,7 @@ export default function App() {
     }
   };
 
+  // FIX 7: testNetwork теперь отображается в UI (кнопка добавлена в секцию настроек)
   const testNetwork = async () => {
     setIsTestingNet(true);
     setNetTestResult("Тестирование...");
@@ -287,9 +291,9 @@ export default function App() {
       setIsTestingNet(false);
     }
   };
+
   const [isTestingConnection, setIsTestingConnection] = useState(false);
-  
-  // Manual Input State
+
   const [manualUrl, setManualUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -311,10 +315,10 @@ export default function App() {
         url = `https://${url}`;
       }
       setBaseUrl(url);
-      localStorage.setItem('tg_bot_server_url', url);
+      safeLocalStorage.setItem('tg_bot_server_url', url);
 
       if (tempBotToken) {
-        localStorage.setItem('tg_bot_token', tempBotToken);
+        safeLocalStorage.setItem('tg_bot_token', tempBotToken);
         setBotToken(tempBotToken);
         const cleanBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
         const res = await universalFetch(`${cleanBaseUrl}/api/config/token`, {
@@ -339,48 +343,40 @@ export default function App() {
     }
   };
 
-  // v5.0: Принудительная установка Cookie (включая прокси-куки)
   useEffect(() => {
     const syncNativeCookies = async () => {
-      if (sessionToken && baseUrl && (Capacitor.isNativePlatform())) {
+      if (sessionToken && baseUrl && Capacitor.isNativePlatform()) {
         try {
           let url = baseUrl.trim();
           if (!url.startsWith('http')) url = `https://${url}`;
-          const domain = new URL(url).hostname;
-          
-          addClientLog(`Синхронизация нативных Cookie для ${domain}...`);
-          
-          // v5.0: Если токен содержит '=', это полный набор Cookie
+
+          addClientLog(`Синхронизация нативных Cookie...`);
+
           if (sessionToken.includes('=')) {
-  const cookiePairs = sessionToken.split('; ');
-  for (const pair of cookiePairs) {
-    // ✅ НОВОЕ: Находим ПЕРВЫЙ '=' вместо split
-    const eqIndex = pair.indexOf('=');
-    if (eqIndex > 0) {
-      const key = pair.substring(0, eqIndex).trim();
-      const value = pair.substring(eqIndex + 1).trim();
-      
-      // ✅ НОВОЕ: Валидация имени cookie
-      if (key && value && /^[a-zA-Z0-9_-]+$/.test(key)) {
-        await CapacitorCookies.setCookie({
-          url: url,
-          key: key,
-          value: value,
-          expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          path: '/',
-        });
-        addClientLog(`✅ Cookie set: ${key}`);
-      } else {
-        addClientLog(`⚠️ Skipped invalid cookie pair: ${key}=${value}`);
-      }
-    }
-  }
-  addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
-}
+            const cookiePairs = sessionToken.split('; ');
+            for (const pair of cookiePairs) {
+              const eqIndex = pair.indexOf('=');
+              if (eqIndex > 0) {
+                const key = pair.substring(0, eqIndex).trim();
+                const value = pair.substring(eqIndex + 1).trim();
+
+                if (key && value && /^[a-zA-Z0-9_-]+$/.test(key)) {
+                  await CapacitorCookies.setCookie({
+                    url,
+                    key,
+                    value,
+                    expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+                    path: '/',
+                  });
+                  addClientLog(`✅ Cookie set: ${key}`);
+                }
+              }
+            }
+            addClientLog("✅ Нативные Cookie синхронизированы (полный набор).");
+          // FIX 1: Добавлена потерянная закрывающая скобка if-блока
           } else {
-            // Одиночный токен SESS
             await CapacitorCookies.setCookie({
-              url: url,
+              url,
               key: 'SESS',
               value: sessionToken,
               expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -398,13 +394,12 @@ export default function App() {
 
   useEffect(() => {
     if (baseUrl) {
-      localStorage.setItem('tg_bot_server_url', baseUrl);
+      safeLocalStorage.setItem('tg_bot_server_url', baseUrl);
     }
   }, [baseUrl]);
 
-  // API Key Management State
   const [apiKeys, setApiKeys] = useState(() => {
-    const saved = localStorage.getItem('tg_bot_api_keys');
+    const saved = safeLocalStorage.getItem('tg_bot_api_keys');
     return saved ? JSON.parse(saved) : [
       { label: 'Ключ 1', key: '' },
       { label: 'Ключ 2', key: '' },
@@ -412,7 +407,7 @@ export default function App() {
     ];
   });
   const [activeKeyIndex, setActiveKeyIndex] = useState(() => {
-    const saved = localStorage.getItem('tg_bot_active_key_index');
+    const saved = safeLocalStorage.getItem('tg_bot_active_key_index');
     if (saved) {
       const parsed = parseInt(saved, 10);
       return isNaN(parsed) ? 0 : parsed;
@@ -424,11 +419,11 @@ export default function App() {
   const [tempKeyValue, setTempKeyValue] = useState('');
 
   useEffect(() => {
-    localStorage.setItem('tg_bot_api_keys', JSON.stringify(apiKeys));
+    safeLocalStorage.setItem('tg_bot_api_keys', JSON.stringify(apiKeys));
   }, [apiKeys]);
 
   useEffect(() => {
-    localStorage.setItem('tg_bot_active_key_index', activeKeyIndex.toString());
+    safeLocalStorage.setItem('tg_bot_active_key_index', activeKeyIndex.toString());
   }, [activeKeyIndex]);
 
   const [isTestingKey, setIsTestingKey] = useState<number | null>(null);
@@ -437,7 +432,7 @@ export default function App() {
   const handleSaveSessionToken = (token: string) => {
     const cleanToken = token.trim();
     setSessionToken(cleanToken);
-    localStorage.setItem('app_session_token', cleanToken);
+    safeLocalStorage.setItem('app_session_token', cleanToken);
     addClientLog("Токен сессии обновлен.");
     fetchData();
   };
@@ -458,12 +453,12 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: key })
       });
-      
+
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
         throw new Error(errorData.error || `Ошибка: ${res.status}`);
       }
-      
+
       setKeyTestResult({ index, success: true, message: 'Ключ работает!' });
     } catch (e: any) {
       let msg = e.message || String(e);
@@ -500,11 +495,9 @@ export default function App() {
     const checkKey = async () => {
       if (window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
-        // If no key is selected via dialog, show the button
         setNeedsKey(!hasKey);
       } else {
-        // If not in AI Studio (e.g. mobile), check if we have any manual keys
-        const hasManualKey = apiKeys.some(k => k.key && k.key.trim().length > 10);
+        const hasManualKey = apiKeys.some((k: any) => k.key && k.key.trim().length > 10);
         setNeedsKey(!hasManualKey);
       }
     };
@@ -516,7 +509,6 @@ export default function App() {
       await window.aistudio.openSelectKey();
       setNeedsKey(false);
     } else {
-      // On mobile, scroll to keys section
       const keysSection = document.getElementById('api-keys-section');
       if (keysSection) {
         keysSection.scrollIntoView({ behavior: 'smooth' });
@@ -524,8 +516,7 @@ export default function App() {
     }
   };
 
-  // Bot Token State
-  const [botToken, setBotToken] = useState(() => localStorage.getItem('tg_bot_token') || '');
+  const [botToken, setBotToken] = useState(() => safeLocalStorage.getItem('tg_bot_token') || '');
   const [isSavingToken, setIsSavingToken] = useState(false);
 
   const handleSaveTokenToServer = async () => {
@@ -535,17 +526,17 @@ export default function App() {
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       addClientLog(`Отправка токена на ${currentBaseUrl}/api/config/token...`);
-      
+
       const res = await universalFetch(`${currentBaseUrl}/api/config/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: botToken })
       });
-      
+
       if (res.ok) {
         setSubmitMsg({ type: 'success', text: 'Токен сохранен на сервере и бот перезапущен!' });
         addClientLog("✅ Токен успешно сохранен на сервере.");
-        localStorage.setItem('tg_bot_token_backup', botToken);
+        safeLocalStorage.setItem('tg_bot_token_backup', botToken);
       } else {
         const errText = await res.text();
         addClientLog(`❌ Ошибка сохранения токена: ${errText}`);
@@ -562,12 +553,13 @@ export default function App() {
 
   const handleSaveTokenToLocal = () => {
     if (!botToken) return;
-    localStorage.setItem('tg_bot_token', botToken);
+    safeLocalStorage.setItem('tg_bot_token', botToken);
     addClientLog("Токен сохранен локально.");
     setSubmitMsg({ type: 'success', text: 'Токен сохранен локально в приложении.' });
   };
 
-  const fetchData = async () => {
+  // FIX 4: fetchData обёрнут в useCallback чтобы не пересоздаваться на каждый рендер
+  const fetchData = useCallback(async () => {
     if (!baseUrl || baseUrl === '/') {
       setLoading(false);
       return;
@@ -579,15 +571,11 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const statusRes = await universalFetch(`${currentBaseUrl}/api/status?t=${Date.now()}`, { signal: controller.signal });
-      
-      // Дополнительно запрашиваем статус конфигурации (API ключи на сервере)
+      const statusRes = await universalFetch(`${currentBaseUrl}/api/status?t=${Date.now()}`);
+
       try {
-        const configRes = await universalFetch(`${currentBaseUrl}/api/config/status?t=${Date.now()}`, { signal: controller.signal });
+        const configRes = await universalFetch(`${currentBaseUrl}/api/config/status?t=${Date.now()}`);
         if (configRes.ok) {
           const configData = await configRes.json();
           setServerStatus({ hasServerKey: configData.hasServerKey, serverKeyMasked: configData.serverKeyMasked });
@@ -596,11 +584,8 @@ export default function App() {
         console.warn("Failed to fetch server config status", e);
       }
 
-      clearTimeout(timeoutId);
-
       if (!statusRes.ok) {
-        const err = `Ошибка сервера: ${statusRes.status}`;
-        setLastError(err);
+        setLastError(`Ошибка сервера: ${statusRes.status}`);
         setStatus(null);
         return;
       }
@@ -611,7 +596,6 @@ export default function App() {
         const fullText = await statusRes.text();
         setFullResponse(fullText);
         const htmlSnippet = fullText.slice(0, 150).replace(/</g, '&lt;');
-        const err = `Сервер вернул HTML вместо данных. Начало текста: "${htmlSnippet}..."`;
         setLastError("Server returned a web page instead of data");
         setStatus(null);
         return;
@@ -621,7 +605,6 @@ export default function App() {
       setStatus(statusData);
       setLastError(null);
 
-      // Fetch logs
       try {
         const logsRes = await universalFetch(`${currentBaseUrl}/api/logs?t=${Date.now()}`);
         if (logsRes.ok) {
@@ -634,14 +617,13 @@ export default function App() {
         setLastError("Требуется авторизация Google (Mirror Mode)");
         setStatus(null);
       } else {
-        const errMsg = err.message || String(err);
-        setLastError(errMsg);
+        setLastError(err.message || String(err));
         setStatus(null);
       }
     } finally {
       setLoading(false);
     }
-  };
+  }, [baseUrl, universalFetch]);
 
   const testConnection = async () => {
     setIsTestingConnection(true);
@@ -652,12 +634,8 @@ export default function App() {
         url = `https://${url}`;
       }
       const currentBaseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const res = await universalFetch(`${currentBaseUrl}/api/ping`, { signal: controller.signal });
-      clearTimeout(timeoutId);
+      const res = await universalFetch(`${currentBaseUrl}/api/ping`);
 
       if (res.ok) {
         setSubmitMsg({ type: 'success', text: 'Соединение с сервером установлено!' });
@@ -705,10 +683,10 @@ export default function App() {
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualUrl) return;
-    
+
     setIsSubmitting(true);
     setSubmitMsg(null);
-    
+
     try {
       const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       const res = await universalFetch(`${currentBaseUrl}/api/process-url`, {
@@ -716,7 +694,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: manualUrl })
       });
-      
+
       if (res.ok) {
         setSubmitMsg({ type: 'success', text: 'Ссылка принята! ИИ начинает обработку.' });
         setManualUrl('');
@@ -763,14 +741,14 @@ export default function App() {
           if (res.status === 404) return;
           throw new Error(`Server responded with ${res.status}`);
         }
-        
+
         const contentType = res.headers.get("content-type");
         if (contentType && contentType.includes("text/html")) {
           console.log("Worker: Server is still starting up (received HTML)...");
           setIsWorking(false);
           return;
         }
-        
+
         if (!contentType || !contentType.includes("application/json")) {
           console.error("Worker: Expected JSON but got something else");
           setIsWorking(false);
@@ -782,13 +760,12 @@ export default function App() {
         if (task) {
           setIsWorking(true);
           console.log("Processing task:", task.id);
-          
+
           try {
             if (!task.data.text || task.data.text.trim().length < 10) {
               throw new Error("Текст статьи слишком короткий или пустой.");
             }
 
-            // Fallback: if active key is empty, try to find any non-empty key
             let keyToUse = apiKeys[activeKeyIndex]?.key;
             if (!keyToUse || keyToUse.trim().length < 10) {
               const fallbackIndex = apiKeys.findIndex((k: any) => k.key && k.key.trim().length > 10);
@@ -813,8 +790,7 @@ export default function App() {
             addClientLog(`✅ ИИ завершил обработку задачи ${task.id}`);
           } catch (e: any) {
             console.error("Task processing failed", e);
-            
-            // Rotate to next key on API errors
+ // Rotate to next key on API errors
             const errorMsg = e instanceof Error ? e.message : String(e);
             const isApiKeyError = /API key|quota|permission|denied|invalid|unauthorized/i.test(errorMsg);
             
@@ -824,6 +800,7 @@ export default function App() {
               if (nextIndex !== activeKeyIndex) {
                 console.log(`⚠️ API error detected, rotating to next key (index ${nextIndex})`);
                 setActiveKeyIndex(nextIndex);
+                // Опционально: можно попробовать повторить запрос здесь или просто продолжить цикл
               }
             }
             
@@ -852,21 +829,21 @@ export default function App() {
         }
         setIsWorking(false);
       }
-    }, 3000); // Polling with 3s delay + debounce to prevent request avalanche
+    }, 1000); // Опрос каждую секунду
 
     return () => clearInterval(workerInterval);
-  }, [isWorking, baseUrl, activeKeyIndex, apiKeys, setActiveKeyIndex]);
+  }, [isWorking, baseUrl, activeKeyIndex, apiKeys, setActiveKeyIndex, universalFetch, fetchData]);
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [baseUrl, sessionToken]);
+  }, [fetchData]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-6">
-        <motion.div 
+        <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
           className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full"
@@ -875,7 +852,7 @@ export default function App() {
           <h2 className="text-xl font-bold text-white">Загрузка панели управления...</h2>
           <p className="text-sm text-neutral-500">Проверка связи с сервером v5.0</p>
         </div>
-        <button 
+        <button
           onClick={() => setLoading(false)}
           className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs rounded-xl transition-all"
         >
@@ -891,13 +868,14 @@ export default function App() {
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
+            {/* FIX 8: Версия обновлена до 5.0 */}
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
               <MessageSquare className="text-blue-500 w-8 h-8" />
-              Telegram Новостной Бот <span className="text-xs opacity-50">v4.3 (Build: 24.03.2026 06:10)</span>
+              Telegram Новостной Бот <span className="text-xs opacity-50">v5.0</span>
             </h1>
             <p className="text-neutral-400">Панель управления автоматическим сбором и обработкой новостей</p>
           </div>
-          
+
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => setShowSettings(true)}
@@ -907,19 +885,15 @@ export default function App() {
               <Settings size={20} />
             </button>
             <div className="flex bg-neutral-900 border border-neutral-800 rounded-full p-1">
-              <button 
+              <button
                 onClick={() => switchToUrl(DEV_URL)}
-                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                  baseUrl === DEV_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'
-                }`}
+                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${baseUrl === DEV_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'}`}
               >
                 DEV
               </button>
-              <button 
+              <button
                 onClick={() => switchToUrl(PRE_URL)}
-                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${
-                  baseUrl === PRE_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'
-                }`}
+                className={`px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${baseUrl === PRE_URL ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'}`}
               >
                 PRE
               </button>
@@ -933,18 +907,14 @@ export default function App() {
                 Выбрать API Ключ
               </button>
             )}
-            <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
-              status ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'
-            }`}>
+            <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${status ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
               {status ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
               Сервер: {status ? 'Онлайн' : 'Оффлайн'}
               {!status && lastError && (
-                <span className="text-[10px] opacity-70 ml-1 truncate max-w-[150px]">
-                  ({lastError})
-                </span>
+                <span className="text-[10px] opacity-70 ml-1 truncate max-w-[150px]">({lastError})</span>
               )}
               {!status && (
-                <button 
+                <button
                   onClick={() => {
                     const debugInfo = `URL: ${baseUrl}\nToken: ${sessionToken ? 'Set (starts with ' + sessionToken.substring(0, 5) + ')' : 'Not Set'}\nPlatform: ${Capacitor.getPlatform()}\nError: ${lastError}`;
                     alert(debugInfo);
@@ -957,55 +927,42 @@ export default function App() {
                 </button>
               )}
             </div>
-            
+
             {!status && lastError === "Server returned a web page instead of data" && (
               <button
                 onClick={() => window.open(baseUrl, '_blank')}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-full flex items-center gap-2 text-sm transition-all shadow-lg shadow-blue-500/20"
               >
-                🛠 Исправить авторизацию (Cookie Fix)
+                🛠 Исправить авторизацию
               </button>
             )}
             <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
-              status?.bot === 'active' 
-                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+              status?.bot === 'active'
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
                 : status?.bot === 'starting' || status?.bot === 'waiting'
                 ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
                 : 'bg-red-500/10 border-red-500/20 text-red-400'
             }`}>
-              {status?.bot === 'active' ? (
-                <CheckCircle2 size={16} />
-              ) : status?.bot === 'starting' || status?.bot === 'waiting' ? (
-                <RefreshCw size={16} className="animate-spin" />
-              ) : (
-                <AlertCircle size={16} />
-              )}
-              Бот: {
-                status?.bot === 'active' ? 'Активен' : 
-                status?.bot === 'waiting' ? `Ожидание (${status?.botWaitRemaining}с)` :
-                status?.bot === 'starting' ? 'Запуск...' : 'Оффлайн'
-              }
+              {status?.bot === 'active' ? <CheckCircle2 size={16} /> : status?.bot === 'starting' || status?.bot === 'waiting' ? <RefreshCw size={16} className="animate-spin" /> : <AlertCircle size={16} />}
+              Бот: {status?.bot === 'active' ? 'Активен' : status?.bot === 'waiting' ? `Ожидание (${status?.botWaitRemaining}с)` : status?.bot === 'starting' ? 'Запуск...' : 'Оффлайн'}
             </div>
-            <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${
-              isWorking ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'
-            }`}>
+            <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium ${isWorking ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}`}>
               <Cpu size={16} className={isWorking ? 'animate-pulse' : ''} />
               ИИ-Воркер: {isWorking ? 'Обработка' : 'Ожидание'}
             </div>
           </div>
         </header>
 
-        {/* Web Mirror Mode Alert - v4.3 Token Support */}
+        {/* Mobile Native Mode Alert */}
         {!window.location.href.includes('run.app') && Capacitor.isNativePlatform() && (
           <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 flex flex-col gap-4">
             <div className="text-center">
               <p className="text-amber-400 font-bold">Мобильный режим (Native App)</p>
               <p className="text-xs text-amber-500/70">Если сервер защищен Google Auth, используйте синхронизацию или вставьте токен</p>
             </div>
-            
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap justify-center gap-3">
-                <button 
+                <button
                   onClick={startWebViewSync}
                   disabled={isWarmingUp}
                   className="flex-1 px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2"
@@ -1013,7 +970,7 @@ export default function App() {
                   {isWarmingUp ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
                   {isWarmingUp ? warmUpStatus : "Синхронизировать"}
                 </button>
-                <button 
+                <button
                   onClick={openInBrowser}
                   className="flex-1 px-6 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold rounded-xl transition-all flex items-center justify-center gap-2 border border-neutral-700"
                 >
@@ -1021,7 +978,6 @@ export default function App() {
                   Браузер
                 </button>
               </div>
-
               <div className="space-y-2">
                 <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Вставить токен сессии вручную</label>
                 <div className="flex gap-2">
@@ -1033,7 +989,7 @@ export default function App() {
                     className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-amber-500/50 transition-all"
                   />
                   {sessionToken && (
-                    <button 
+                    <button
                       onClick={() => handleSaveSessionToken('')}
                       className="p-2 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500/20 transition-all"
                     >
@@ -1041,9 +997,6 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                <p className="text-[10px] text-neutral-500 italic">
-                  * Токен необходим для обхода защиты Google Cloud Run на телефоне.
-                </p>
               </div>
             </div>
           </div>
@@ -1056,7 +1009,7 @@ export default function App() {
               <p className="text-xs text-blue-500/70">Сначала авторизуйтесь, затем скопируйте токен для телефона</p>
             </div>
             <div className="flex gap-3">
-              <button 
+              <button
                 onClick={async () => {
                   try {
                     const res = await fetch('/api/auth/login');
@@ -1073,7 +1026,7 @@ export default function App() {
                 <CheckCircle2 size={18} />
                 1. Авторизовать браузер
               </button>
-              <button 
+              <button
                 onClick={async () => {
                   try {
                     const res = await fetch('/api/auth/token');
@@ -1095,9 +1048,6 @@ export default function App() {
                 2. Скопировать токен
               </button>
             </div>
-            <p className="text-[10px] text-neutral-500 italic mt-2">
-              * Для работы на телефоне (в APK) используйте <b>Shared App URL</b> в настройках (иконка шестеренки).
-            </p>
           </div>
         )}
 
@@ -1112,13 +1062,12 @@ export default function App() {
               <p className="text-neutral-500 text-sm">Введите токен от @BotFather для запуска бота</p>
             </div>
           </div>
-
           <div className="space-y-4">
             <div className="space-y-2">
               <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
                 <Key size={12} /> Токен бота
               </label>
-              <input 
+              <input
                 type="password"
                 value={botToken}
                 onChange={(e) => setBotToken(e.target.value)}
@@ -1126,7 +1075,6 @@ export default function App() {
                 className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all font-mono"
               />
             </div>
-            
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleSaveTokenToServer}
@@ -1214,64 +1162,38 @@ export default function App() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {apiKeys.map((item: any, index: number) => (
-              <div 
+              <div
                 key={index}
-                className={`relative p-4 rounded-xl border transition-all ${
-                  activeKeyIndex === index 
-                    ? 'bg-amber-500/10 border-amber-500/50 ring-1 ring-amber-500/20' 
-                    : 'bg-neutral-800/50 border-neutral-700 hover:border-neutral-600'
-                }`}
+                className={`relative p-4 rounded-xl border transition-all ${activeKeyIndex === index ? 'bg-amber-500/10 border-amber-500/50 ring-1 ring-amber-500/20' : 'bg-neutral-800/50 border-neutral-700 hover:border-neutral-600'}`}
               >
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between">
-                    <span className={`text-xs font-bold uppercase tracking-widest ${
-                      activeKeyIndex === index ? 'text-amber-500' : 'text-neutral-500'
-                    }`}>
+                    <span className={`text-xs font-bold uppercase tracking-widest ${activeKeyIndex === index ? 'text-amber-500' : 'text-neutral-500'}`}>
                       Слот {index + 1}
                     </span>
-                    <button 
+                    <button
                       onClick={() => openEditModal(index)}
                       className="p-1.5 hover:bg-neutral-700 rounded-lg text-neutral-400 hover:text-white transition-colors"
-                      title="Редактировать"
                     >
                       <Edit2 size={14} />
                     </button>
                   </div>
-                  
-                  <button 
-                    onClick={() => setActiveKeyIndex(index)}
-                    className="text-left group"
-                  >
+                  <button onClick={() => setActiveKeyIndex(index)} className="text-left">
                     <h3 className="font-semibold truncate pr-2">{item.label}</h3>
                     <p className="text-[10px] text-neutral-500 font-mono mt-1 truncate">
                       {item.key ? `${item.key.substring(0, 8)}...${item.key.substring(item.key.length - 4)}` : 'Ключ не задан'}
                     </p>
                   </button>
-
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-neutral-800/50">
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        testApiKey(index);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); testApiKey(index); }}
                       disabled={isTestingKey === index || !item.key}
-                      className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${
-                        keyTestResult?.index === index 
-                          ? (keyTestResult.success ? 'text-emerald-500' : 'text-red-500')
-                          : 'text-neutral-500 hover:text-amber-500'
-                      }`}
+                      className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${keyTestResult?.index === index ? (keyTestResult.success ? 'text-emerald-500' : 'text-red-500') : 'text-neutral-500 hover:text-amber-500'}`}
                     >
-                      {isTestingKey === index ? (
-                        <RefreshCw size={10} className="animate-spin" />
-                      ) : keyTestResult?.index === index ? (
-                        keyTestResult.success ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />
-                      ) : (
-                        <Activity size={10} />
-                      )}
+                      {isTestingKey === index ? <RefreshCw size={10} className="animate-spin" /> : keyTestResult?.index === index ? (keyTestResult.success ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />) : <Activity size={10} />}
                       {isTestingKey === index ? 'Проверка...' : keyTestResult?.index === index ? keyTestResult.message : 'Проверить ключ'}
                     </button>
                   </div>
-
                   {activeKeyIndex === index && (
                     <div className="absolute -top-2 -right-2 bg-amber-500 text-black p-1 rounded-full shadow-lg">
                       <CheckCircle2 size={12} strokeWidth={3} />
@@ -1294,7 +1216,6 @@ export default function App() {
               <p className="text-neutral-500 text-sm">Вставьте ссылку для мгновенной обработки и отправки в Telegram</p>
             </div>
           </div>
-
           <form onSubmit={handleManualSubmit} className="space-y-4">
             <div className="space-y-2">
               <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
@@ -1314,28 +1235,18 @@ export default function App() {
                   disabled={isSubmitting || !manualUrl}
                   className="md:w-48 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-all"
                 >
-                  {isSubmitting ? (
-                    <RefreshCw size={18} className="animate-spin" />
-                  ) : (
-                    <Send size={18} />
-                  )}
+                  {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <Send size={18} />}
                   {isSubmitting ? 'Отправка...' : 'Отправить'}
                 </button>
               </div>
-              <p className="text-[10px] text-neutral-500">
-                Новости автоматически адаптируются ИИ и отправляются в основной канал.
-              </p>
             </div>
-
             <AnimatePresence>
               {submitMsg && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
-                  className={`p-4 rounded-xl text-sm flex items-center gap-3 ${
-                    submitMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                  }`}
+                  className={`p-4 rounded-xl text-sm flex items-center gap-3 ${submitMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}
                 >
                   {submitMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
                   {submitMsg.text}
@@ -1358,7 +1269,16 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button 
+              {/* FIX 7: Кнопка тестирования сети теперь отображается в UI */}
+              <button
+                onClick={testNetwork}
+                disabled={isTestingNet}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-[10px] font-bold rounded-lg transition-all border border-neutral-700 flex items-center gap-1"
+              >
+                {isTestingNet ? <RefreshCw size={10} className="animate-spin" /> : <Activity size={10} />}
+                {netTestResult || 'Тест сети'}
+              </button>
+              <button
                 onClick={() => {
                   const key = apiKeys[activeKeyIndex]?.key;
                   if (key) {
@@ -1371,22 +1291,21 @@ export default function App() {
               >
                 Отладка ключа
               </button>
-              <button 
+              <button
                 onClick={() => setLogs([])}
                 className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
               >
-                Очистить экран
+                Очистить
               </button>
             </div>
           </div>
-
-          <div className="bg-black/50 rounded-xl p-4 h-64 overflow-y-auto font-mono text-[10px] space-y-1 border border-neutral-800 scrollbar-thin scrollbar-thumb-neutral-800">
+          <div className="bg-black/50 rounded-xl p-4 h-64 overflow-y-auto font-mono text-[10px] space-y-1 border border-neutral-800">
             {logs.length === 0 ? (
               <p className="text-neutral-700 italic">Ожидание логов...</p>
             ) : (
               logs.map((log, i) => (
                 <div key={i} className="flex gap-2">
-                  <span className="text-neutral-600 shrink-0">[{i+1}]</span>
+                  <span className="text-neutral-600 shrink-0">[{i + 1}]</span>
                   <span className={log.includes('Ошибка') || log.includes('Error') ? 'text-red-400' : log.includes('Warning') ? 'text-amber-400' : 'text-neutral-400'}>
                     {log}
                   </span>
@@ -1395,78 +1314,36 @@ export default function App() {
             )}
           </div>
         </section>
-
-        {/* Edit Key Modal */}
+        {/* FIX 5: Убран лишний закрывающий </div> — структура JSX исправлена */}
       </div>
 
       {/* Edit Key Modal */}
       <AnimatePresence>
         {editingKeyIndex !== null && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setEditingKeyIndex(null)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-8 shadow-2xl space-y-6"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setEditingKeyIndex(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-8 shadow-2xl space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-amber-500/10 rounded-lg">
-                    <Key className="text-amber-500" size={20} />
-                  </div>
+                  <div className="p-2 bg-amber-500/10 rounded-lg"><Key className="text-amber-500" size={20} /></div>
                   <h3 className="text-xl font-bold">Настройка ключа</h3>
                 </div>
-                <button 
-                  onClick={() => setEditingKeyIndex(null)}
-                  className="p-2 hover:bg-neutral-800 rounded-full text-neutral-500 transition-colors"
-                >
-                  <X size={20} />
-                </button>
+                <button onClick={() => setEditingKeyIndex(null)} className="p-2 hover:bg-neutral-800 rounded-full text-neutral-500 transition-colors"><X size={20} /></button>
               </div>
-
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Название кнопки</label>
-                  <input 
-                    type="text"
-                    value={tempKeyLabel}
-                    onChange={(e) => setTempKeyLabel(e.target.value)}
-                    placeholder="Например: Основной ключ"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all"
-                  />
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Название</label>
+                  <input type="text" value={tempKeyLabel} onChange={(e) => setTempKeyLabel(e.target.value)} placeholder="Например: Основной ключ" className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider">API Ключ (Gemini)</label>
-                  <input 
-                    type="password"
-                    value={tempKeyValue}
-                    onChange={(e) => setTempKeyValue(e.target.value)}
-                    placeholder="Вставьте ваш API ключ здесь"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all font-mono"
-                  />
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider">API Ключ</label>
+                  <input type="password" value={tempKeyValue} onChange={(e) => setTempKeyValue(e.target.value)} placeholder="Вставьте ваш API ключ здесь" className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all font-mono" />
                 </div>
               </div>
-
               <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => setEditingKeyIndex(null)}
-                  className="flex-1 px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl transition-all"
-                >
-                  Отмена
-                </button>
-                <button 
-                  onClick={handleSaveKey}
-                  className="flex-1 px-4 py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20"
-                >
-                  <Save size={18} />
-                  Сохранить
+                <button onClick={() => setEditingKeyIndex(null)} className="flex-1 px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl transition-all">Отмена</button>
+                <button onClick={handleSaveKey} className="flex-1 px-4 py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20">
+                  <Save size={18} />Сохранить
                 </button>
               </div>
             </motion.div>
@@ -1474,201 +1351,93 @@ export default function App() {
         )}
       </AnimatePresence>
 
-        {/* Cookie Fixer Modal */}
-        <AnimatePresence>
-          {showCookieFixer && (
-            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-3xl h-[90vh] flex flex-col shadow-2xl overflow-hidden"
-              >
-                <div className="p-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-800/50">
-                  <div>
-                    <h3 className="text-lg font-bold">🛠 Cookie Fixer</h3>
-                    <p className="text-[10px] text-neutral-400">Войдите в Google здесь, чтобы эмулятор получил доступ к серверу</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-                        const syncUrl = `${currentBaseUrl}/api/auth/sync`;
-                        await Browser.open({ url: syncUrl });
-                      }}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-blue-500/20"
-                    >
-                      <RefreshCw size={14} />
-                      Открыть Sync
-                    </button>
-                    <button onClick={() => setShowCookieFixer(false)} className="p-2 hover:bg-neutral-700 rounded-full transition-colors">
-                      <X size={20} />
-                    </button>
-                  </div>
+      {/* Cookie Fixer Modal */}
+      <AnimatePresence>
+        {showCookieFixer && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-3xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-800/50">
+                <div>
+                  <h3 className="text-lg font-bold">🛠 Cookie Fixer</h3>
+                  <p className="text-[10px] text-neutral-400">Войдите в Google здесь, чтобы эмулятор получил доступ к серверу</p>
                 </div>
-                <div className="flex-1 bg-white">
-                  <iframe 
-                    src={baseUrl} 
-                    className="w-full h-full border-none"
-                    title="Google Auth Fixer"
-                  />
-                </div>
-                <div className="p-4 border-t border-neutral-800 flex justify-between items-center">
-                  <span className="text-xs text-amber-400 font-medium">После входа закройте это окно и обновите статус</span>
-                  <button onClick={() => setShowCookieFixer(false)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors font-bold">
-                    Я вошел, закрыть
+                <div className="flex items-center gap-2">
+                  <button onClick={async () => { const syncUrl = `${baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl}/api/auth/sync`; await Browser.open({ url: syncUrl }); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold rounded-xl transition-all flex items-center gap-2">
+                    <RefreshCw size={14} />Открыть Sync
                   </button>
+                  <button onClick={() => setShowCookieFixer(false)} className="p-2 hover:bg-neutral-700 rounded-full transition-colors"><X size={20} /></button>
                 </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
+              </div>
+              <div className="flex-1 bg-white">
+                <iframe src={baseUrl} className="w-full h-full border-none" title="Google Auth Fixer" />
+              </div>
+              <div className="p-4 border-t border-neutral-800 flex justify-between items-center">
+                <span className="text-xs text-amber-400 font-medium">После входа закройте это окно и обновите статус</span>
+                <button onClick={() => setShowCookieFixer(false)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors font-bold">Я вошел, закрыть</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-        {/* Full Response Modal */}
-        <AnimatePresence>
-          {showFullResponse && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
-              >
-                <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
-                  <h3 className="text-xl font-bold">Полный ответ сервера</h3>
-                  <button onClick={() => setShowFullResponse(false)} className="p-2 hover:bg-neutral-800 rounded-full transition-colors">
-                    <X size={20} />
-                  </button>
-                </div>
-                <div className="p-6 overflow-auto flex-1 font-mono text-xs text-neutral-400 bg-black/20">
-                  {fullResponse || "Нет данных. Попробуйте обновить статус сервера."}
-                </div>
-                <div className="p-6 border-t border-neutral-800 flex justify-end">
-                  <button onClick={() => setShowFullResponse(false)} className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors">
-                    Закрыть
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
+      {/* Full Response Modal */}
+      <AnimatePresence>
+        {showFullResponse && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+              <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
+                <h3 className="text-xl font-bold">Полный ответ сервера</h3>
+                <button onClick={() => setShowFullResponse(false)} className="p-2 hover:bg-neutral-800 rounded-full transition-colors"><X size={20} /></button>
+              </div>
+              <div className="p-6 overflow-auto flex-1 font-mono text-xs text-neutral-400 bg-black/20">
+                {fullResponse || "Нет данных."}
+              </div>
+              <div className="p-6 border-t border-neutral-800 flex justify-end">
+                <button onClick={() => setShowFullResponse(false)} className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors">Закрыть</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-        {/* Server Settings Modal */}
+      {/* Server Settings Modal */}
       <AnimatePresence>
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowSettings(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-8 shadow-2xl space-y-6"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-500/10 rounded-lg">
-                    <Settings className="text-blue-500" size={20} />
-                  </div>
+                  <div className="p-2 bg-blue-500/10 rounded-lg"><Settings className="text-blue-500" size={20} /></div>
                   <h3 className="text-xl font-bold">Настройки сервера</h3>
                 </div>
-                <button 
-                  onClick={() => setShowSettings(false)}
-                  className="p-2 hover:bg-neutral-800 rounded-full text-neutral-500 transition-colors"
-                >
-                  <X size={20} />
-                </button>
+                <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-neutral-800 rounded-full text-neutral-500 transition-colors"><X size={20} /></button>
               </div>
 
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider">URL Сервера (App URL)</label>
-                  <input 
-                    type="url"
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://your-app.run.app"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                  />
-                  <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl space-y-2">
-                    <p className="text-[10px] text-blue-400 font-medium flex items-center gap-1">
-                      <AlertCircle size={10} /> ВАЖНО ДЛЯ ЭМУЛЯТОРА:
-                    </p>
-                    <p className="text-[10px] text-neutral-500 leading-relaxed">
-                      Для работы в Android Studio используйте <strong>Shared App URL</strong> (из AI Studio). 
-                      Обычный URL может быть защищен и недоступен для эмулятора.
-                    </p>
-                    <p className="text-[10px] text-neutral-400 font-mono break-all">
-                      Текущий: {baseUrl || 'не задан'}
-                    </p>
-                  </div>
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider">URL Сервера</label>
+                  <input type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://your-app.run.app" className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" />
+                  <p className="text-[10px] text-neutral-500 font-mono break-all">Текущий: {baseUrl || 'не задан'}</p>
                 </div>
-
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
-                    <Key size={12} /> Токен сессии (Session Token)
-                  </label>
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2"><Key size={12} /> Токен сессии</label>
                   <div className="flex gap-2">
-                    <input 
-                      type="text"
-                      value={sessionToken}
-                      onChange={(e) => {
-                        const val = e.target.value.trim();
-                        setSessionToken(val);
-                        localStorage.setItem('app_session_token', val);
-                      }}
-                      placeholder="Вставьте токен из браузера..."
-                      className="flex-1 bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                    />
-                    <button
-                      onClick={async () => {
-                        const currentBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-                        const syncUrl = `${currentBaseUrl}/api/auth/sync`;
-                        await Browser.open({ url: syncUrl });
-                      }}
-                      className="px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all flex items-center justify-center"
-                      title="Открыть страницу синхронизации"
-                    >
+                    <input type="text" value={sessionToken} onChange={(e) => { const val = e.target.value.trim(); setSessionToken(val); safeLocalStorage.setItem('app_session_token', val); }} placeholder="Вставьте токен из браузера..." className="flex-1 bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" />
+                    <button onClick={async () => { const syncUrl = `${baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl}/api/auth/sync`; await Browser.open({ url: syncUrl }); }} className="px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all flex items-center justify-center" title="Открыть страницу синхронизации">
                       <RefreshCw size={18} />
                     </button>
                   </div>
-                  <p className="text-[10px] text-neutral-500">
-                    Нажмите на синюю кнопку, чтобы открыть страницу синхронизации в браузере, затем скопируйте результат сюда.
-                  </p>
                 </div>
-
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2">
-                    <MessageSquare size={12} /> Telegram Bot Token
-                  </label>
-                  <input 
-                    type="password"
-                    value={tempBotToken}
-                    onChange={(e) => setTempBotToken(e.target.value)}
-                    placeholder="123456789:ABCDEF..."
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                  />
-                  <p className="text-[10px] text-neutral-500">
-                    Вставьте новый токен от @BotFather, чтобы сбросить старые соединения и перезапустить бота.
-                  </p>
+                  <label className="text-xs font-medium text-neutral-500 uppercase tracking-wider flex items-center gap-2"><MessageSquare size={12} /> Telegram Bot Token</label>
+                  <input type="password" value={tempBotToken} onChange={(e) => setTempBotToken(e.target.value)} placeholder="123456789:ABCDEF..." className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" />
                 </div>
               </div>
 
               <AnimatePresence>
                 {submitMsg && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    className={`p-4 rounded-xl text-sm flex items-center gap-3 ${
-                      submitMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                    }`}
-                  >
+                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className={`p-4 rounded-xl text-sm flex items-center gap-3 ${submitMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
                     {submitMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
                     {submitMsg.text}
                   </motion.div>
@@ -1676,50 +1445,27 @@ export default function App() {
               </AnimatePresence>
 
               <div className="flex flex-col gap-3 pt-2">
-                <button 
-                  onClick={testConnection}
-                  disabled={isTestingConnection || !baseUrl}
-                  className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700"
-                >
+                <button onClick={testConnection} disabled={isTestingConnection || !baseUrl} className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700">
                   {isTestingConnection ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
                   Проверить соединение
                 </button>
-                <button 
-                  onClick={testSync}
-                  disabled={isTestingConnection || !baseUrl}
-                  className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700"
-                >
-                  <ShieldCheck size={18} />
-                  Проверить синхронизацию (Auth)
+                <button onClick={testSync} disabled={isTestingConnection || !baseUrl} className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700">
+                  <ShieldCheck size={18} />Проверить синхронизацию
                 </button>
-                <button 
-                  onClick={() => {
-                    const defaultUrl = process.env.VITE_APP_URL || '';
-                    setBaseUrl(defaultUrl);
-                  }}
-                  className="w-full px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-medium rounded-xl transition-all border border-neutral-700"
-                >
+                {/* FIX 7: Кнопка тестирования сети добавлена в настройки */}
+                <button onClick={testNetwork} disabled={isTestingNet} className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 border border-neutral-700">
+                  {isTestingNet ? <RefreshCw size={18} className="animate-spin" /> : <Activity size={18} />}
+                  {netTestResult || 'Тест интернета'}
+                </button>
+                <button onClick={() => setBaseUrl(import.meta.env.VITE_APP_URL || '')} className="w-full px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-medium rounded-xl transition-all border border-neutral-700">
                   Сбросить на URL по умолчанию
                 </button>
                 <div className="flex gap-2">
-                  <button 
-                    onClick={handleSaveSettings}
-                    disabled={isSubmitting}
-                    className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
-                  >
+                  <button onClick={handleSaveSettings} disabled={isSubmitting} className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
                     {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
                     {isSubmitting ? 'Сохранение...' : 'Сохранить'}
                   </button>
-                  <button
-                    onClick={() => {
-                      if (window.confirm("Вы уверены, что хотите полностью сбросить приложение? Все настройки и ключи будут удалены.")) {
-                        localStorage.clear();
-                        window.location.reload();
-                      }
-                    }}
-                    className="px-4 py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-xl transition-all border border-red-500/20 flex items-center gap-2"
-                    title="Сбросить всё"
-                  >
+                  <button onClick={() => { if (window.confirm("Сбросить все настройки?")) { safeLocalStorage.clear(); window.location.reload(); } }} className="px-4 py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-xl transition-all border border-red-500/20 flex items-center gap-2">
                     <Trash2 size={18} />
                     <span className="hidden sm:inline">Сброс</span>
                   </button>
