@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: posts
+    // Document ID: postId
+    // Fields:
+    //   - id: string (required)
+    //   - status: string (required, 'draft', 'scheduled', 'published')
+    //   - createdAt: number (required)
+    //   - updatedAt: number (required)
+    //   - scheduledAt: string (optional, ISO 8601)
+    //   - originalText: string (optional, < 10000 chars)
+    //   - processedText: string (optional, < 10000 chars)
+    //   - mainImage: string (optional, URL)
+    //   - selectedImages: list (optional, < 20 items)
+    //   - buttons: list (optional, < 10 items)
+    //   - reactions: list (optional, < 10 items)
+    //
+    // Collection: templates
+    // Document ID: templateId
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, < 100 chars)
+    //   - buttons: list (required, < 10 items)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "zlodeikrava0604@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /posts/{postId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && hasRequiredFields(['id', 'status', 'createdAt', 'updatedAt', 'userId']) && isValidString('id', 1, 100) && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+
+    match /templates/{templateId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && hasRequiredFields(['id', 'name', 'buttons', 'userId']) && isValidString('id', 1, 100) && isValidString('name', 1, 100) && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+  }
+}

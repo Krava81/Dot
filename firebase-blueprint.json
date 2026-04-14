@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "Post": {
+      "title": "Post",
+      "description": "A draft or scheduled post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "scheduled", "published"] },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "scheduledAt": { "type": "string", "format": "date-time" },
+        "originalText": { "type": "string" },
+        "processedText": { "type": "string" },
+        "mainImage": { "type": "string" },
+        "selectedImages": { "type": "array", "items": { "type": "string" } },
+        "buttons": { "type": "array", "items": { "type": "object" } },
+        "reactions": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["id", "status", "createdAt", "updatedAt"]
+    },
+    "Template": {
+      "title": "Template",
+      "description": "A button template",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "buttons": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["id", "name", "buttons"]
+    }
+  },
+  "firestore": {
+    "/posts/{postId}": {
+      "schema": "Post",
+      "description": "Collection of all posts"
+    },
+    "/templates/{templateId}": {
+      "schema": "Template",
+      "description": "Collection of button templates"
+    }
+  }
+}
