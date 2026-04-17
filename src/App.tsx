@@ -881,10 +881,11 @@ function AppContent() {
     try {
       let result = '';
       if (isStandalone) {
-        const apiKey = aiKeys.gemini;
-        if (!apiKey) throw new Error("API ключ Gemini не настроен");
+        const provider = serverStatus?.preferredProvider || 'gemini';
+        const apiKey = aiKeys[provider];
+        if (!apiKey) throw new Error(`API ключ ${provider} не настроен`);
         const prompt = "Сделай рерайт текста для Телеграм канала. Используй HTML теги (b, i, u, code). Сделай текст привлекательным и структурированным.";
-        result = await aiService.processWithAI(originalText, apiKey, prompt);
+        result = await aiService.processWithAI(originalText, apiKey, prompt, provider);
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
@@ -1732,7 +1733,7 @@ function AppContent() {
                     if (isStandalone) {
                       try {
                         const prompt = "Test connection";
-                        await aiService.processWithAI("Hello", key, prompt);
+                        await aiService.processWithAI("Hello", key, prompt, provider);
                         setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
                       } catch (e: any) { setLastError(e.message); }
                       return;

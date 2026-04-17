@@ -54,6 +54,9 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
   }, [isStandalone, loadDrafts, getCleanBaseUrl, universalFetch]);
 
   const deleteDraft = useCallback(async (draftId: string) => {
+    // Optimistic update
+    setDrafts(prev => prev.filter(d => d.id !== draftId));
+    
     try {
       if (isStandalone) {
         const currentDrafts = await storage.loadJson('drafts.json', []);
@@ -66,9 +69,12 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
         if (!cleanUrl) return;
         await universalFetch(`${cleanUrl}/api/posts/drafts/${draftId}`, { method: 'DELETE' });
       }
-      await loadDrafts();
+      // Re-fetch to sync
+      loadDrafts();
     } catch (error) {
       console.error('Failed to delete draft:', error);
+      // Revert on failure
+      loadDrafts();
     }
   }, [isStandalone, loadDrafts, getCleanBaseUrl, universalFetch]);
 

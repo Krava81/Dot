@@ -346,13 +346,11 @@ app.get("/api/logs/stream", (req: Request, res: Response) => {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const VALID_GEMINI_MODELS = [
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-latest',
-  'gemini-1.5-pro',
-  'gemini-1.5-pro-latest',
-  'gemini-2.0-flash-exp',
+  'gemini-2.5-flash-preview-05-20',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro-preview-06-05',
+  'gemini-2.5-pro',
   'gemini-2.0-flash',
-  'gemini-pro',
 ] as const;
 
 function isValidModel(model: string): boolean {
@@ -422,9 +420,9 @@ async function processWithAI(text: string, provider?: string, customApiKeys: any
 1. ПЕРЕВОД: Переведи всё на русский. Бренды и модели авто можно оставить на латинице, если так лучше для понимания.
 2. ЗАПРЕТ: Никаких китайских иероглифов. Если слово нельзя перевести, используй английский эквивалент.
 3. ОФОРМЛЕНИЕ:
-   - Заголовок в начале.
-   - Разделяй текст на логические абзацы.
-   - Используй HTML теги: <b>жирный</b>, <i>курсив</i>, <a>ссылка</a>.
+   - Заголовок в начале. Разделяй текст на логические абзацы.
+   - Используй ТОЛЬКО разрешенные Telegram HTML теги: <b>жирный</b>, <i>курсив</i>, <u>подчеркнутый</u>, <s>зачеркнутый</s>, <a>ссылка</a>, <code>код</code>.
+   - СТРОГО ЗАПРЕЩЕНО использовать теги <h1>, <h2>, <h3>, <p>, <br> и любые другие HTML-теги, не указанные выше. Заголовки выделяй просто жирным шрифтом <b>Заголовок</b>.
 4. ХЭШТЕГИ: Добавь тематические теги в конце.
 
 Текст для перевода:
@@ -522,6 +520,7 @@ ${text.substring(0, 20000)}`;
         }
 
         if (aiResult) {
+          addLog(`✅ AI processing succeeded using provider: ${cur}`);
           if (containsChinese(aiResult)) {
             addLog("⚠️ AI output still contains Chinese. Re-verifying...");
           }
@@ -807,6 +806,7 @@ async function publishPostToTelegram(post: any, host: string = "") {
         // Post 1: Text + Invisible Image Link
         let finalMsgText = cleanText;
         let imageUrl = mainImage;
+        let invisibleLinkUsed = false;
         if (mainImage.includes('/api/images/file/')) {
           const effectiveHost = host || process.env.PUBLIC_DOMAIN || 'localhost:3000';
           imageUrl = `https://${effectiveHost}${mainImage}`;
@@ -815,14 +815,35 @@ async function publishPostToTelegram(post: any, host: string = "") {
         if (imageUrl.startsWith('http')) {
           addLog(`🔗 Using invisible link with image URL: ${imageUrl.substring(0, 50)}...`);
           finalMsgText = `<a href="${imageUrl}">&#8205;</a>` + cleanText;
+          invisibleLinkUsed = true;
         }
         
         const msgText = finalMsgText.length > 4096 ? balanceHtml(finalMsgText.slice(0, 4090) + "…") : balanceHtml(finalMsgText);
-        const msg = await activeBot.telegram.sendMessage(chatId, msgText, {
-          parse_mode: "HTML",
-          ...extra
-        });
-        await applyReactions(msg.message_id);
+        
+        try {
+          const msg = await activeBot.telegram.sendMessage(chatId, msgText, {
+            parse_mode: "HTML",
+            ...extra
+          });
+          await applyReactions(msg.message_id);
+        } catch (error: any) {
+          // If Telegram can't fetch the invisible link, it throws an error like WEBPAGE_CURL_FAILED or WEBPAGE_MEDIA_EMPTY
+          if (invisibleLinkUsed && (error.message?.includes('WEBPAGE') || error.message?.includes('failed to get HTTP'))) {
+            addLog(`⚠️ Invisible link failed. Falling back to sending photo and text separately...`);
+            // Send the main photo
+            const msg1 = await activeBot.telegram.sendPhoto(chatId, media(mainImage));
+            // Send the text
+            const textOnly = cleanText.length > 4096 ? balanceHtml(cleanText.slice(0, 4090) + "…") : balanceHtml(cleanText);
+            const msg2 = await activeBot.telegram.sendMessage(chatId, textOnly, {
+              parse_mode: "HTML",
+              reply_parameters: { message_id: msg1.message_id },
+              ...extra
+            });
+            await applyReactions(msg2.message_id);
+          } else {
+            throw error;
+          }
+        }
       }
 
       // Post 2: Remaining Images

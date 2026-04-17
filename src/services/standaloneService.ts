@@ -143,15 +143,40 @@ export const telegram = {
 };
 
 export const aiService = {
-  async processWithAI(text: string, apiKey: string, prompt: string) {
+  async processWithAI(text: string, apiKey: string, prompt: string, provider: string = 'gemini') {
     if (!apiKey) throw new Error("AI API Key is missing");
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    
-    const fullPrompt = `${prompt}\n\nTEXT:\n${text}`;
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    return response.text();
+    // Gemini
+    if (provider === 'gemini') {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const fullPrompt = `${prompt}\n\nTEXT:\n${text}`;
+      const result = await model.generateContent(fullPrompt);
+      const response = await result.response;
+      return response.text();
+    }
+
+    // GitHub (Azure OpenAI compatible)
+    if (provider === 'github') {
+      const response = await axios.post(
+        "https://models.inference.ai.azure.com/chat/completions",
+        {
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }],
+          temperature: 0.7,
+          max_tokens: 4000
+        },
+        {
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          timeout: 60000
+        }
+      );
+      return response.data.choices?.[0]?.message?.content || "";
+    }
+
+    throw new Error(`Unsupported provider: ${provider}`);
   }
 };
 
