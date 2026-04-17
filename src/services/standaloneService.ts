@@ -76,6 +76,61 @@ function nativeLog(...args: any[]) {
   console.log('[NativeLog]', ...args);
 }
 
+// ─── Universal Fetch ──────────────────────────────────────────────────────
+export const universalFetch = async (url: string, options: any = {}) => {
+  if (!url || url.includes('undefined') || url.includes('null') || url === 'https://' || url === 'http://') {
+    throw new Error("INVALID_URL");
+  }
+  try { const p = new URL(url); if (!p.hostname) throw new Error(); } catch { throw new Error("MALFORMED_URL"); }
+
+  const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(options.headers || {}) };
+
+  // Primary: Standard web fetch (happy eyeballs, native v4/v6 fallback, proxies)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const res = await fetch(url, { ...options, headers, signal: controller.signal });
+    clearTimeout(timeoutId);
+    
+    return {
+      ok: res.ok,
+      status: res.status,
+      json: () => res.json(),
+      text: () => res.text(),
+      headers: { get: (name: string) => res.headers.get(name) }
+    } as any;
+  } catch (fetchErr: any) {
+    if (fetchErr.name === 'AbortError') throw new Error("TIMEOUT_ERROR");
+    
+    // Secondary Fallback: Capacitor HTTP (if running natively and CORS or Webview blocked the fetch)
+    if (isNative) {
+      let requestData: any = undefined;
+      if (options.method && options.method.toUpperCase() !== 'GET' && options.body) {
+        try { requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; } 
+        catch { requestData = options.body; }
+      }
+      
+      try {
+        const response = await CapacitorHttp.request({
+          url, method: options.method || 'GET', headers, data: requestData,
+          connectTimeout: 30000, readTimeout: 60000,
+        });
+        return {
+          ok: response.status >= 200 && response.status < 300,
+          status: response.status,
+          json: async () => typeof response.data === 'string' ? JSON.parse(response.data) : response.data,
+          text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
+          headers: { get: (name: string) => response.headers?.[name] || response.headers?.[name.toLowerCase()] || null }
+        } as any;
+      } catch (capErr: any) {
+        throw new Error(`Native fallback failed: ${capErr.message || "Unknown"}`);
+      }
+    }
+    
+    throw fetchErr;
+  }
+};
+
 // Telegram API direct calls
 export const telegram = {
   async call(token: string, method: string, body: any = {}, signal?: AbortSignal) {
@@ -141,10 +196,6 @@ export const telegram = {
       text,
       ...extra
     };
-    // Only add parse_mode if not already specified in extra
-    if (!extra.parse_mode) {
-      params.parse_mode = 'MarkdownV2';
-    }
     return this.call(token, 'sendMessage', params); 
   },
 
@@ -155,10 +206,6 @@ export const telegram = {
       caption,
       ...extra
     };
-    // Only add parse_mode if not already specified in extra
-    if (!extra.parse_mode && caption) {
-      params.parse_mode = 'MarkdownV2';
-    }
     return this.call(token, 'sendPhoto', params);
   },
 
@@ -177,87 +224,100 @@ export const telegram = {
 };
 
 export const aiService = {
-  async processWithAI(text: string, apiKey: string, prompt: string, provider: string = 'gemini') {
-    if (!apiKey) throw new Error("API ключ не заполнен");
-    
-    // Gemini
-    if (provider === 'gemini') {
-      const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
-      let lastErrMessage = '';
-      
-      for (const modelName of modelsToTry) {
+  async processWithAI(text: string, keys: any, prompt: string, preferredProvider: string = 'gemini', logCallback: (msg: string) => void = () => {}) {
+    const providers = ["gemini", "github", "deepseek", "openrouter"];
+    const effective = preferredProvider || "gemini";
+    const ordered   = [effective, ...providers.filter(p => p !== effective)];
+    const disabledProviders = new Set<string>();
+
+    const lastErrors: string[] = [];
+
+    for (let cycle = 1; cycle <= 3; cycle++) {
+      if (cycle > 1) logCallback(`🔄 AI retry ${cycle}/3...`);
+
+      for (const cur of ordered) {
+        if (disabledProviders.has(cur)) continue;
+        const apiKey = keys[cur];
+        if (!apiKey) { lastErrors.push(`${cur}: no key`); continue; }
+        
         try {
-          const genAI = new GoogleGenerativeAI(apiKey);
-          const model = genAI.getGenerativeModel({ model: modelName });
-          const fullPrompt = `${prompt}\n\nTEXT:\n${text}`;
-          const result = await model.generateContent(fullPrompt);
-          const response = await result.response;
-          if (response.text()) return response.text();
-        } catch (geminiErr: any) {
-          lastErrMessage = geminiErr.message || 'Unknown Gemini Error';
-          // If the error seems temporary or model specific, try next model, otherwise exit loop
+          let aiResult = "";
+          
+          if (cur === 'gemini') {
+            logCallback(`📡 Gemini (attempt ${cycle})...`);
+            const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+            let geminiErr = '';
+            for (const modelName of modelsToTry) {
+              try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+                const r = await universalFetch(url, {
+                  method: 'POST',
+                  body: {
+                    contents: [{ parts: [{ text: `${prompt}\n\nTEXT:\n${text}` }] }],
+                    generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+                  }
+                });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
+                aiResult = d.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (aiResult) break;
+              } catch (e: any) {
+                geminiErr = e.message;
+              }
+            }
+            if (!aiResult) throw new Error(geminiErr);
+          }
+          
+          else if (cur === 'github') {
+             logCallback(`📡 GitHub Models (gpt-4o-mini)...`);
+             const r = await universalFetch("https://models.inference.ai.azure.com/chat/completions", {
+               method: 'POST',
+               headers: { "Authorization": `Bearer ${apiKey}` },
+               body: { model: "gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1, max_tokens: 4000 }
+             });
+             const d = await r.json();
+             if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
+             aiResult = d.choices?.[0]?.message?.content;
+          }
+
+          else if (cur === 'openrouter') {
+             logCallback(`📡 OpenRouter (gpt-4o-mini)...`);
+             const r = await universalFetch("https://openrouter.ai/api/v1/chat/completions", {
+               method: 'POST',
+               headers: { "Authorization": `Bearer ${apiKey}` },
+               body: { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }] }
+             });
+             const d = await r.json();
+             if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
+             aiResult = d.choices?.[0]?.message?.content;
+          }
+
+          else if (cur === 'deepseek') {
+             logCallback(`📡 DeepSeek (deepseek-chat)...`);
+             const r = await universalFetch("https://api.deepseek.com/chat/completions", {
+               method: 'POST',
+               headers: { "Authorization": `Bearer ${apiKey}` },
+               body: { model: "deepseek-chat", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1 }
+             });
+             const d = await r.json();
+             if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
+             aiResult = d.choices?.[0]?.message?.content;
+          }
+
+          if (aiResult) {
+            logCallback(`✅ AI processing succeeded using provider: ${cur}`);
+            return aiResult;
+          }
+
+        } catch (err: any) {
+           const msg = err.message || String(err);
+           logCallback(`❌ AI Provider ${cur} error: ${msg}`);
+           lastErrors.push(`${cur}: ${msg}`);
         }
       }
-      throw new Error(`Gemini Error (all models failed): ${lastErrMessage}`);
     }
 
-    // GitHub (Azure OpenAI compatible)
-    if (provider === 'github') {
-      try {
-        const response = await axios.post(
-          "https://models.inference.ai.azure.com/chat/completions",
-          {
-            model: "gpt-4o-mini",
-            messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }],
-            temperature: 0.7,
-            max_tokens: 4000
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${apiKey}`,
-              "Content-Type": "application/json"
-            },
-            timeout: 60000
-          }
-        );
-        if (response.data?.error) throw new Error(response.data.error.message);
-        return response.data.choices?.[0]?.message?.content || "";
-      } catch (ghErr: any) {
-        throw new Error(`GitHub AI Error: ${ghErr.response?.data?.error?.message || ghErr.message}`);
-      }
-    }
-
-    // OpenRouter
-    if (provider === 'openrouter') {
-      try {
-        const response = await axios.post(
-          "https://openrouter.ai/api/v1/chat/completions",
-          { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }] },
-          { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
-        );
-        if (response.data?.error) throw new Error(response.data.error.message);
-        return response.data.choices?.[0]?.message?.content || "";
-      } catch (orErr: any) {
-        throw new Error(`OpenRouter Error: ${orErr.response?.data?.error?.message || orErr.message}`);
-      }
-    }
-
-    // DeepSeek
-    if (provider === 'deepseek') {
-      try {
-        const response = await axios.post(
-          "https://api.deepseek.com/chat/completions",
-          { model: "deepseek-chat", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1 },
-          { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
-        );
-        if (response.data?.error) throw new Error(response.data.error.message);
-        return response.data.choices?.[0]?.message?.content || "";
-      } catch (dsErr: any) {
-        throw new Error(`DeepSeek Error: ${dsErr.response?.data?.error?.message || dsErr.message}`);
-      }
-    }
-
-    throw new Error(`Unsupported provider: ${provider}`);
+    throw new Error(`Все AI провайдеры не сработали.\nЛоги:\n${lastErrors.join('\n')}`);
   }
 };
 

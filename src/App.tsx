@@ -103,6 +103,7 @@ const shouldPreferHttp = (rawHost: string): boolean => {
 const SortableImage = ({ id, url, isMain, onSelect, onSetMain, onEnlarge }: any) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 10 : 1, opacity: isDragging ? 0.5 : 1 };
+  
   return (
     <div ref={setNodeRef} style={style} className={`relative group aspect-square rounded-lg overflow-hidden border transition-all ${isMain ? 'border-amber-500 shadow-lg ring-2 ring-amber-500/20' : 'border-neutral-800'}`}>
       <div className="w-full h-full cursor-pointer" onClick={() => onEnlarge(url)}>
@@ -113,11 +114,15 @@ const SortableImage = ({ id, url, isMain, onSelect, onSetMain, onEnlarge }: any)
           Main
         </div>
       )}
-      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
-        <button onClick={(e) => { e.stopPropagation(); onSelect(url); }} className="p-1 bg-white/20 hover:bg-white/30 rounded-full text-white" title="Удалить"><Trash2 size={12} /></button>
-        {!isMain && <button onClick={(e) => { e.stopPropagation(); onSetMain(url); }} className="p-1 bg-amber-500/80 hover:bg-amber-600 rounded-full text-white" title="Главное"><Check size={12} /></button>}
+      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 z-20 pointer-events-none">
+        <button className="p-1 bg-white/20 hover:bg-white/30 rounded-full text-white pointer-events-auto" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }} title="Удалить"><Trash2 size={12} /></button>
+        {!isMain && <button className="p-1 bg-amber-500/80 hover:bg-amber-600 rounded-full text-white pointer-events-auto" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSetMain(url); }} title="Главное"><Check size={12} /></button>}
       </div>
-      <div className="absolute top-1 left-1 cursor-grab active:cursor-grabbing p-1 bg-black/50 rounded" {...attributes} {...listeners}><GripVertical size={12} className="text-white" /></div>
+      <div className="absolute top-1 left-1 p-2 touch-none z-[30]" {...attributes} {...listeners}>
+        <div className="p-1 bg-black/70 rounded shadow cursor-grab active:cursor-grabbing">
+          <GripVertical size={12} className="text-white" />
+        </div>
+      </div>
     </div>
   );
 };
@@ -892,10 +897,25 @@ function AppContent() {
       let result = '';
       if (isStandalone) {
         const provider = serverStatus?.preferredProvider || 'gemini';
-        const apiKey = aiKeys[provider];
-        if (!apiKey) throw new Error(`API ключ ${provider} не настроен`);
-        const prompt = "Сделай рерайт текста для Телеграм канала. Используй HTML теги (b, i, u, code). Сделай текст привлекательным и структурированным.";
-        result = await aiService.processWithAI(originalText, apiKey, prompt, provider);
+        
+        const prompt = `Ты — опытный редактор новостей. Твоя задача — перевести текст на русский язык.
+
+ИНСТРУКЦИИ:
+1. ПЕРЕВОД: Переведи всё на русский. Бренды и модели авто можно оставить на латинице, если так лучше для понимания.
+2. ЗАПРЕТ: Никаких китайских иероглифов. Если слово нельзя перевести, используй английский эквивалент.
+3. ОФОРМЛЕНИЕ:
+   - Заголовок в начале. Разделяй текст на логические абзацы.
+   - Используй ТОЛЬКО разрешенные Telegram HTML теги: <b>жирный</b>, <i>курсив</i>, <u>подчеркнутый</u>, <s>зачеркнутый</s>, <a>ссылка</a>, <code>код</code>.
+   - СТРОГО ЗАПРЕЩЕНО использовать теги <h1>, <h2>, <h3>, <p>, <br> и любые другие HTML-теги, не указанные выше. Заголовки выделяй просто жирным шрифтом <b>Заголовок</b>.
+4. ХЭШТЕГИ: Добавь тематические теги в конце.`;
+
+        result = await aiService.processWithAI(
+          originalText, 
+          aiKeys, 
+          prompt, 
+          provider, 
+          (msg: string) => addClientLog(msg)
+        );
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
@@ -985,15 +1005,12 @@ function AppContent() {
     let currentText = processedTextRef.current ? processedTextRef.current.value : aiProcessedText;
     if (!currentText) { setLastError('Введите текст поста'); return; }
 
-    // Convert Markdown to Telegram MarkdownV2 format for standalone mode
-    const mdText = mdToTelegramMarkdown(currentText);
-    // Fallback to HTML conversion for server mode
     const htmlText = mdToTelegramHtml(currentText);
 
-    // Character limit check (MarkdownV2 and HTML have similar limits)
+    // Character limit check
     const limit = selectedImages.length > 0 ? 1024 : 4096;
-    if (mdText.length > limit) {
-      setLastError(`Лимит символов после обработки: ${mdText.length} / ${limit}`);
+    if (htmlText.length > limit) {
+      setLastError(`Лимит символов после обработки: ${htmlText.length} / ${limit}`);
       return;
     }
 
@@ -1008,8 +1025,7 @@ function AppContent() {
       if (isStandalone) {
         if (!botToken || !tempChatId) throw new Error("Токен бота или Chat ID не настроены");
         
-        // Use MarkdownV2 for standalone mode
-        const extra: any = { parse_mode: 'MarkdownV2' };
+        const extra: any = { parse_mode: 'HTML' };
         if (post.buttons?.length) {
           extra.reply_markup = {
             inline_keyboard: post.buttons.map(b => [{ text: b.text, url: b.url }])
@@ -1018,16 +1034,16 @@ function AppContent() {
 
         // Standalone publishing with photos
         if (post.selectedImages.length === 0) {
-          await telegram.sendMessage(botToken, tempChatId, mdText, extra);
+          await telegram.sendMessage(botToken, tempChatId, htmlText, extra);
         } else if (post.selectedImages.length === 1) {
-          await telegram.sendPhoto(botToken, tempChatId, post.selectedImages[0], mdText, extra);
+          await telegram.sendPhoto(botToken, tempChatId, post.selectedImages[0], htmlText, extra);
         } else {
-          // For media group, prepare media items with MarkdownV2 captions
+          // For media group, prepare media items with HTML captions
           const mediaItems = post.selectedImages.map((img, i) => ({
             type: 'photo',
             media: img,
-            caption: i === 0 ? mdText : undefined,
-            parse_mode: i === 0 ? 'MarkdownV2' : undefined
+            caption: i === 0 ? htmlText : undefined,
+            parse_mode: i === 0 ? 'HTML' : undefined
           }));
           await telegram.sendMediaGroup(botToken, tempChatId, mediaItems);
           if (post.buttons?.length) {
@@ -1070,14 +1086,28 @@ function AppContent() {
       if (!draft) throw new Error("Черновик не найден");
 
       let textToPublish = draft.text;
-      // Convert Markdown to Telegram MarkdownV2 for standalone, HTML for server
-      const mdText = mdToTelegramMarkdown(textToPublish);
+      // Convert Markdown to HTML for Telegram
       const htmlText = mdToTelegramHtml(textToPublish);
 
       const postToPublish = { ...draft, text: textToPublish };
 
       if (isStandalone) {
-        await telegram.sendMessage(botToken, tempChatId, mdText, { parse_mode: 'MarkdownV2' });
+        // Send using HTML
+        if (postToPublish.selectedImages?.length) {
+           if (postToPublish.selectedImages.length === 1) {
+             await telegram.sendPhoto(botToken, tempChatId, postToPublish.selectedImages[0], htmlText, { parse_mode: 'HTML' });
+           } else {
+             const mediaItems = postToPublish.selectedImages.map((img: string, i: number) => ({
+                type: 'photo',
+                media: img,
+                caption: i === 0 ? htmlText : undefined,
+                parse_mode: i === 0 ? 'HTML' : undefined
+              }));
+              await telegram.sendMediaGroup(botToken, tempChatId, mediaItems);
+           }
+        } else {
+           await telegram.sendMessage(botToken, tempChatId, htmlText, { parse_mode: 'HTML' });
+        }
         // Move from drafts/scheduled to published
         const currentPublished = await storage.loadJson('published.json', []);
         await storage.saveJson('published.json', [...currentPublished, { ...postToPublish, status: 'published', publishedAt: Date.now() }]);
