@@ -8,8 +8,7 @@ export interface ServerStatus {
   hasDefaultChat: boolean;
   defaultChatId?: string | number;
   preferredProvider?: string;
-  hasToken?: boolean;
-  botTokenMasked?: string;
+  botToken?: string;
 }
 
 export function useServerConnection(baseUrl: string) {

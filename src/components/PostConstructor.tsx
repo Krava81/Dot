@@ -1,6 +1,6 @@
 import React, { useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Edit2, X, Sparkles, ClipboardPaste, Loader2, Wand2, Plus, Trash2, FolderOpen, Folder, Smartphone, RefreshCw, Clock, Send, CheckCircle2, AlertCircle, EyeOff, Image, Hash } from 'lucide-react';
+import { Edit2, X, Sparkles, ClipboardPaste, Loader2, Wand2, Plus, Trash2, FolderOpen, Folder, Smartphone, RefreshCw, Clock, Send, CheckCircle2, AlertCircle, EyeOff, Image, Hash, Save } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import MarkdownIt from 'markdown-it';
@@ -45,6 +45,7 @@ interface SortableImageProps {
   isMain: boolean;
   onSelect: (url: string) => void;
   onSetMain: (url: string) => void;
+  onEnlarge: (url: string) => void;
 }
 
 interface PostConstructorProps {
@@ -91,6 +92,7 @@ interface PostConstructorProps {
   submitMsg: { type: 'success' | 'error', text: string } | null;
   SortableImage: React.FC<SortableImageProps>;
   processedTextRef: React.RefObject<HTMLTextAreaElement | null>;
+  onEnlarge: (url: string) => void;
 }
 
 export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
@@ -160,9 +162,23 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Редактор поста</label>
                       <button 
                         onClick={() => {
-                          const editor = (window as any).mdEditor;
-                          if (editor) {
-                            editor.insertText('||', '||');
+                          const editorRef = (window as any).mdEditor;
+                          if (editorRef) {
+                            const editor = editorRef.getTextarea();
+                            if (editor) {
+                              const start = editor.selectionStart;
+                              const end = editor.selectionEnd;
+                              const currentText = props.aiProcessedText;
+                              const before = currentText.substring(0, start);
+                              const after = currentText.substring(end);
+                              const spoiler = '|| ТЕКСТ ||';
+                              props.setAiProcessedText(before + spoiler + after);
+                              
+                              setTimeout(() => {
+                                editor.focus();
+                                editor.setSelectionRange(start + 3, start + 8);
+                              }, 10);
+                            }
                           }
                         }}
                         className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1 px-2 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20"
@@ -171,20 +187,20 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       </button>
                     </div>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                      props.aiProcessedText.length > (props.selectedImages.length > 0 ? 1024 : 4096) 
+                      props.aiProcessedText.length > 4096 
                       ? 'bg-red-500 text-white' 
                       : 'bg-neutral-700 text-neutral-400'
                     }`}>
-                      {props.aiProcessedText.length} / {props.selectedImages.length > 0 ? 1024 : 4096}
+                      {props.aiProcessedText.length} / 4096
                     </span>
                   </div>
                   <div className="h-[400px]">
                     <MdEditor
                       ref={(node: any) => (window as any).mdEditor = node}
-                      value={localText}
+                      value={props.aiProcessedText}
                       style={{ height: '100%', border: 'none' }}
                       renderHTML={renderPreview}
-                      onChange={({ text }) => handleTextChange(text)}
+                      onChange={({ text }) => props.setAiProcessedText(text)}
                       config={{
                         view: { menu: true, md: true, html: true },
                         canView: { menu: true, md: true, html: true, fullScreen: false, hideMenu: false }
@@ -204,39 +220,84 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                     <button onClick={() => props.syncLocalImages(true)} className="text-blue-400 hover:text-blue-300"><RefreshCw size={14} className={props.isActionInProgress ? 'animate-spin' : ''} /></button>
                   </div>
                   <div className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">
-                    <div className="grid grid-cols-2 gap-2">
-                      <DndContext sensors={props.sensors} collisionDetection={closestCenter} onDragEnd={props.handleDragEnd}>
-                        <SortableContext items={props.selectedImages} strategy={rectSortingStrategy}>
-                          {props.selectedImages.map(img => <props.SortableImage key={img} id={img} url={img} isMain={props.mainImage === img} onSelect={props.toggleImageSelection} onSetMain={props.setMainImage} />)}
-                        </SortableContext>
-                      </DndContext>
-                      <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
-                        <input type="file" accept="image/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
-                          if (!e.target.files) return;
-                          Array.from(e.target.files as Iterable<File>).forEach(file => {
-                            const reader = new FileReader();
-                            reader.onload = ev => {
-                              const b64 = ev.target?.result as string;
-                              props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
-                              props.setSelectedImages(prev => [...prev, b64]);
-                              if (!props.mainImage) props.setMainImage(b64);
-                            };
-                            reader.readAsDataURL(file);
-                          });
-                        }} />
-                        <Plus size={20} /><span className="text-[8px] font-bold uppercase">Добавить</span>
-                      </label>
+                    <div className="space-y-4">
+                      <div className="bg-neutral-900/50 p-3 rounded-xl border border-neutral-800 space-y-2">
+                        <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
+                          <Folder size={12} className="text-blue-500" /> Путь к папке
+                        </label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            value={props.imagePath} 
+                            onChange={e => props.setImagePath(e.target.value)} 
+                            placeholder="DCIM/Camera" 
+                            className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/50 font-mono text-white" 
+                          />
+                          <button onClick={props.saveImagePath} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg border border-neutral-700 transition-colors">
+                            <Plus size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2">
+                        <DndContext sensors={props.sensors} collisionDetection={closestCenter} onDragEnd={props.handleDragEnd}>
+                          <SortableContext items={props.selectedImages} strategy={rectSortingStrategy}>
+                            {props.selectedImages.map(img => (
+                              <props.SortableImage 
+                                key={img} 
+                                id={img} 
+                                url={img} 
+                                isMain={props.mainImage === img} 
+                                onSelect={props.toggleImageSelection} 
+                                onSetMain={props.setMainImage} 
+                                onEnlarge={props.onEnlarge} 
+                              />
+                            ))}
+                          </SortableContext>
+                        </DndContext>
+                        <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
+                          <input type="file" accept="image/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
+                            if (!e.target.files) return;
+                            Array.from(e.target.files as Iterable<File>).forEach(file => {
+                              const reader = new FileReader();
+                              reader.onload = ev => {
+                                const b64 = ev.target?.result as string;
+                                props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
+                                props.setSelectedImages(prev => [...prev, b64]);
+                                if (!props.mainImage) props.setMainImage(b64);
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                          }} />
+                          <Plus size={16} /><span className="text-[8px] font-bold uppercase">Файл</span>
+                        </label>
+                      </div>
                     </div>
 
-                    {props.parsedContent && props.parsedContent.images.length > 0 && (
+                    {(props.parsedContent?.images?.length || 0) > 0 && (
                       <div className="pt-4 border-t border-neutral-800">
-                        <div className="text-[10px] font-bold text-neutral-600 uppercase mb-2 tracking-widest">Галерея</div>
-                        <div className="grid grid-cols-4 gap-1 max-h-[120px] overflow-y-auto">
-                          {props.parsedContent.images.filter(img => !props.selectedImages.includes(img)).map((img, idx) => (
-                            <div key={idx} onClick={() => props.toggleImageSelection(img)} className="aspect-square rounded-lg border border-neutral-800 overflow-hidden cursor-pointer hover:border-blue-500 transition-all group relative">
-                              <img src={img} alt="Available" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            </div>
-                          ))}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Галерея ({props.parsedContent?.images.length})</div>
+                          {props.isActionInProgress && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                        </div>
+                        <div className="grid grid-cols-6 gap-1.5 max-h-[300px] overflow-y-auto pr-2">
+                          {props.parsedContent?.images.map((img, idx) => {
+                            const isSelected = props.selectedImages.includes(img);
+                            return (
+                              <div 
+                                key={idx} 
+                                onClick={() => props.toggleImageSelection(img)} 
+                                className={`aspect-square rounded-lg border overflow-hidden cursor-pointer transition-all group relative ${isSelected ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-neutral-800 hover:border-neutral-600'}`}
+                              >
+                                <img src={img} alt="Available" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                {isSelected && (
+                                  <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                                    <div className="bg-blue-500 text-white rounded-full p-0.5"><CheckCircle2 size={10} /></div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -260,6 +321,75 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       </div>
                     ))}
                     {props.postButtons.length === 0 && <p className="text-center py-2 text-neutral-600 text-[10px] italic">Нет кнопок</p>}
+                  </div>
+
+                  {/* Templates Section */}
+                  <div className="border-t border-neutral-800 p-4 space-y-3 bg-neutral-900/20">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
+                        <Save size={12} className="text-blue-500" /> Шаблоны кнопок
+                      </label>
+                      <button 
+                        onClick={() => props.setShowTemplates(!props.showTemplates)} 
+                        className="text-blue-400 text-[10px] font-bold uppercase hover:underline"
+                      >
+                        {props.showTemplates ? 'Скрыть' : 'Показать'}
+                      </button>
+                    </div>
+                    
+                    <AnimatePresence>
+                      {props.showTemplates && (
+                        <motion.div 
+                          initial={{ height: 0, opacity: 0 }} 
+                          animate={{ height: 'auto', opacity: 1 }} 
+                          exit={{ height: 0, opacity: 0 }} 
+                          className="space-y-3 overflow-hidden"
+                        >
+                          <div className="flex gap-2 p-1">
+                            <input 
+                              value={props.templateName} 
+                              onChange={e => props.setTemplateName(e.target.value)} 
+                              placeholder="Название шаблона" 
+                              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none text-white focus:border-blue-500/50" 
+                            />
+                            <button 
+                              onClick={props.saveButtonTemplate} 
+                              disabled={!props.templateName || props.postButtons.length === 0} 
+                              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50 transition-colors shadow-lg shadow-blue-600/10"
+                            >
+                              Сохранить
+                            </button>
+                          </div>
+                          
+                          <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1">
+                            {props.buttonTemplates.map(t => (
+                              <div key={t.id} className="flex items-center justify-between bg-neutral-900/80 border border-neutral-800 p-2 rounded-lg group hover:border-neutral-700 transition-colors">
+                                <span className="text-[10px] text-neutral-300 truncate font-medium">{t.name}</span>
+                                <div className="flex gap-1">
+                                  <button 
+                                    onClick={() => props.setPostButtons(t.buttons)} 
+                                    className="p-1.5 text-blue-400 hover:bg-blue-500/10 rounded-md transition-colors"
+                                    title="Применить"
+                                  >
+                                    <ClipboardPaste size={12} />
+                                  </button>
+                                  <button 
+                                    onClick={() => props.handleDeleteTemplate(t.id)} 
+                                    className="p-1.5 text-neutral-600 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                                    title="Удалить"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                            {props.buttonTemplates.length === 0 && (
+                              <p className="text-center py-4 text-neutral-600 text-[9px] uppercase tracking-wider">Нет сохраненных шаблонов</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
               </div>

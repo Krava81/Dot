@@ -22,13 +22,3 @@ View your app in AI Studio: https://ai.studio/apps/2b8e3e68-00bc-4bf1-8692-bdc5b
    - `DEEPSEEK_API_KEY`
 3. Run the app:
    `npm run dev`
-
-## Build on Windows (EPERM-safe)
-
-If antivirus/sandbox policies intermittently block `esbuild` with `spawn EPERM`, use:
-
-`npm run build:safe`
-
-This script unblocks local `esbuild` binaries and then runs:
-- `npm run build-server`
-- `npm run build-client`

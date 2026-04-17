@@ -109,7 +109,7 @@ export const telegram = {
     };
     // Only add parse_mode if not already specified in extra
     if (!extra.parse_mode) {
-      params.parse_mode = 'HTML';
+      params.parse_mode = 'MarkdownV2';
     }
     return this.call(token, 'sendMessage', params); 
   },
@@ -123,20 +123,17 @@ export const telegram = {
     };
     // Only add parse_mode if not already specified in extra
     if (!extra.parse_mode && caption) {
-      params.parse_mode = 'HTML';
+      params.parse_mode = 'MarkdownV2';
     }
     return this.call(token, 'sendPhoto', params);
   },
 
-  async sendMediaGroup(token: string, chatId: string | number, media: string[], caption?: string) {
+  async sendMediaGroup(token: string, chatId: string | number, media: any[]) {
+    // Media group doesn't support buttons or parse_mode for captions in the same way
+    // Each media item can have its own caption with parse_mode
     return this.call(token, 'sendMediaGroup', {
       chat_id: chatId,
-      media: media.map((m, i) => ({
-        type: 'photo',
-        media: m,
-        caption: i === 0 ? caption : undefined,
-        parse_mode: caption ? 'HTML' : undefined
-      }))
+      media: media
     });
   },
 
@@ -149,7 +146,7 @@ export const aiService = {
   async processWithAI(text: string, apiKey: string, prompt: string) {
     if (!apiKey) throw new Error("AI API Key is missing");
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const fullPrompt = `${prompt}\n\nTEXT:\n${text}`;
     const result = await model.generateContent(fullPrompt);

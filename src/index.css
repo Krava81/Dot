@@ -60,13 +60,13 @@
 
 @layer base {
   body {
-    @apply bg-neutral-950 text-neutral-50 font-sans h-[100dvh] overflow-hidden flex flex-col select-none;
+    @apply bg-neutral-950 text-neutral-50 font-sans min-h-[100dvh] overflow-y-auto;
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
   }
   
   #root {
-    @apply flex-1 flex flex-col overflow-hidden;
+    @apply min-h-[100dvh] flex flex-col;
   }
 
   tg-spoiler {

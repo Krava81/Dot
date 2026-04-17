@@ -28,10 +28,56 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
     }
   }, [isStandalone, getCleanBaseUrl, universalFetch]);
 
+  const saveButtonTemplate = useCallback(async (name: string, buttons: any[]) => {
+    if (!name.trim() || buttons.length === 0) return;
+    const newTemplate = { id: Date.now().toString(), name, buttons };
+    const updated = [...buttonTemplates, newTemplate];
+    setButtonTemplates(updated);
+    
+    try {
+      if (isStandalone) {
+        await storage.saveJson('templates.json', updated);
+      } else {
+        const cleanUrl = getCleanBaseUrl();
+        if (!cleanUrl) return;
+        await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templates: updated })
+        });
+      }
+    } catch (error) {
+      console.error('Failed to save template:', error);
+    }
+  }, [buttonTemplates, isStandalone, getCleanBaseUrl, universalFetch]);
+
+  const deleteButtonTemplate = useCallback(async (id: string) => {
+    const updated = buttonTemplates.filter(t => t.id !== id);
+    setButtonTemplates(updated);
+    
+    try {
+      if (isStandalone) {
+        await storage.saveJson('templates.json', updated);
+      } else {
+        const cleanUrl = getCleanBaseUrl();
+        if (!cleanUrl) return;
+        await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templates: updated })
+        });
+      }
+    } catch (error) {
+      console.error('Failed to delete template:', error);
+    }
+  }, [buttonTemplates, isStandalone, getCleanBaseUrl, universalFetch]);
+
   return {
     buttonTemplates,
     setButtonTemplates,
     loading,
-    loadButtonTemplates
+    loadButtonTemplates,
+    saveButtonTemplate,
+    deleteButtonTemplate
   };
 }

@@ -4,7 +4,7 @@
  */
 
 import { marked } from 'marked';
-import React, { useState, useEffect, useCallback, Component, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, Component, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, Sparkles, ChevronDown, Image, Calendar, Clock, Plus, Eye, EyeOff, Copy, FolderOpen, Check, Loader2, Folder, GripVertical, Smartphone, Play, Globe, Layout, Palette, Type, Wand2, ClipboardPaste } from 'lucide-react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
@@ -23,6 +23,8 @@ import { useScheduledPosts } from './hooks/useScheduledPosts';
 import { usePublishedPosts } from './hooks/usePublishedPosts';
 import { useAiKeys } from './hooks/useAiKeys';
 import { useBotSettings } from './hooks/useBotSettings';
+import { SettingsModal } from './components/SettingsModal';
+import { PostConstructor } from './components/PostConstructor';
 import { PostButton, ParsedContent, DraftPost, ButtonTemplate, ServerConfigStatus } from './types';
 import {
   DndContext,
@@ -41,13 +43,6 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-
-const SettingsModal = lazy(() =>
-  import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal }))
-);
-const PostConstructor = lazy(() =>
-  import('./components/PostConstructor').then((module) => ({ default: module.PostConstructor }))
-);
 
 // ─── SafeLocalStorage ───────────────────────────────────────────────────────
 const safeLocalStorage = {
@@ -105,19 +100,24 @@ const shouldPreferHttp = (rawHost: string): boolean => {
 };
 
 // ─── Components ─────────────────────────────────────────────────────────────
-const SortableImage = ({ id, url, isMain, onSelect, onSetMain }: any) => {
+const SortableImage = ({ id, url, isMain, onSelect, onSetMain, onEnlarge }: any) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 10 : 1, opacity: isDragging ? 0.5 : 1 };
   return (
-    <div ref={setNodeRef} style={style} className={`relative group aspect-square rounded-xl overflow-hidden border-2 transition-all ${isMain ? 'border-amber-500 shadow-lg shadow-amber-500/20' : 'border-neutral-800 hover:border-neutral-600'}`}>
-      <div className="w-full h-full cursor-grab active:cursor-grabbing" {...attributes} {...listeners}>
+    <div ref={setNodeRef} style={style} className={`relative group aspect-square rounded-lg overflow-hidden border transition-all ${isMain ? 'border-amber-500 shadow-lg ring-2 ring-amber-500/20' : 'border-neutral-800'}`}>
+      <div className="w-full h-full cursor-pointer" onClick={() => onEnlarge(url)}>
         <img src={url} alt="Post" className="w-full h-full object-cover pointer-events-none" referrerPolicy="no-referrer" />
       </div>
-      <div className="absolute inset-0 bg-black/40 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-auto">
-        <button onClick={(e) => { e.stopPropagation(); onSelect(url); }} className="p-2 bg-white/20 hover:bg-white/30 rounded-full backdrop-blur-md text-white transition-all" title="Удалить из галереи"><Trash2 size={16} /></button>
-        {!isMain && <button onClick={(e) => { e.stopPropagation(); onSetMain(url); }} className="p-2 bg-amber-500/80 hover:bg-amber-600 rounded-full text-white transition-all shadow-lg shadow-amber-500/20" title="Сделать главным"><Check size={16} /></button>}
+      {isMain && (
+        <div className="absolute top-0 right-0 bg-amber-500 text-neutral-950 text-[6px] font-black px-1.5 py-0.5 rounded-bl-lg uppercase tracking-tighter">
+          Main
+        </div>
+      )}
+      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+        <button onClick={(e) => { e.stopPropagation(); onSelect(url); }} className="p-1 bg-white/20 hover:bg-white/30 rounded-full text-white" title="Удалить"><Trash2 size={12} /></button>
+        {!isMain && <button onClick={(e) => { e.stopPropagation(); onSetMain(url); }} className="p-1 bg-amber-500/80 hover:bg-amber-600 rounded-full text-white" title="Главное"><Check size={12} /></button>}
       </div>
-      {isMain && <div className="absolute top-2 left-2 px-2 py-1 bg-amber-500 text-white text-[8px] font-bold rounded-md uppercase tracking-wider shadow-lg pointer-events-none">Главное</div>}
+      <div className="absolute top-1 left-1 cursor-grab active:cursor-grabbing p-1 bg-black/50 rounded" {...attributes} {...listeners}><GripVertical size={12} className="text-white" /></div>
     </div>
   );
 };
@@ -376,7 +376,49 @@ function AppContent() {
 
     return s.trim().replace(/\n{3,}/g, "\n\n");
   };
+  
+  // Convert Markdown to Telegram MarkdownV2 format
+  const mdToTelegramMarkdown = useCallback((md: string) => {
+    if (!md) return "";
 
+    let result = md;
+
+    // Process line by line to handle different elements
+    const lines = result.split('\n');
+    const processedLines = lines.map(line => {
+      // Handle headers (# Header -> *Header*)
+      line = line.replace(/^# (.*$)/g, '*$1*');
+      line = line.replace(/^## (.*$)/g, '*$1*');
+      line = line.replace(/^### (.*$)/g, '*$1*');
+
+      // Handle bold (**text** -> *text*)
+      line = line.replace(/\*\*(.+?)\*\*/g, '*$1*');
+
+      // Handle italic (__text__ or _text_ -> _text_)
+      line = line.replace(/__(.+?)__/g, '_$1_');
+
+      // Handle strikethrough (~~text~~ -> ~text~)
+      line = line.replace(/~~(.+?)~~/g, '~$1~');
+
+      // Handle spoiler (||text|| -> ||text|| - Telegram supports this natively in MDv2)
+      // No conversion needed, Telegram MarkdownV2 supports ||spoiler||
+
+      // Handle code (`code` -> `code`)
+      line = line.replace(/`(.+?)`/g, '`$1`');
+
+      // Handle multiline code blocks
+      line = line.replace(/```([\s\S]*?)```/g, '```\n$1\n```');
+
+      return line;
+    });
+
+    result = processedLines.join('\n');
+
+    // Clean up excessive newlines
+    result = result.replace(/\n{3,}/g, '\n\n');
+
+    return result.trim();
+  }, []);
   const mdToTelegramHtml = useCallback((md: string) => {
     const mdParser = new MarkdownIt({ breaks: true, html: true, linkify: true });
     
@@ -629,6 +671,10 @@ function AppContent() {
   useEffect(() => {
     const updateStatus = async () => {
       if (status) {
+        if (status.botToken) {
+          updateSetting('server_bot_token', status.botToken);
+          await storage.setSetting('server_bot_token', status.botToken);
+        }
         // Fetch config status separately - don't block
         const cleanUrl = getCleanBaseUrl();
         if (cleanUrl) {
@@ -651,6 +697,11 @@ function AppContent() {
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 5000);
     return () => clearTimeout(t);
+  }, []);
+
+  // Main data polling
+  useEffect(() => {
+    // fetchData is now handled by useServerConnection
   }, []);
 
   // ✅ FIX: SSE only for web, polling for native
@@ -777,6 +828,17 @@ function AppContent() {
   useEffect(() => {
     if (showSettings) { setTempBotToken(botToken); }
   }, [showSettings, botToken]);
+
+  useEffect(() => {
+    const init = async () => {
+      // Keys are loaded by useAiKeys hook
+    };
+    init();
+  }, []);
+
+  useEffect(() => {
+    // Keys are managed by useAiKeys hook and storage/updateAiKey
+  }, [aiKeys]);
 
   // ─── DnD ──────────────────────────────────────────────────────────────────
   const sensors = useSensors(
@@ -912,13 +974,15 @@ function AppContent() {
     let currentText = processedTextRef.current ? processedTextRef.current.value : aiProcessedText;
     if (!currentText) { setLastError('Введите текст поста'); return; }
 
-    // Convert Markdown to HTML if needed
+    // Convert Markdown to Telegram MarkdownV2 format for standalone mode
+    const mdText = mdToTelegramMarkdown(currentText);
+    // Fallback to HTML conversion for server mode
     const htmlText = mdToTelegramHtml(currentText);
 
-    // Character limit check after sanitization
+    // Character limit check (MarkdownV2 and HTML have similar limits)
     const limit = selectedImages.length > 0 ? 1024 : 4096;
-    if (htmlText.length > limit) {
-      setLastError(`Лимит символов после обработки: ${htmlText.length} / ${limit}`);
+    if (mdText.length > limit) {
+      setLastError(`Лимит символов после обработки: ${mdText.length} / ${limit}`);
       return;
     }
 
@@ -933,7 +997,8 @@ function AppContent() {
       if (isStandalone) {
         if (!botToken || !tempChatId) throw new Error("Токен бота или Chat ID не настроены");
         
-        const extra: any = { parse_mode: 'HTML' };
+        // Use MarkdownV2 for standalone mode
+        const extra: any = { parse_mode: 'MarkdownV2' };
         if (post.buttons?.length) {
           extra.reply_markup = {
             inline_keyboard: post.buttons.map(b => [{ text: b.text, url: b.url }])
@@ -942,11 +1007,18 @@ function AppContent() {
 
         // Standalone publishing with photos
         if (post.selectedImages.length === 0) {
-          await telegram.sendMessage(botToken, tempChatId, htmlText, extra);
+          await telegram.sendMessage(botToken, tempChatId, mdText, extra);
         } else if (post.selectedImages.length === 1) {
-          await telegram.sendPhoto(botToken, tempChatId, post.selectedImages[0], htmlText, extra);
+          await telegram.sendPhoto(botToken, tempChatId, post.selectedImages[0], mdText, extra);
         } else {
-          await telegram.sendMediaGroup(botToken, tempChatId, post.selectedImages, htmlText);
+          // For media group, prepare media items with MarkdownV2 captions
+          const mediaItems = post.selectedImages.map((img, i) => ({
+            type: 'photo',
+            media: img,
+            caption: i === 0 ? mdText : undefined,
+            parse_mode: i === 0 ? 'MarkdownV2' : undefined
+          }));
+          await telegram.sendMediaGroup(botToken, tempChatId, mediaItems);
           if (post.buttons?.length) {
              await telegram.sendMessage(botToken, tempChatId, "👇 Действия:", extra);
           }
@@ -987,13 +1059,14 @@ function AppContent() {
       if (!draft) throw new Error("Черновик не найден");
 
       let textToPublish = draft.text;
-      // Convert Markdown to HTML if needed
+      // Convert Markdown to Telegram MarkdownV2 for standalone, HTML for server
+      const mdText = mdToTelegramMarkdown(textToPublish);
       const htmlText = mdToTelegramHtml(textToPublish);
 
       const postToPublish = { ...draft, text: textToPublish };
 
       if (isStandalone) {
-        await telegram.sendMessage(botToken, tempChatId, htmlText, { parse_mode: 'HTML' });
+        await telegram.sendMessage(botToken, tempChatId, mdText, { parse_mode: 'MarkdownV2' });
         // Move from drafts/scheduled to published
         const currentPublished = await storage.loadJson('published.json', []);
         await storage.saveJson('published.json', [...currentPublished, { ...postToPublish, status: 'published', publishedAt: Date.now() }]);
@@ -1022,7 +1095,7 @@ function AppContent() {
         }
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegram, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts]);
+  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramMarkdown, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegram, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts]);
 
   const deleteDraft = async (draftId: string) => {
     try {
@@ -1388,8 +1461,6 @@ function AppContent() {
               <button 
                 onClick={() => setShowSettings(true)}
                 className="p-2.5 bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors text-neutral-400 hover:text-white"
-                title="Настройки"
-                aria-label="Настройки"
               >
                 <Settings size={20} />
               </button>
@@ -1424,7 +1495,6 @@ function AppContent() {
           <div className="flex gap-1 bg-neutral-900 p-1 rounded-xl">
             {[
               { id: 'editor', label: 'Редактор', icon: Edit2 },
-              { id: 'images', label: 'Галерея', icon: Image },
               { id: 'logs', label: 'Логи', icon: Activity },
             ].map(tab => (
               <button
@@ -1483,9 +1553,9 @@ function AppContent() {
                           <p className="text-[10px] text-neutral-500 mt-1 uppercase tracking-widest">{new Date(draft.createdAt).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all" title="Редактировать" aria-label="Редактировать"><Edit2 size={16} /></button>
-                          <button onClick={() => publishDraft(draft.id)} className="p-2 bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg transition-all" title="Опубликовать" aria-label="Опубликовать"><Send size={16} /></button>
-                          <button onClick={() => deleteDraft(draft.id)} className="p-2 bg-red-600/10 text-red-400 hover:bg-red-600/30 rounded-lg transition-all" title="Удалить" aria-label="Удалить"><Trash2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
+                          <button onClick={() => publishDraft(draft.id)} className="p-2 bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg transition-all"><Send size={16} /></button>
+                          <button onClick={() => deleteDraft(draft.id)} className="p-2 bg-red-600/10 text-red-400 hover:bg-red-600/30 rounded-lg transition-all"><Trash2 size={16} /></button>
                         </div>
                       </div>
                     ))}
@@ -1501,8 +1571,8 @@ function AppContent() {
                           <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1 uppercase tracking-widest font-bold"><Clock size={12} />{new Date(post.scheduledAt || '').toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg" title="Редактировать" aria-label="Редактировать"><Edit2 size={16} /></button>
-                          <button onClick={() => deleteDraft(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg" title="Удалить" aria-label="Удалить"><Trash2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => deleteDraft(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>
                     ))}
@@ -1520,60 +1590,13 @@ function AppContent() {
                           <p className="text-[10px] text-emerald-400 mt-1 uppercase tracking-widest font-bold">{post.publishedAt ? new Date(post.publishedAt).toLocaleString() : 'Только что'}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg" title="Редактировать" aria-label="Редактировать"><Edit2 size={16} /></button>
-                          <button onClick={() => deletePublishedPost(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg" title="Удалить" aria-label="Удалить"><Trash2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => deletePublishedPost(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </CollapsibleSection>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'images' && (
-          <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6">
-            <div className="bg-neutral-900 rounded-2xl border border-neutral-800 p-6 space-y-6">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h2 className="text-xl font-bold text-white flex items-center gap-3"><Image size={24} className="text-blue-500" /> Галерея изображений</h2>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => syncLocalImages(true)} disabled={isActionInProgress} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20">
-                    {isActionInProgress ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Синхронизировать
-                  </button>
-                  <label className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold rounded-xl border border-neutral-700 cursor-pointer transition-all">
-                    <input type="file" multiple accept="image/*" className="hidden" onChange={handleFolderSelect as any} />
-                    <Plus size={14} className="inline mr-1" /> Загрузить
-                  </label>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Путь к папке</label>
-                <div className="flex gap-2">
-                  <input type="text" value={imagePath} onChange={e => setImagePath(e.target.value)} placeholder="DCIM/Camera" className="flex-1 bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-mono" />
-                  <button onClick={handleSaveImagePath} className="px-4 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl border border-neutral-700" title="Сохранить путь" aria-label="Сохранить путь"><Save size={18} /></button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                {syncedImages.length === 0 ? (
-                  <div className="col-span-full py-20 text-center space-y-4">
-                    <div className="w-16 h-16 bg-neutral-800 rounded-full flex items-center justify-center mx-auto text-neutral-600"><Image size={32} /></div>
-                    <p className="text-neutral-500 text-sm italic">Изображения не найдены. Проверьте путь или загрузите фото.</p>
-                  </div>
-                ) : syncedImages.map((img, idx) => (
-                  <div key={idx} className="group relative aspect-square rounded-2xl overflow-hidden border border-neutral-800 hover:border-blue-500 transition-all shadow-lg">
-                    <img src={img} alt="Gallery" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
-                      <button onClick={() => { 
-                        setSelectedImages([img]); 
-                        setMainImage(img); 
-                        setIsConstructorOpen(true); 
-                      }} className="p-3 bg-blue-600 text-white rounded-xl shadow-xl transform scale-90 group-hover:scale-100 transition-all" title="Использовать в посте" aria-label="Использовать в посте"><Edit2 size={20} /></button>
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
           </div>
@@ -1625,7 +1648,7 @@ function AppContent() {
                 <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider flex items-center gap-2"><Hash size={10} /> ID чата</label>
                 <div className="flex gap-2">
                   <input type="text" value={tempChatId} onChange={e => updateSetting('chat_id', e.target.value)} placeholder="-100..." className="flex-1 bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-mono" />
-                  <button onClick={handleSaveChatId} disabled={isSavingToken || !tempChatId} className="px-4 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl border border-neutral-700" title="Сохранить" aria-label="Сохранить"><Save size={18} /></button>
+                  <button onClick={handleSaveChatId} disabled={isSavingToken || !tempChatId} className="px-4 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl border border-neutral-700"><Save size={18} /></button>
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-2">
                   {chatIdPresets.map((preset, i) => (
@@ -1666,7 +1689,7 @@ function AppContent() {
               </button>
               <button onClick={handleSendTestMessage} disabled={!botToken || (isStandalone ? false : status?.bot !== 'active')} className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all text-sm"><Send size={16} /> Тест</button>
               <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/restart`, { method: 'POST' }); refetchStatus(); } catch {} }} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"><RefreshCw size={16} /> Рестарт</button>
-              <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/stop`, { method: 'POST' }); refetchStatus(); } catch {} }} className="px-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm" title="Остановить" aria-label="Остановить"><X size={16} /></button>
+              <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/stop`, { method: 'POST' }); refetchStatus(); } catch {} }} className="px-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"><X size={16} /></button>
             </div>
           </div>
         </CollapsibleSection>
@@ -1687,7 +1710,7 @@ function AppContent() {
                     const cleanUrl = getCleanBaseUrl();
                     if (!cleanUrl) return;
                     try { await universalFetch(`${cleanUrl}/api/config/api-key`, { method: 'POST', body: JSON.stringify({ preferredProvider: provider }) }); refetchStatus(); } catch {}
-                  }} className={`p-1 rounded ${serverStatus?.preferredProvider === provider ? 'bg-amber-500 text-white' : 'bg-neutral-700 text-neutral-400'}`} title="Выбрать провайдер" aria-label="Выбрать провайдер"><Check size={12} /></button>
+                  }} className={`p-1 rounded ${serverStatus?.preferredProvider === provider ? 'bg-amber-500 text-white' : 'bg-neutral-700 text-neutral-400'}`}><Check size={12} /></button>
                 </div>
                 <div className="flex gap-2">
                   <input type="password" placeholder="Ключ..." value={aiKeys[provider] || ''} onChange={e => updateAiKey(provider, e.target.value)} className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none" />
@@ -1702,7 +1725,7 @@ function AppContent() {
                     const cleanUrl = getCleanBaseUrl();
                     if (!cleanUrl) return;
                     try { await universalFetch(`${cleanUrl}/api/config/api-key`, { method: 'POST', body: JSON.stringify({ apiKey: key, provider }) }); setSubmitMsg({ type: 'success', text: 'Сохранено' }); } catch {}
-                  }} className="bg-amber-600 hover:bg-amber-500 text-white p-1.5 rounded-lg" title="Сохранить ключ" aria-label="Сохранить ключ"><Save size={14} /></button>
+                  }} className="bg-amber-600 hover:bg-amber-500 text-white p-1.5 rounded-lg"><Save size={14} /></button>
                   <button onClick={async () => {
                     const key = aiKeys[provider];
                     if (!key) return;
@@ -1717,7 +1740,7 @@ function AppContent() {
                     const cleanUrl = getCleanBaseUrl(tempBaseUrl || baseUrl);
                     if (!cleanUrl) return;
                     try { const res = await universalFetch(`${cleanUrl}/api/test-ai`, { method: 'POST', body: JSON.stringify({ apiKey: key, provider }) }); if (res.ok) setSubmitMsg({ type: 'success', text: 'Тест успешен!' }); else { const err = await res.json(); setLastError(err.error); } } catch (e: any) { setLastError(e.message); }
-                  }} className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg" title="Тестировать ключ" aria-label="Тестировать ключ"><Activity size={14} /></button>
+                  }} className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg"><Activity size={14} /></button>
                 </div>
               </div>
             ))}
@@ -1728,7 +1751,7 @@ function AppContent() {
         <CollapsibleSection title="Логи сервера" icon={Activity} isOpen={!isLogsCollapsed} onToggle={() => setIsLogsCollapsed(!isLogsCollapsed)}>
           <div className="space-y-3 pt-4">
             <div className="flex items-center justify-end gap-2">
-              <button onClick={() => setIsLogsFullscreen(true)} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg border border-neutral-700" title="На весь экран" aria-label="На весь экран"><Eye size={14} /></button>
+              <button onClick={() => setIsLogsFullscreen(true)} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg border border-neutral-700"><Eye size={14} /></button>
               <button onClick={() => setIsLogsPaused(!isLogsPaused)} className={`px-3 py-1 rounded-lg text-[10px] font-bold border ${isLogsPaused ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/50' : 'bg-neutral-800 text-neutral-400 border-neutral-700'}`}>{isLogsPaused ? 'ПАУЗА ВКЛ' : 'ПАУЗА'}</button>
               <button onClick={() => setLogs([])} className="text-[10px] text-neutral-500 hover:text-neutral-300">Очистить</button>
             </div>
@@ -1749,7 +1772,7 @@ function AppContent() {
           <div className="fixed inset-0 z-[100] bg-neutral-950 p-4 md:p-8 flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold flex items-center gap-3"><Activity className="text-blue-500" /> Логи сервера</h2>
-              <button onClick={() => setIsLogsFullscreen(false)} className="p-3 bg-neutral-900 hover:bg-neutral-800 rounded-full text-neutral-400" title="Закрыть" aria-label="Закрыть"><X size={24} /></button>
+              <button onClick={() => setIsLogsFullscreen(false)} className="p-3 bg-neutral-900 hover:bg-neutral-800 rounded-full text-neutral-400"><X size={24} /></button>
             </div>
             <div className="flex-1 bg-black rounded-2xl p-6 font-mono text-xs overflow-y-auto border border-neutral-800">
               {logs.map((log, i) => <div key={i} className={`py-1 border-b border-neutral-900/50 ${log.includes('❌') ? 'text-red-400' : log.includes('⚠️') ? 'text-amber-400' : log.includes('✅') ? 'text-emerald-400' : 'text-neutral-400'}`}>{log}</div>)}
@@ -1765,7 +1788,7 @@ function AppContent() {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
               <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
                 <div><h3 className="text-lg font-bold flex items-center gap-2"><FolderOpen className="text-blue-500" size={20} /> Обзор папок</h3><p className="text-[10px] text-neutral-500 truncate mt-1">{browserPath}</p></div>
-                <button onClick={() => setShowFolderBrowser(false)} className="p-2 hover:bg-neutral-800 rounded-full" title="Закрыть" aria-label="Закрыть"><X size={20} /></button>
+                <button onClick={() => setShowFolderBrowser(false)} className="p-2 hover:bg-neutral-800 rounded-full"><X size={20} /></button>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-1">
                 {browserParent && <button onClick={() => openFolderBrowser(browserParent)} className="w-full flex items-center gap-3 p-3 hover:bg-neutral-800 rounded-xl text-blue-400 text-sm font-bold"><RefreshCw size={16} className="rotate-180" /> .. (Назад)</button>}
@@ -1797,102 +1820,85 @@ function AppContent() {
       {/* ── Post Constructor ── */}
       <AnimatePresence>
         {isConstructorOpen && (
-          <Suspense
-            fallback={
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
-                <Loader2 className="animate-spin text-white" size={28} />
-              </div>
-            }
-          >
-            <PostConstructor
-              isOpen={isConstructorOpen}
-              onClose={() => setIsConstructorOpen(false)}
-              isConstructorOpen={isConstructorOpen}
-              setIsConstructorOpen={setIsConstructorOpen}
-              parsedContent={parsedContent}
-              setParsedContent={setParsedContent}
-              aiProcessedText={aiProcessedText}
-              setAiProcessedText={setAiProcessedText}
-              selectedImages={selectedImages}
-              setSelectedImages={setSelectedImages}
-              mainImage={mainImage}
-              setMainImage={setMainImage}
-              postButtons={postButtons}
-              setPostButtons={setPostButtons}
-              originalText={originalText}
-              setOriginalText={setOriginalText}
-              isProcessingAI={isProcessingAI}
-              processAI={processAI}
-              showTemplates={showTemplates}
-              setShowTemplates={setShowTemplates}
-              buttonTemplates={buttonTemplates}
-              handleDeleteTemplate={handleDeleteTemplate}
-              saveButtonTemplate={saveButtonTemplate}
-              templateName={templateName}
-              setTemplateName={setTemplateName}
-              imagePath={imagePath}
-              setImagePath={setImagePath}
-              openFolderBrowser={openFolderBrowser}
-              isBrowserLoading={isBrowserLoading}
-              saveImagePath={handleSaveImagePath}
-              handleFolderSelect={handleFolderSelect}
-              syncLocalImages={syncLocalImages}
-              isActionInProgress={isActionInProgress}
-              sensors={sensors}
-              handleDragEnd={handleDragEnd}
-              toggleImageSelection={toggleImageSelection}
-              scheduleDateTime={scheduleDateTime}
-              setScheduleDateTime={setScheduleDateTime}
-              saveDraft={saveDraft}
-              handlePublish={handlePublish}
-              submitMsg={submitMsg}
-              SortableImage={SortableImage}
-              processedTextRef={processedTextRef}
-            />
-          </Suspense>
+          <PostConstructor
+            isOpen={isConstructorOpen}
+            onClose={() => setIsConstructorOpen(false)}
+            isConstructorOpen={isConstructorOpen}
+            setIsConstructorOpen={setIsConstructorOpen}
+            parsedContent={parsedContent}
+            setParsedContent={setParsedContent}
+            aiProcessedText={aiProcessedText}
+            setAiProcessedText={setAiProcessedText}
+            selectedImages={selectedImages}
+            setSelectedImages={setSelectedImages}
+            mainImage={mainImage}
+            setMainImage={setMainImage}
+            postButtons={postButtons}
+            setPostButtons={setPostButtons}
+            originalText={originalText}
+            setOriginalText={setOriginalText}
+            isProcessingAI={isProcessingAI}
+            processAI={processAI}
+            showTemplates={showTemplates}
+            setShowTemplates={setShowTemplates}
+            buttonTemplates={buttonTemplates}
+            handleDeleteTemplate={handleDeleteTemplate}
+            saveButtonTemplate={saveButtonTemplate}
+            templateName={templateName}
+            setTemplateName={setTemplateName}
+            imagePath={imagePath}
+            setImagePath={setImagePath}
+            openFolderBrowser={openFolderBrowser}
+            isBrowserLoading={isBrowserLoading}
+            saveImagePath={handleSaveImagePath}
+            handleFolderSelect={handleFolderSelect}
+            syncLocalImages={syncLocalImages}
+            isActionInProgress={isActionInProgress}
+            sensors={sensors}
+            handleDragEnd={handleDragEnd}
+            toggleImageSelection={toggleImageSelection}
+            scheduleDateTime={scheduleDateTime}
+            setScheduleDateTime={setScheduleDateTime}
+            saveDraft={saveDraft}
+            handlePublish={handlePublish}
+            submitMsg={submitMsg}
+            SortableImage={SortableImage}
+            processedTextRef={processedTextRef}
+            onEnlarge={(url) => setFullScreenImage(url)}
+          />
         )}
       </AnimatePresence>
 
       {/* ── Settings Modal ── */}
-      {showSettings && (
-        <Suspense
-          fallback={
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-              <Loader2 className="animate-spin text-white" size={24} />
-            </div>
-          }
-        >
-          <SettingsModal 
-            isOpen={showSettings} 
-            onClose={() => setShowSettings(false)}
-            isStandalone={isStandalone}
-            setIsStandalone={setIsStandalone}
-            tempBaseUrl={tempBaseUrl}
-            setTempBaseUrl={setTempBaseUrl}
-            setBaseUrl={setBaseUrl}
-            botToken={botToken}
-            updateSetting={updateSetting}
-            serverStatus={serverStatus}
-            getCleanBaseUrl={getCleanBaseUrl}
-            universalFetch={universalFetch}
-            submitMsg={submitMsg}
-            isSubmitting={isSubmitting}
-            isTestingConnection={isTestingConnection}
-            testConnection={testConnection}
-            isTestingNet={isTestingNet}
-            testNetwork={testNetwork}
-            netTestResult={netTestResult}
-            handleSaveSettings={handleSaveSettings}
-          />
-        </Suspense>
-      )}
+      <SettingsModal 
+        isOpen={showSettings} 
+        onClose={() => setShowSettings(false)}
+        isStandalone={isStandalone}
+        setIsStandalone={setIsStandalone}
+        tempBaseUrl={tempBaseUrl}
+        setTempBaseUrl={setTempBaseUrl}
+        setBaseUrl={setBaseUrl}
+        botToken={botToken}
+        updateSetting={updateSetting}
+        serverStatus={serverStatus}
+        getCleanBaseUrl={getCleanBaseUrl}
+        universalFetch={universalFetch}
+        submitMsg={submitMsg}
+        isSubmitting={isSubmitting}
+        isTestingConnection={isTestingConnection}
+        testConnection={testConnection}
+        isTestingNet={isTestingNet}
+        testNetwork={testNetwork}
+        netTestResult={netTestResult}
+        handleSaveSettings={handleSaveSettings}
+      />
 
       {/* ── Full Screen Image ── */}
       <AnimatePresence>
         {fullScreenImage && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setFullScreenImage(null)} className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-4 cursor-zoom-out">
             <img src={fullScreenImage} alt="Preview" className="max-w-full max-h-full object-contain rounded-lg" referrerPolicy="no-referrer" />
-            <button className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white" title="Закрыть" aria-label="Закрыть"><X size={32} /></button>
+            <button className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white"><X size={32} /></button>
           </motion.div>
         )}
       </AnimatePresence>

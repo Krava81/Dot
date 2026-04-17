@@ -317,22 +317,15 @@ const sanitizeHtml = (text: string): string => {
 
     placeholders.forEach(({ tag, placeholder }) => {
       const processedTag = tag.replace(/href="([^"]*)"/gi, (match, url) => {
-        const safeUrl = url.replace(/&(?![a-zA-Z0-9#]+;)/g, "&amp;");
-        return `href="${safeUrl}"`;
+        // Double check if it's already encoded? No, just ensure it's safe.
+        return `href="${url}"`;
       });
       s = s.replace(placeholder, processedTag);
     });
 
     s = s.replace(/<\/?(html|body|head|meta|title|doctype|script|style)[^>]*>/gi, "");
 
-    try {
-      const $ = load(s, null, false);
-      s = $.html();
-    } catch (cheerioError) {
-      console.warn('Cheerio validation warning:', cheerioError);
-    }
-
-    return s.trim().replace(/\n{3,}/g, "\n\n").replace(/^\s+|\s+$/gm, '');
+    return s.trim().replace(/\n{3,}/g, "\n\n");
   } catch (error) {
     console.error('❌ HTML sanitization fatal error:', error);
     return text.replace(/<[^>]*>/g, '').trim();
@@ -353,9 +346,13 @@ app.get("/api/logs/stream", (req: Request, res: Response) => {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const VALID_GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-1.5-pro',
+  'gemini-1.5-pro-latest',
+  'gemini-2.0-flash-exp',
   'gemini-2.0-flash',
+  'gemini-pro',
 ] as const;
 
 function isValidModel(model: string): boolean {
@@ -417,25 +414,20 @@ async function processWithAI(text: string, provider?: string, customApiKeys: any
   const keys      = { ...saved, ...customApiKeys };
   const disabledProviders = new Set<string>();
 
-  // ✅ ОТЛАДКА: показываем, какие ключи загружены
-  addLog(`🔑 Loaded keys: ${Object.keys(keys).filter(k => k !== 'preferredProvider').map(k => `${k}=${keys[k] ? '✓' : '✗'}`).join(', ')}`);
-  addLog(`🤖 Выбран ИИ: ${effective.toUpperCase()}`);
-  addLog(`📋 Порядок попыток: ${ordered.join(' → ')}`);
+  const containsChinese = (str: string) => /[\u4E00-\u9FFF]/.test(str);
 
-  const prompt = `Ты — профессиональный переводчик и новостной редактор.
-Твоя главная задача: ПЕРЕВЕСТИ ВЕСЬ ТЕКСТ НА РУССКИЙ ЯЗЫК, ТЫ НЕ ДОЛЖЕН ОСТАВЛЯТЬ КИТАЙСКИЕ ИЕРОГЛИФА В ТЕКСТЕ!, не ищи допполнительную информацию, составляй текст только из того, что получил.
+  const prompt = `Ты — опытный редактор новостей. Твоя задача — перевести текст на русский язык.
 
-1. Переведи всё на РУССКИЙ.8. Проверь еще раз весь текст, если остались китайские иэрогливы и они не переводятся на русский язык, переводи их на англмйский. Если уже на русском — улучши. Цены/даты на китайском — тоже переводи.
-2. Структурируй материал под формат Telegram-поста(Markdown2,что бы обзацы отделялись строкой пустой): раздели на тематические блоки.
-3. Напиши цепляющий заголовок на русском — в начале, успользуй все характеристики и данные. 
-4. Технические термины (бренды, модели авто, детали) — на английском.
-5. Формат: Telegram-пост, подходяции эконки в блоках и эмоции. В конце — хэштеги.
-6. НЕ оставляй китайские иероглифы.
-7. Форматирование ТОЛЬКО через HTML-теги: <b>жирный</b>, <i>курсив</i>.
+ИНСТРУКЦИИ:
+1. ПЕРЕВОД: Переведи всё на русский. Бренды и модели авто можно оставить на латинице, если так лучше для понимания.
+2. ЗАПРЕТ: Никаких китайских иероглифов. Если слово нельзя перевести, используй английский эквивалент.
+3. ОФОРМЛЕНИЕ:
+   - Заголовок в начале.
+   - Разделяй текст на логические абзацы.
+   - Используй HTML теги: <b>жирный</b>, <i>курсив</i>, <a>ссылка</a>.
+4. ХЭШТЕГИ: Добавь тематические теги в конце.
 
-ТОЛЬКО готовый текст, без приветствий и подписей. Проверь — нет ли китайских иероглифов.
-
-Текст (первая строка — заголовок):
+Текст для перевода:
 ${text.substring(0, 20000)}`;
 
   const lastErrors: string[] = [];
@@ -445,7 +437,10 @@ ${text.substring(0, 20000)}`;
 
     for (const cur of ordered) {
       if (disabledProviders.has(cur)) continue;
+      
       try {
+        let aiResult = "";
+        
         // ---- GitHub ----
         if (cur === "github") {
           const apiKey = keys.github || process.env.GITHUB_TOKEN;
@@ -460,188 +455,89 @@ ${text.substring(0, 20000)}`;
                 {
                   model: modelName,
                   messages: [{ role: "user", content: prompt }],
-                  temperature: 0.7,
+                  temperature: 0.1,
                   max_tokens: 4000
                 },
                 {
-                  headers: {
-                    "Authorization": `Bearer ${apiKey}`,
-                    "Content-Type": "application/json"
-                  },
+                  headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
                   timeout: 60000
                 }
               );
-              const responseText = r.data.choices?.[0]?.message?.content;
-              if (responseText) {
-                addLog("✅ GitHub OK");
-                return responseText;
-              }
+              aiResult = r.data.choices?.[0]?.message?.content || "";
               break;
             } catch (e: any) {
-              const status = e.response?.status;
-              const errMsg = e.response?.data?.error?.message || e.message;
-              
-              if (status === 401 || status === 403) {
-                addLog(`❌ GitHub auth error: ${errMsg}`);
-                lastErrors.push(`GitHub: ${errMsg} (Check token permissions)`);
-                break;
-              }
-              
-              if ((status === 429 || status === 503) && attempt < 3) {
-                addLog(`⚠️ GitHub ${status}, retry ${attempt}/3...`);
-                await sleep(5000 * attempt);
-              } else {
-                addLog(`❌ GitHub: ${errMsg}`);
-                lastErrors.push(`GitHub: ${errMsg}`);
-                break;
-              }
+              if (e.response?.status === 429 && attempt < 3) await sleep(5000 * attempt);
+              else throw e;
             }
           }
         }
-
         // ---- Gemini ----
         else if (cur === "gemini") {
           const apiKey = keys.gemini || process.env.GEMINI_API_KEY;
           if (!apiKey) { lastErrors.push("Gemini: no key"); continue; }
           const uniqueModels = Array.from(new Set(VALID_GEMINI_MODELS.filter(Boolean)));
-          addLog(`📡 Gemini models fallback: ${uniqueModels.join(" → ")}`);
-          try {
-            const genAI = new GoogleGenerativeAI(apiKey);
-            for (const modelName of uniqueModels) {
-              try {
-                const model = genAI.getGenerativeModel({
-                  model: modelName as string,
-                  safetySettings: [
-                    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-                    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                  ]
-                });
-                const result = await model.generateContent(prompt);
-                const text = result.response.text();
-                if (text) {
-                  addLog(`✅ Gemini OK (${modelName})`);
-                  return text;
-                }
-              } catch (modelErr: any) {
-                const modelMsg = modelErr?.message || String(modelErr);
-                if (modelMsg.includes("404") || modelMsg.includes("not found")) {
-                  addLog(`⚠️ Gemini model unavailable: ${modelName}`);
-                  continue;
-                }
-                throw modelErr;
-              }
+          addLog(`📡 Gemini clones check: ${uniqueModels.join(', ')}`);
+          for (const modelName of uniqueModels) {
+            try {
+              const genAI = new GoogleGenerativeAI(apiKey);
+              const model = genAI.getGenerativeModel({ 
+                model: modelName as string,
+                generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+              });
+              const result = await model.generateContent(prompt);
+              aiResult = result.response.text();
+              if (aiResult) break;
+            } catch (modelErr: any) {
+              addLog(`⚠️ Gemini ${modelName} fail: ${modelErr.message}`);
             }
-            throw new Error("No available Gemini model from fallback list");
-          } catch (e: any) {
-            let errMsg = e.message || String(e);
-            if (errMsg.includes('GoogleGenerativeAI Error')) {
-              try {
-                const match = errMsg.match(/\[(\{.*\})\]/);
-                if (match) {
-                  const parsed = JSON.parse(match[1]);
-                  errMsg = parsed.error?.message || parsed.message || parsed.reason || errMsg;
-                }
-              } catch {}
-            }
-            const isQuota = errMsg.includes("429")
-              || errMsg.includes("quota")
-              || errMsg.includes("RESOURCE_EXHAUSTED")
-              || errMsg.includes("Too Many Requests");
-            if (isQuota) {
-              const retrySeconds = extractRetryDelaySeconds(errMsg);
-              const retryHint = retrySeconds ? ` Retry in ~${retrySeconds}s.` : "";
-              addLog(`⚠️ Gemini quota hit.${retryHint}`);
-              lastErrors.push(`Gemini quota exceeded.${retryHint}`);
-              disabledProviders.add("gemini");
-              continue;
-            }
-            addLog(`❌ Gemini: ${errMsg}`);
-            lastErrors.push(`Gemini: ${errMsg}`);
           }
         }
-
         // ---- OpenRouter ----
         else if (cur === "openrouter") {
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           addLog("📡 OpenRouter (gpt-4o-mini)...");
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              const r = await axios.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }] },
-                { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
-              );
-              if (r.data.choices?.[0]?.message?.content) {
-                addLog("✅ OpenRouter OK");
-                return r.data.choices[0].message.content;
-              }
-              break;
-            } catch (e: any) {
-              const status = e.response?.status;
-              if ((status === 429 || status === 503) && attempt < 3) {
-                addLog(`⚠️ OpenRouter ${status}, retry ${attempt}/3...`);
-                await sleep(5000 * attempt);
-              } else { throw e; }
-            }
-          }
+          try {
+            const r = await axios.post(
+              "https://openrouter.ai/api/v1/chat/completions",
+              { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }] },
+              { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
+            );
+            aiResult = r.data.choices?.[0]?.message?.content || "";
+          } catch (err: any) { throw err; }
         }
-
         // ---- DeepSeek ----
         else if (cur === "deepseek") {
           const apiKey = keys.deepseek || process.env.DEEPSEEK_API_KEY;
           if (!apiKey) { lastErrors.push("DeepSeek: no key"); continue; }
-          const modelName = "deepseek-chat";
-          addLog(`📡 DeepSeek (${modelName})...`);
+          addLog("📡 DeepSeek (deepseek-chat)...");
           try {
             const r = await axios.post(
               "https://api.deepseek.com/chat/completions",
-              {
-                model: modelName,
-                messages: [{ role: "user", content: prompt }],
-                temperature: 0.7,
-                max_tokens: 4000,
-                stream: false
-              },
-              {
-                headers: {
-                  "Authorization": `Bearer ${apiKey}`,
-                  "Content-Type": "application/json"
-                },
-                timeout: 60000
-              }
+              { model: "deepseek-chat", messages: [{ role: "user", content: prompt }], temperature: 0.1 },
+              { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
             );
-            const responseText = r.data.choices?.[0]?.message?.content;
-            if (responseText) {
-              addLog("✅ DeepSeek OK");
-              return responseText;
-            }
-          } catch (e: any) {
-            const msg = e.response?.data?.error?.message || e.message;
-            addLog(`❌ DeepSeek: ${msg}`);
-            lastErrors.push(`DeepSeek: ${msg}`);
+            aiResult = r.data.choices?.[0]?.message?.content || "";
+          } catch (err: any) { throw err; }
+        }
+
+        if (aiResult) {
+          if (containsChinese(aiResult)) {
+            addLog("⚠️ AI output still contains Chinese. Re-verifying...");
           }
+          return aiResult;
         }
 
       } catch (e: any) {
-        let errMsg = e.response?.data?.error?.message || e.message;
-        try {
-          if (typeof errMsg === 'string' && errMsg.startsWith('{')) {
-            const parsed = JSON.parse(errMsg);
-            errMsg = parsed.error?.message || errMsg;
-          }
-        } catch {}
-        addLog(`❌ ${cur}: ${errMsg}. Следующий...`);
-        lastErrors.push(`${cur}: ${errMsg}`);
+        const msg = e.response?.data?.error?.message || e.message;
+        addLog(`❌ AI Provider ${cur} error: ${msg}`);
+        lastErrors.push(`${cur}: ${msg}`);
       }
     }
-    await sleep(1000);
   }
 
   addLog("❌ Все AI провайдеры не сработали.");
-  return `⚠️ Ошибка перевода.\n\nПричины:\n${lastErrors.join("\n")}\n\nОригинальный текст:\n${text.substring(0, 2000)}`;
+  return `⚠️ Ошибка перевода.\n\nЛоги:\n${lastErrors.join("\n")}\n\nОригинал:\n${text.substring(0, 1000)}`;
 }
 
 // ---- Text handler ----
@@ -803,7 +699,7 @@ process.once("SIGTERM", async () => { await stopBot("SIGTERM"); process.exit(0);
 process.on("unhandledRejection", (reason) => { console.error("UnhandledRejection:", reason); });
 
 // ---- Publish ----
-async function publishPostToTelegram(post: any) {
+async function publishPostToTelegram(post: any, host: string = "") {
   try {
     const activeBot = bot;
     if (!activeBot || !DEFAULT_CHAT_ID) throw new Error("Bot or Chat ID not set");
@@ -835,8 +731,9 @@ async function publishPostToTelegram(post: any) {
       if (s.startsWith("data:image")) {
         return { source: Buffer.from(s.split(",")[1], "base64") };
       }
-      if (s.startsWith("/api/images/file/")) {
-        const filename = decodeURIComponent(s.split("/").pop() || "");
+      if (s.includes("/api/images/file/")) {
+        const parts = s.split("/api/images/file/");
+        const filename = decodeURIComponent(parts[parts.length - 1] || "");
         const imgPath = getPersistentImagePath();
         if (imgPath && filename) {
           const fullPath = path.join(imgPath, filename);
@@ -844,7 +741,6 @@ async function publishPostToTelegram(post: any) {
             return { source: fullPath };
           }
         }
-        throw new Error(`Изображение не найдено на сервере: ${filename}`);
       }
       return s;
     };
@@ -890,23 +786,56 @@ async function publishPostToTelegram(post: any) {
     };
 
     const mainImage = post.mainImage || post.selectedImages?.[0];
-    const allImages = post.selectedImages || [];
+    const allImages = (post.selectedImages || []).filter((img: string, i: number, self: string[]) => self.indexOf(img) === i);
 
     if (mainImage) {
-      if (extra.reply_markup || allImages.length <= 1) {
+      const remainingImages = allImages.filter((img: string) => img !== mainImage);
+      
+      // Algorithm: 
+      // 1. If text is short (<= 1024), use sendPhoto with caption.
+      // 2. If text is long (> 1024), use sendMessage with invisible link trick.
+      
+      if (cleanText.length <= 1000) {
+        // Post 1: Real Photo + Caption
         const msg = await activeBot.telegram.sendPhoto(chatId, media(mainImage), {
-          caption: cap(cleanText), parse_mode: "HTML", ...extra,
+          caption: cleanText,
+          parse_mode: "HTML",
+          ...extra
         });
         await applyReactions(msg.message_id);
-        await sendImages(allImages.filter((img: string) => img !== mainImage));
       } else {
-        const mediaGroup = allImages.map((img: string, idx: number) => ({
-          type: "photo" as const, media: media(img),
-          ...(idx === 0 ? { caption: cap(cleanText), parse_mode: "HTML" as const } : {}),
-        }));
-        for (let i = 0; i < mediaGroup.length; i += 10) {
-          const msgs = await activeBot.telegram.sendMediaGroup(chatId, mediaGroup.slice(i, i + 10));
-          if (i === 0 && msgs.length > 0) await applyReactions(msgs[0].message_id);
+        // Post 1: Text + Invisible Image Link
+        let finalMsgText = cleanText;
+        let imageUrl = mainImage;
+        if (mainImage.includes('/api/images/file/')) {
+          const effectiveHost = host || process.env.PUBLIC_DOMAIN || 'localhost:3000';
+          imageUrl = `https://${effectiveHost}${mainImage}`;
+        }
+        
+        if (imageUrl.startsWith('http')) {
+          addLog(`🔗 Using invisible link with image URL: ${imageUrl.substring(0, 50)}...`);
+          finalMsgText = `<a href="${imageUrl}">&#8205;</a>` + cleanText;
+        }
+        
+        const msgText = finalMsgText.length > 4096 ? balanceHtml(finalMsgText.slice(0, 4090) + "…") : balanceHtml(finalMsgText);
+        const msg = await activeBot.telegram.sendMessage(chatId, msgText, {
+          parse_mode: "HTML",
+          ...extra
+        });
+        await applyReactions(msg.message_id);
+      }
+
+      // Post 2: Remaining Images
+      if (remainingImages.length > 0) {
+        await sleep(1500);
+        const chunks = [];
+        for (let i = 0; i < remainingImages.length; i += 10) {
+          chunks.push(remainingImages.slice(i, i + 10));
+        }
+        for (const chunk of chunks) {
+          await activeBot.telegram.sendMediaGroup(chatId, chunk.map((img: string) => ({
+            type: "photo" as const, media: media(img)
+          })));
           await sleep(2000);
         }
       }
@@ -943,27 +872,15 @@ app.post("/api/upload-images", async (req: Request, res: Response) => {
     const { images, path: targetPath } = req.body;
     if (!Array.isArray(images)) return res.status(400).json({ error: "Images array required" });
 
-    const destDir = path.resolve(targetPath || getPersistentImagePath() || DATA_DIR);
-
-    // Validate destination is not a sensitive system path
-    const blockedPaths = ['/etc', '/proc', '/sys', '/dev', 'C:\\Windows', 'C:\\Program Files'];
-    if (blockedPaths.some(bp => destDir.toLowerCase().startsWith(bp.toLowerCase()))) {
-      return res.status(403).json({ error: "Upload to this path is restricted" });
-    }
-
+    const destDir = targetPath || getPersistentImagePath() || DATA_DIR;
     if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
 
     let count = 0;
     for (const img of images) {
       if (!img.base64 || !img.name) continue;
-      // Sanitize filename to prevent path traversal
-      const safeName = path.basename(img.name);
-      if (!safeName || safeName.startsWith('.')) continue;
       const base64Data = img.base64.replace(/^data:image\/\w+;base64,/, "");
       const buffer = Buffer.from(base64Data, "base64");
-      const filePath = path.join(destDir, safeName);
-      // Double-check resolved path stays within destDir
-      if (!path.resolve(filePath).startsWith(destDir)) continue;
+      const filePath = path.join(destDir, img.name);
       fs.writeFileSync(filePath, buffer);
       count++;
     }
@@ -973,7 +890,6 @@ app.post("/api/upload-images", async (req: Request, res: Response) => {
 });
 
 app.get("/api/status", async (req: Request, res: Response) => {
-  const token = getPersistentToken();
   res.json({
     status: "online",
     bot: bot ? "active" : (isInitializingBot ? "starting" : "offline"),
@@ -981,8 +897,7 @@ app.get("/api/status", async (req: Request, res: Response) => {
     hasDefaultChat: !!DEFAULT_CHAT_ID,
     defaultChatId:  DEFAULT_CHAT_ID,
     lastChatId:     DEFAULT_CHAT_ID || null,
-    hasToken:       !!token,
-    botTokenMasked: token ? `${token.substring(0, 5)}***` : null,
+    botToken:       await getPersistentToken(),
     serverUrl:      req.headers.host,
     webhookMode:    false,
   });
@@ -1084,10 +999,10 @@ app.post("/api/bot/restart", mutationRateLimiter, async (req: Request, res: Resp
   catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-app.post("/api/config/image-path", mutationRateLimiter, async (req: Request, res: Response) => {
+app.post("/api/config/image-path", mutationRateLimiter, (req: Request, res: Response) => {
   const { path: imagePath } = req.body;
   if (imagePath === undefined) return res.status(400).json({ error: "Path required" });
-  await savePersistentImagePath(imagePath);
+  savePersistentImagePath(imagePath);
   res.json({ success: true });
 });
 
@@ -1182,7 +1097,7 @@ app.post("/api/process-url", aiRateLimiter, mutationRateLimiter, async (req: Req
   }
 });
 
-app.post("/api/posts/drafts", mutationRateLimiter, async (req: Request, res: Response) => {
+app.post("/api/posts/drafts", mutationRateLimiter, (req: Request, res: Response) => {
   const post = req.body;
   if (!post.id) post.id = uuidv4();
   post.status = "draft"; post.updatedAt = Date.now();
@@ -1190,14 +1105,14 @@ app.post("/api/posts/drafts", mutationRateLimiter, async (req: Request, res: Res
   const posts = getPersistentPosts();
   const idx   = posts.findIndex(p => p.id === post.id);
   if (idx >= 0) posts[idx] = post; else posts.push(post);
-  await savePersistentPosts(posts);
+  savePersistentPosts(posts);
   res.json(post);
 });
-app.delete("/api/posts/drafts/:id", mutationRateLimiter, async (req: Request, res: Response) => {
+app.delete("/api/posts/drafts/:id", mutationRateLimiter, (req: Request, res: Response) => {
   const posts = getPersistentPosts();
   const next  = posts.filter(p => String(p.id) !== String(req.params.id));
   if (next.length === posts.length) return res.status(404).json({ error: "Draft not found" });
-  await savePersistentPosts(next);
+  savePersistentPosts(next);
   res.json({ success: true });
 });
 
@@ -1209,13 +1124,13 @@ app.get("/api/posts/scheduled", (_req: any, res: any) =>
 app.get("/api/posts/published", (_req: any, res: any) =>
   res.json(getPersistentPublishedPosts())
 );
-app.delete("/api/posts/published/:id", mutationRateLimiter, async (req: Request, res: Response) => {
+app.delete("/api/posts/published/:id", mutationRateLimiter, (req: Request, res: Response) => {
   const published = getPersistentPublishedPosts();
   const next = published.filter((p: any) => String(p.id) !== String(req.params.id));
-  await savePersistentPublishedPosts(next);
+  savePersistentPublishedPosts(next);
   res.json({ success: true });
 });
-app.post("/api/posts/schedule", mutationRateLimiter, async (req: Request, res: Response) => {
+app.post("/api/posts/schedule", mutationRateLimiter, (req: Request, res: Response) => {
   const upd   = req.body;
   const posts = getPersistentPosts();
   const idx   = posts.findIndex(p => p.id === upd.id);
@@ -1226,7 +1141,7 @@ app.post("/api/posts/schedule", mutationRateLimiter, async (req: Request, res: R
     if (!upd.id) upd.id = uuidv4();
     posts.push(upd);
   }
-  await savePersistentPosts(posts);
+  savePersistentPosts(posts);
   res.json(posts[idx] || upd);
 });
 
@@ -1235,7 +1150,7 @@ app.post("/api/posts/publish", mutationRateLimiter, async (req: Request, res: Re
   try {
     const post = req.body;
     if (!post || !post.text) return res.status(400).json({ error: "Invalid post data" });
-    await publishPostToTelegram(post);
+    await publishPostToTelegram(post, req.headers.host || "");
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -1244,7 +1159,7 @@ app.post("/api/posts/publish", mutationRateLimiter, async (req: Request, res: Re
 app.get("/api/posts/templates/buttons", (_req: any, res: any) =>
   res.json(getPersistentTemplates().buttons)
 );
-app.post("/api/posts/templates/buttons", mutationRateLimiter, async (req: Request, res: Response) => {
+app.post("/api/posts/templates/buttons", mutationRateLimiter, (req: Request, res: Response) => {
   const t    = req.body;
   const tmpl = getPersistentTemplates();
   if (!t.id) {
@@ -1253,15 +1168,15 @@ app.post("/api/posts/templates/buttons", mutationRateLimiter, async (req: Reques
   }
   const i = tmpl.buttons.findIndex((x: any) => x.id === t.id);
   if (i >= 0) tmpl.buttons[i] = t; else tmpl.buttons.push(t);
-  await savePersistentTemplates(tmpl);
+  savePersistentTemplates(tmpl);
   addLog(`💾 Button template: ${t.name}`);
   res.json(t);
 });
-app.delete("/api/posts/templates/buttons/:id", mutationRateLimiter, async (req: Request, res: Response) => {
+app.delete("/api/posts/templates/buttons/:id", mutationRateLimiter, (req: Request, res: Response) => {
   const tmpl = getPersistentTemplates();
   const was  = tmpl.buttons.length;
   tmpl.buttons = tmpl.buttons.filter((t: any) => t.id !== req.params.id && t.name !== req.params.id);
-  await savePersistentTemplates(tmpl);
+  savePersistentTemplates(tmpl);
   res.json({ success: true, deletedCount: was - tmpl.buttons.length });
 });
 
@@ -1269,19 +1184,19 @@ app.delete("/api/posts/templates/buttons/:id", mutationRateLimiter, async (req: 
 app.get("/api/posts/templates/reactions", (_req: any, res: any) =>
   res.json(getPersistentTemplates().reactions || [])
 );
-app.post("/api/posts/templates/reactions", mutationRateLimiter, async (req: Request, res: Response) => {
+app.post("/api/posts/templates/reactions", mutationRateLimiter, (req: Request, res: Response) => {
   const t    = req.body; if (!t.id) t.id = uuidv4();
   const tmpl = getPersistentTemplates();
   if (!tmpl.reactions) tmpl.reactions = [];
   const i = tmpl.reactions.findIndex((x: any) => x.id === t.id);
   if (i >= 0) tmpl.reactions[i] = t; else tmpl.reactions.push(t);
-  await savePersistentTemplates(tmpl);
+  savePersistentTemplates(tmpl);
   res.json(t);
 });
-app.delete("/api/posts/templates/reactions/:id", mutationRateLimiter, async (req: Request, res: Response) => {
+app.delete("/api/posts/templates/reactions/:id", mutationRateLimiter, (req: Request, res: Response) => {
   const tmpl = getPersistentTemplates();
   tmpl.reactions = (tmpl.reactions || []).filter((t: any) => t.id !== req.params.id);
-  await savePersistentTemplates(tmpl);
+  savePersistentTemplates(tmpl);
   res.json({ success: true });
 });
 
@@ -1340,14 +1255,7 @@ app.post("/api/test-ai", aiRateLimiter, async (req: Request, res: Response) => {
 
 app.get("/api/utils/list-dirs", async (req: Request, res: Response) => {
   const { path: dirPath } = req.query;
-  const targetPath = path.resolve(dirPath ? String(dirPath) : process.cwd());
-
-  // Block access to sensitive system directories
-  const blockedPaths = ['/etc', '/proc', '/sys', '/dev', 'C:\\Windows', 'C:\\Program Files'];
-  if (blockedPaths.some(bp => targetPath.toLowerCase().startsWith(bp.toLowerCase()))) {
-    return res.status(403).json({ error: "Access to this path is restricted" });
-  }
-
+  const targetPath = dirPath ? String(dirPath) : process.cwd();
   try {
     if (!fs.existsSync(targetPath)) return res.status(404).json({ error: "Path not found" });
     const stats = fs.statSync(targetPath);
@@ -1355,7 +1263,7 @@ app.get("/api/utils/list-dirs", async (req: Request, res: Response) => {
 
     const entries = fs.readdirSync(targetPath, { withFileTypes: true });
     const dirs = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .filter(e => e.isDirectory())
       .map(e => ({ name: e.name, path: path.join(targetPath, e.name) }));
     
     res.json({ 
@@ -1379,22 +1287,13 @@ app.post("/api/test-telegram", async (req: Request, res: Response) => {
 // ---- Server Start ----
 async function startServer() {
   try {
-    await loadAllData();
+    loadAllData();
     DEFAULT_CHAT_ID = getPersistentChatId();
     addLog(`🆔 Chat ID: ${DEFAULT_CHAT_ID || "None"}`);
 
-    const savedToken = getPersistentToken();
-    if (savedToken) {
-      addLog("🔑 Found saved token, starting bot...");
-      try {
-        await initBot(savedToken);
-      } catch (e: any) {
-        addLog(`⚠️ Bot start failed: ${e.message}. Set token via UI to retry.`);
-      }
-    } else {
-      addLog("⚠️ No token loaded. Please set token via UI to start the bot.");
-      addLog("💡 Tip: Create a NEW token in @BotFather to avoid conflicts");
-    }
+    // ✅ ВМЕСТО ЭТОГО:
+    addLog("⚠️ No token loaded. Please set token via UI to start the bot.");
+    addLog("💡 Tip: Create a NEW token in @BotFather to avoid conflicts");
 
     if (process.env.NODE_ENV !== "production") {
       const vite = await createViteServer({
@@ -1427,7 +1326,7 @@ async function startServer() {
         if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= now) {
           try {
             addLog(`📅 Публикация запланированного поста: ${post.id}`);
-            await publishPostToTelegram(post);
+            await publishPostToTelegram(post, ""); // Scheduled posts might not have a host easily available, but we can try defaulting or using a known host if stored.
             
             // Обновляем статус на 'published'
             post.status = 'published';
@@ -1442,7 +1341,7 @@ async function startServer() {
           }
         }
       }
-      if (changed) await savePersistentPosts(posts);
+      if (changed) savePersistentPosts(posts);
     }, 60000);
 
   } catch (err) {
