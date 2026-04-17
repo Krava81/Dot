@@ -9,9 +9,11 @@
     "build-server": "tsc --project tsconfig.server.json",
     "build-client": "vite build",
     "build": "npm run build-server && npm run build-client",
+    "build:safe": "powershell -ExecutionPolicy Bypass -File ./scripts/build-safe.ps1",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "ci": "npm run lint && npm run build-server && npm run build-client",
     "update-android": "npm run build && npx cap sync android",
     "generate-icons": "npx @capacitor/assets generate --android",
     "sync-from-cloud": "git add . && (git diff --cached --quiet || git commit -m \"Auto-save from cloud\") && git pull --rebase origin main && npm install --legacy-peer-deps && npm run update-android"

@@ -4,7 +4,7 @@
  */
 
 import { marked } from 'marked';
-import React, { useState, useEffect, useCallback, Component, useRef } from 'react';
+import React, { useState, useEffect, useCallback, Component, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, Sparkles, ChevronDown, Image, Calendar, Clock, Plus, Eye, EyeOff, Copy, FolderOpen, Check, Loader2, Folder, GripVertical, Smartphone, Play, Globe, Layout, Palette, Type, Wand2, ClipboardPaste } from 'lucide-react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
@@ -23,8 +23,6 @@ import { useScheduledPosts } from './hooks/useScheduledPosts';
 import { usePublishedPosts } from './hooks/usePublishedPosts';
 import { useAiKeys } from './hooks/useAiKeys';
 import { useBotSettings } from './hooks/useBotSettings';
-import { SettingsModal } from './components/SettingsModal';
-import { PostConstructor } from './components/PostConstructor';
 import { PostButton, ParsedContent, DraftPost, ButtonTemplate, ServerConfigStatus } from './types';
 import {
   DndContext,
@@ -43,6 +41,13 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal }))
+);
+const PostConstructor = lazy(() =>
+  import('./components/PostConstructor').then((module) => ({ default: module.PostConstructor }))
+);
 
 // ─── SafeLocalStorage ───────────────────────────────────────────────────────
 const safeLocalStorage = {
@@ -1792,77 +1797,95 @@ function AppContent() {
       {/* ── Post Constructor ── */}
       <AnimatePresence>
         {isConstructorOpen && (
-          <PostConstructor
-            isOpen={isConstructorOpen}
-            onClose={() => setIsConstructorOpen(false)}
-            isConstructorOpen={isConstructorOpen}
-            setIsConstructorOpen={setIsConstructorOpen}
-            parsedContent={parsedContent}
-            setParsedContent={setParsedContent}
-            aiProcessedText={aiProcessedText}
-            setAiProcessedText={setAiProcessedText}
-            selectedImages={selectedImages}
-            setSelectedImages={setSelectedImages}
-            mainImage={mainImage}
-            setMainImage={setMainImage}
-            postButtons={postButtons}
-            setPostButtons={setPostButtons}
-            originalText={originalText}
-            setOriginalText={setOriginalText}
-            isProcessingAI={isProcessingAI}
-            processAI={processAI}
-            showTemplates={showTemplates}
-            setShowTemplates={setShowTemplates}
-            buttonTemplates={buttonTemplates}
-            handleDeleteTemplate={handleDeleteTemplate}
-            saveButtonTemplate={saveButtonTemplate}
-            templateName={templateName}
-            setTemplateName={setTemplateName}
-            imagePath={imagePath}
-            setImagePath={setImagePath}
-            openFolderBrowser={openFolderBrowser}
-            isBrowserLoading={isBrowserLoading}
-            saveImagePath={handleSaveImagePath}
-            handleFolderSelect={handleFolderSelect}
-            syncLocalImages={syncLocalImages}
-            isActionInProgress={isActionInProgress}
-            sensors={sensors}
-            handleDragEnd={handleDragEnd}
-            toggleImageSelection={toggleImageSelection}
-            scheduleDateTime={scheduleDateTime}
-            setScheduleDateTime={setScheduleDateTime}
-            saveDraft={saveDraft}
-            handlePublish={handlePublish}
-            submitMsg={submitMsg}
-            SortableImage={SortableImage}
-            processedTextRef={processedTextRef}
-          />
+          <Suspense
+            fallback={
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
+                <Loader2 className="animate-spin text-white" size={28} />
+              </div>
+            }
+          >
+            <PostConstructor
+              isOpen={isConstructorOpen}
+              onClose={() => setIsConstructorOpen(false)}
+              isConstructorOpen={isConstructorOpen}
+              setIsConstructorOpen={setIsConstructorOpen}
+              parsedContent={parsedContent}
+              setParsedContent={setParsedContent}
+              aiProcessedText={aiProcessedText}
+              setAiProcessedText={setAiProcessedText}
+              selectedImages={selectedImages}
+              setSelectedImages={setSelectedImages}
+              mainImage={mainImage}
+              setMainImage={setMainImage}
+              postButtons={postButtons}
+              setPostButtons={setPostButtons}
+              originalText={originalText}
+              setOriginalText={setOriginalText}
+              isProcessingAI={isProcessingAI}
+              processAI={processAI}
+              showTemplates={showTemplates}
+              setShowTemplates={setShowTemplates}
+              buttonTemplates={buttonTemplates}
+              handleDeleteTemplate={handleDeleteTemplate}
+              saveButtonTemplate={saveButtonTemplate}
+              templateName={templateName}
+              setTemplateName={setTemplateName}
+              imagePath={imagePath}
+              setImagePath={setImagePath}
+              openFolderBrowser={openFolderBrowser}
+              isBrowserLoading={isBrowserLoading}
+              saveImagePath={handleSaveImagePath}
+              handleFolderSelect={handleFolderSelect}
+              syncLocalImages={syncLocalImages}
+              isActionInProgress={isActionInProgress}
+              sensors={sensors}
+              handleDragEnd={handleDragEnd}
+              toggleImageSelection={toggleImageSelection}
+              scheduleDateTime={scheduleDateTime}
+              setScheduleDateTime={setScheduleDateTime}
+              saveDraft={saveDraft}
+              handlePublish={handlePublish}
+              submitMsg={submitMsg}
+              SortableImage={SortableImage}
+              processedTextRef={processedTextRef}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
       {/* ── Settings Modal ── */}
-      <SettingsModal 
-        isOpen={showSettings} 
-        onClose={() => setShowSettings(false)}
-        isStandalone={isStandalone}
-        setIsStandalone={setIsStandalone}
-        tempBaseUrl={tempBaseUrl}
-        setTempBaseUrl={setTempBaseUrl}
-        setBaseUrl={setBaseUrl}
-        botToken={botToken}
-        updateSetting={updateSetting}
-        serverStatus={serverStatus}
-        getCleanBaseUrl={getCleanBaseUrl}
-        universalFetch={universalFetch}
-        submitMsg={submitMsg}
-        isSubmitting={isSubmitting}
-        isTestingConnection={isTestingConnection}
-        testConnection={testConnection}
-        isTestingNet={isTestingNet}
-        testNetwork={testNetwork}
-        netTestResult={netTestResult}
-        handleSaveSettings={handleSaveSettings}
-      />
+      {showSettings && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+              <Loader2 className="animate-spin text-white" size={24} />
+            </div>
+          }
+        >
+          <SettingsModal 
+            isOpen={showSettings} 
+            onClose={() => setShowSettings(false)}
+            isStandalone={isStandalone}
+            setIsStandalone={setIsStandalone}
+            tempBaseUrl={tempBaseUrl}
+            setTempBaseUrl={setTempBaseUrl}
+            setBaseUrl={setBaseUrl}
+            botToken={botToken}
+            updateSetting={updateSetting}
+            serverStatus={serverStatus}
+            getCleanBaseUrl={getCleanBaseUrl}
+            universalFetch={universalFetch}
+            submitMsg={submitMsg}
+            isSubmitting={isSubmitting}
+            isTestingConnection={isTestingConnection}
+            testConnection={testConnection}
+            isTestingNet={isTestingNet}
+            testNetwork={testNetwork}
+            netTestResult={netTestResult}
+            handleSaveSettings={handleSaveSettings}
+          />
+        </Suspense>
+      )}
 
       {/* ── Full Screen Image ── */}
       <AnimatePresence>
