@@ -71,19 +71,64 @@ export const storage = {
   }
 };
 
+// Helper function for logging explicitly to console for Android 
+function nativeLog(...args: any[]) {
+  console.log('[NativeLog]', ...args);
+}
+
 // Telegram API direct calls
 export const telegram = {
   async call(token: string, method: string, body: any = {}, signal?: AbortSignal) {
+    // Иногда IPv6 маршруты Android конфликтуют с Telegram. Принудительно вызываем fetch/http с IPv4 не получится напрямую в Capacitor,
+    // но можно добавить заголовки или изменить fallback.
     const url = `https://api.telegram.org/bot${token}/${method}`;
     
     if (isNative) {
-      const response = await CapacitorHttp.post({
-        url,
-        data: body,
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (!response.data.ok) throw new Error(response.data.description || 'Telegram API Error');
-      return response.data.result;
+      try {
+        nativeLog(`SENDING API.TELEGRAM.ORG REQUEST: ${method}`);
+        const response = await CapacitorHttp.post({
+          url,
+          data: body,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
+            'Accept': 'application/json'
+          },
+          connectTimeout: 30000,
+          readTimeout: 60000
+        });
+        nativeLog(`TELEGRAM RESPONSE (${method}): HTTP ${response.status}`, typeof response.data === 'string' ? response.data.substring(0, 100) : 'json object');
+        
+        let data = response.data;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data); } catch (e) { nativeLog('PARSE ERROR', e); }
+        }
+
+        if (!data || !data.ok) {
+           const errStr = data?.description || `HTTP ${response.status}: Unknown Error`;
+           nativeLog(`TELEGRAM API REJECTED:`, errStr);
+           throw new Error(errStr);
+        }
+        return data.result;
+      } catch (err: any) {
+        nativeLog(`TELEGRAM NETWORK FATAL ERROR (${method}) VIA CAPACITOR HTTP:`, err.message);
+        
+        // Fallback to exactly native fetch (Web API), because sometimes Capacitor HTTP engine fails on IPv6 while browser fetch works:
+        try {
+          nativeLog('FALLBACK: Attempting standard Web Fetch API');
+          const response = await fetch(url, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify(body)
+          });
+          const data = await response.json();
+          if (!data.ok) throw new Error(data.description || 'Telegram API Error via Fetch');
+          return data.result;
+        } catch (fetchErr: any) {
+          nativeLog('FETCH FALLBACK ALSO FAILED:', fetchErr.message);
+          throw new Error(`Telegram Network Error: ${err.message}`);
+        }
+      }
     } else {
       const response = await fetch(url, {
         method: 'POST',

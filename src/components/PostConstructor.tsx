@@ -162,23 +162,45 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Редактор поста</label>
                       <button 
                         onClick={() => {
-                          const editorRef = (window as any).mdEditor;
-                          if (editorRef) {
-                            const editor = editorRef.getTextarea();
-                            if (editor) {
-                              const start = editor.selectionStart;
-                              const end = editor.selectionEnd;
-                              const currentText = props.aiProcessedText;
+                          const editorItems = document.querySelectorAll('textarea');
+                          let editor: HTMLTextAreaElement | null = null;
+                          editorItems.forEach(el => {
+                            if (el.className.includes('input') || el.closest('.rc-md-editor')) {
+                              editor = el;
+                            }
+                          });
+                          
+                          if (editor) {
+                            const start = editor.selectionStart;
+                            const end = editor.selectionEnd;
+                            const currentText = props.aiProcessedText;
+                            
+                            if (start !== end) {
+                              // Wrap selected text
                               const before = currentText.substring(0, start);
+                              const selected = currentText.substring(start, end);
                               const after = currentText.substring(end);
+                              props.setAiProcessedText(before + '||' + selected + '||' + after);
+                              
+                              setTimeout(() => {
+                                editor?.focus();
+                                editor?.setSelectionRange(start, start + selected.length + 4);
+                              }, 10);
+                            } else {
+                              // Insert placeholder
+                              const before = currentText.substring(0, start);
+                              const after = currentText.substring(start);
                               const spoiler = '|| ТЕКСТ ||';
                               props.setAiProcessedText(before + spoiler + after);
                               
                               setTimeout(() => {
-                                editor.focus();
-                                editor.setSelectionRange(start + 3, start + 8);
+                                editor?.focus();
+                                editor?.setSelectionRange(start + 3, start + 8);
                               }, 10);
                             }
+                          } else {
+                            // Fallback if textarea not found
+                            props.setAiProcessedText(props.aiProcessedText + '\n|| ТЕКСТ ||');
                           }
                         }}
                         className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1 px-2 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20"

@@ -641,8 +641,11 @@ function AppContent() {
         } catch (e: any) {
           setIsBotOnline(false);
           if (e.name === 'AbortError') break;
-          if (e.message?.includes('409')) {
-            addClientLog("⚠️ Конфликт: Standalone бот запущен в другом месте");
+          // Telegram often throws errors due to conflict (two processes polling)
+          if (e.message?.includes('409') || e.message?.includes('Conflict')) {
+            addClientLog("⚠️ Конфликт: Standalone бот запущен в другом месте (возможно на сервере). Выключите серверного бота.");
+          } else {
+            addClientLog(`⚠️ Ошибка Telegram: ${e.message}`);
           }
         }
         if (isPolling) await new Promise(r => setTimeout(r, 3000));
@@ -1454,7 +1457,7 @@ function AppContent() {
                 <Send size={20} className="text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-lg leading-tight">TG Bot Manager</h1>
+                <h1 className="font-bold text-lg leading-tight">TG Bot Manager <span className="text-[10px] text-blue-500 font-mono">v5.1.1</span></h1>
                 <p className="text-[10px] text-neutral-500 uppercase tracking-widest">Android Control Panel</p>
               </div>
             </div>
@@ -1689,8 +1692,12 @@ function AppContent() {
                 {isSavingToken ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />} {isStandalone ? 'Сохранить Standalone' : 'Запустить Сервер'}
               </button>
               <button onClick={handleSendTestMessage} disabled={!botToken || (isStandalone ? false : status?.bot !== 'active')} className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all text-sm"><Send size={16} /> Тест</button>
-              <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/restart`, { method: 'POST' }); refetchStatus(); } catch {} }} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"><RefreshCw size={16} /> Рестарт</button>
-              <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/stop`, { method: 'POST' }); refetchStatus(); } catch {} }} className="px-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"><X size={16} /></button>
+              {!isStandalone && (
+                <>
+                  <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/restart`, { method: 'POST' }); refetchStatus(); } catch {} }} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"><RefreshCw size={16} /> Рестарт</button>
+                  <button onClick={async () => { const cleanUrl = getCleanBaseUrl(); if (!cleanUrl) return; try { await universalFetch(`${cleanUrl}/api/bot/stop`, { method: 'POST' }); refetchStatus(); } catch {} }} className="px-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"><X size={16} /></button>
+                </>
+              )}
             </div>
           </div>
         </CollapsibleSection>
