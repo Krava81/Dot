@@ -205,53 +205,49 @@ function AppContent() {
 
     const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(options.headers || {}) };
 
-    if (isNative()) {
-      let requestData: any = undefined;
-      if (options.method && options.method.toUpperCase() !== 'GET' && options.body) {
-        try { 
-          requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; 
-        } catch { 
-          requestData = options.body; 
+    // Primary: Standard web fetch (happy eyeballs, native v4/v6 fallback, proxies)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const res = await fetch(url, { ...options, headers, signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      return {
+        ok: res.ok,
+        status: res.status,
+        json: () => res.json(),
+        text: () => res.text(),
+        headers: { get: (name: string) => res.headers.get(name) }
+      } as any;
+    } catch (fetchErr: any) {
+      if (fetchErr.name === 'AbortError') throw new Error("TIMEOUT_ERROR");
+      
+      // Secondary Fallback: Capacitor HTTP (if running natively and CORS or Webview blocked the fetch)
+      if (isNative()) {
+        let requestData: any = undefined;
+        if (options.method && options.method.toUpperCase() !== 'GET' && options.body) {
+          try { requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; } 
+          catch { requestData = options.body; }
+        }
+        
+        try {
+          const response = await CapacitorHttp.request({
+            url, method: options.method || 'GET', headers, data: requestData,
+            connectTimeout: 30000, readTimeout: 60000,
+          });
+          return {
+            ok: response.status >= 200 && response.status < 300,
+            status: response.status,
+            json: async () => typeof response.data === 'string' ? JSON.parse(response.data) : response.data,
+            text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
+            headers: { get: (name: string) => response.headers?.[name] || response.headers?.[name.toLowerCase()] || null }
+          } as any;
+        } catch (capErr: any) {
+          throw new Error(`Fetch failed: ${fetchErr.message}. Native fallback failed: ${capErr.message || "Unknown"}`);
         }
       }
       
-      try {
-        const response = await CapacitorHttp.request({
-          url, 
-          method: options.method || 'GET', 
-          headers, 
-          data: requestData,
-          connectTimeout: 60000, 
-          readTimeout: 120000,
-        });
-        
-        return {
-          ok: response.status >= 200 && response.status < 300,
-          status: response.status,
-          json: async () => {
-            if (typeof response.data === 'string') {
-              try { return JSON.parse(response.data); } catch { return {}; }
-            }
-            return response.data;
-          },
-          text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
-          headers: { get: (name: string) => response.headers?.[name] || response.headers?.[name.toLowerCase()] || null }
-        } as any;
-      } catch (err: any) {
-        throw new Error(err.message || "Native Request Failed");
-      }
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
-    try {
-      const res = await fetch(url, { ...options, headers, signal: controller.signal });
-      clearTimeout(timeoutId);
-      return res;
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      if (err.name === 'AbortError') throw new Error("TIMEOUT_ERROR");
-      throw err;
+      throw fetchErr;
     }
   }, []);
 
@@ -614,6 +610,17 @@ function AppContent() {
 
     const geminiKey = await storage.getSetting('api_key_gemini');
     if (geminiKey) updateAiKey('gemini', geminiKey);
+    const githubKey = await storage.getSetting('api_key_github');
+    if (githubKey) updateAiKey('github', githubKey);
+    const openrouterKey = await storage.getSetting('api_key_openrouter');
+    if (openrouterKey) updateAiKey('openrouter', openrouterKey);
+    const deepseekKey = await storage.getSetting('api_key_deepseek');
+    if (deepseekKey) updateAiKey('deepseek', deepseekKey);
+
+    const prefProvider = await storage.getSetting('preferred_provider');
+    if (prefProvider) {
+      setServerStatus(prev => ({ ...prev, preferredProvider: prefProvider } as any));
+    }
   };
 
   // ─── Standalone Bot Polling ───────────────────────────────────────────────
@@ -1457,7 +1464,7 @@ function AppContent() {
                 <Send size={20} className="text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-lg leading-tight">TG Bot Manager <span className="text-[10px] text-blue-500 font-mono">v5.1.1</span></h1>
+                <h1 className="font-bold text-lg leading-tight">TG Bot Manager <span className="text-[10px] text-blue-500 font-mono">v5.1.2</span></h1>
                 <p className="text-[10px] text-neutral-500 uppercase tracking-widest">Android Control Panel</p>
               </div>
             </div>
@@ -1712,6 +1719,7 @@ function AppContent() {
                   <button onClick={async () => {
                     if (isStandalone) {
                       await storage.setSetting('preferred_provider', provider);
+                      setServerStatus(prev => ({ ...prev, preferredProvider: provider } as any));
                       setSubmitMsg({ type: 'success', text: `Провайдер ${provider} выбран` });
                       return;
                     }

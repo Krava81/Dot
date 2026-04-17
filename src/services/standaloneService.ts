@@ -79,66 +79,55 @@ function nativeLog(...args: any[]) {
 // Telegram API direct calls
 export const telegram = {
   async call(token: string, method: string, body: any = {}, signal?: AbortSignal) {
-    // Иногда IPv6 маршруты Android конфликтуют с Telegram. Принудительно вызываем fetch/http с IPv4 не получится напрямую в Capacitor,
-    // но можно добавить заголовки или изменить fallback.
     const url = `https://api.telegram.org/bot${token}/${method}`;
     
-    if (isNative) {
-      try {
-        nativeLog(`SENDING API.TELEGRAM.ORG REQUEST: ${method}`);
-        const response = await CapacitorHttp.post({
-          url,
-          data: body,
-          headers: { 
-            'Content-Type': 'application/json',
-            'Connection': 'keep-alive',
-            'Accept': 'application/json'
-          },
-          connectTimeout: 30000,
-          readTimeout: 60000
-        });
-        nativeLog(`TELEGRAM RESPONSE (${method}): HTTP ${response.status}`, typeof response.data === 'string' ? response.data.substring(0, 100) : 'json object');
-        
-        let data = response.data;
-        if (typeof data === 'string') {
-          try { data = JSON.parse(data); } catch (e) { nativeLog('PARSE ERROR', e); }
-        }
-
-        if (!data || !data.ok) {
-           const errStr = data?.description || `HTTP ${response.status}: Unknown Error`;
-           nativeLog(`TELEGRAM API REJECTED:`, errStr);
-           throw new Error(errStr);
-        }
-        return data.result;
-      } catch (err: any) {
-        nativeLog(`TELEGRAM NETWORK FATAL ERROR (${method}) VIA CAPACITOR HTTP:`, err.message);
-        
-        // Fallback to exactly native fetch (Web API), because sometimes Capacitor HTTP engine fails on IPv6 while browser fetch works:
-        try {
-          nativeLog('FALLBACK: Attempting standard Web Fetch API');
-          const response = await fetch(url, {
-             method: 'POST',
-             headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify(body)
-          });
-          const data = await response.json();
-          if (!data.ok) throw new Error(data.description || 'Telegram API Error via Fetch');
-          return data.result;
-        } catch (fetchErr: any) {
-          nativeLog('FETCH FALLBACK ALSO FAILED:', fetchErr.message);
-          throw new Error(`Telegram Network Error: ${err.message}`);
-        }
-      }
-    } else {
+    // Telegram API supports CORS out-of-the-box (Access-Control-Allow-Origin: *).
+    // Native WebView 'fetch' (Chromium) handles IPv6 -> IPv4 smooth fallback (Happy Eyeballs) beautifully.
+    // CapacitorHttp Java layer is known to hard-crash or timeout on IPv6 networks.
+    // Therefore, we try the standard fetch FIRST, even on Native.
+    try {
+      nativeLog(`[Fetch] SENDING TO TELEGRAM: ${method}`);
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(body),
         signal,
       });
+      
       const data = await response.json();
-      if (!data.ok) throw new Error(data.description || 'Telegram API Error');
+      if (!data.ok) throw new Error(data.description || 'Telegram API Error via Web Fetch');
       return data.result;
+      
+    } catch (fetchErr: any) {
+      nativeLog(`[Fetch] FAILED: ${fetchErr.message}. FALLING BACK TO NATIVE CAPACITOR_HTTP...`);
+      // If Web Fetch failed (e.g. some webview CORS block or missing network plugin), fallback to native HTTP.
+      if (isNative) {
+        try {
+          const response = await CapacitorHttp.post({
+            url,
+            data: body,
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            connectTimeout: 30000,
+            readTimeout: 60000
+          });
+          
+          let data = response.data;
+          if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (e) {}
+          }
+
+          if (!data || !data.ok) {
+             const errStr = data?.description || `HTTP ${response.status}: Unknown Error`;
+             throw new Error(errStr);
+          }
+          return data.result;
+        } catch (nativeErr: any) {
+          nativeLog(`[NativeHttp] ALSO FAILED: ${nativeErr.message}`);
+          throw new Error(`Telegram Network Error: ${fetchErr.message} (Native fallback: ${nativeErr.message})`);
+        }
+      } else {
+        throw new Error(`Telegram Network Error: ${fetchErr.message}`);
+      }
     }
   },
 
@@ -189,36 +178,83 @@ export const telegram = {
 
 export const aiService = {
   async processWithAI(text: string, apiKey: string, prompt: string, provider: string = 'gemini') {
-    if (!apiKey) throw new Error("AI API Key is missing");
+    if (!apiKey) throw new Error("API ключ не заполнен");
+    
     // Gemini
     if (provider === 'gemini') {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const fullPrompt = `${prompt}\n\nTEXT:\n${text}`;
-      const result = await model.generateContent(fullPrompt);
-      const response = await result.response;
-      return response.text();
+      const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      let lastErrMessage = '';
+      
+      for (const modelName of modelsToTry) {
+        try {
+          const genAI = new GoogleGenerativeAI(apiKey);
+          const model = genAI.getGenerativeModel({ model: modelName });
+          const fullPrompt = `${prompt}\n\nTEXT:\n${text}`;
+          const result = await model.generateContent(fullPrompt);
+          const response = await result.response;
+          if (response.text()) return response.text();
+        } catch (geminiErr: any) {
+          lastErrMessage = geminiErr.message || 'Unknown Gemini Error';
+          // If the error seems temporary or model specific, try next model, otherwise exit loop
+        }
+      }
+      throw new Error(`Gemini Error (all models failed): ${lastErrMessage}`);
     }
 
     // GitHub (Azure OpenAI compatible)
     if (provider === 'github') {
-      const response = await axios.post(
-        "https://models.inference.ai.azure.com/chat/completions",
-        {
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }],
-          temperature: 0.7,
-          max_tokens: 4000
-        },
-        {
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json"
+      try {
+        const response = await axios.post(
+          "https://models.inference.ai.azure.com/chat/completions",
+          {
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }],
+            temperature: 0.7,
+            max_tokens: 4000
           },
-          timeout: 60000
-        }
-      );
-      return response.data.choices?.[0]?.message?.content || "";
+          {
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            },
+            timeout: 60000
+          }
+        );
+        if (response.data?.error) throw new Error(response.data.error.message);
+        return response.data.choices?.[0]?.message?.content || "";
+      } catch (ghErr: any) {
+        throw new Error(`GitHub AI Error: ${ghErr.response?.data?.error?.message || ghErr.message}`);
+      }
+    }
+
+    // OpenRouter
+    if (provider === 'openrouter') {
+      try {
+        const response = await axios.post(
+          "https://openrouter.ai/api/v1/chat/completions",
+          { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }] },
+          { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
+        );
+        if (response.data?.error) throw new Error(response.data.error.message);
+        return response.data.choices?.[0]?.message?.content || "";
+      } catch (orErr: any) {
+        throw new Error(`OpenRouter Error: ${orErr.response?.data?.error?.message || orErr.message}`);
+      }
+    }
+
+    // DeepSeek
+    if (provider === 'deepseek') {
+      try {
+        const response = await axios.post(
+          "https://api.deepseek.com/chat/completions",
+          { model: "deepseek-chat", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1 },
+          { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
+        );
+        if (response.data?.error) throw new Error(response.data.error.message);
+        return response.data.choices?.[0]?.message?.content || "";
+      } catch (dsErr: any) {
+        throw new Error(`DeepSeek Error: ${dsErr.response?.data?.error?.message || dsErr.message}`);
+      }
     }
 
     throw new Error(`Unsupported provider: ${provider}`);
