@@ -252,10 +252,10 @@ export const aiService = {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
                 const r = await universalFetch(url, {
                   method: 'POST',
-                  body: {
+                  body: JSON.stringify({
                     contents: [{ parts: [{ text: `${prompt}\n\nTEXT:\n${text}` }] }],
                     generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
-                  }
+                  })
                 });
                 const d = await r.json();
                 if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
@@ -273,7 +273,7 @@ export const aiService = {
              const r = await universalFetch("https://models.inference.ai.azure.com/chat/completions", {
                method: 'POST',
                headers: { "Authorization": `Bearer ${apiKey}` },
-               body: { model: "gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1, max_tokens: 4000 }
+               body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1, max_tokens: 4000 })
              });
              const d = await r.json();
              if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
@@ -285,7 +285,7 @@ export const aiService = {
              const r = await universalFetch("https://openrouter.ai/api/v1/chat/completions", {
                method: 'POST',
                headers: { "Authorization": `Bearer ${apiKey}` },
-               body: { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }] }
+               body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }] })
              });
              const d = await r.json();
              if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
@@ -297,7 +297,7 @@ export const aiService = {
              const r = await universalFetch("https://api.deepseek.com/chat/completions", {
                method: 'POST',
                headers: { "Authorization": `Bearer ${apiKey}` },
-               body: { model: "deepseek-chat", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1 }
+               body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "user", content: `${prompt}\n\nTEXT:\n${text}` }], temperature: 0.1 })
              });
              const d = await r.json();
              if (!r.ok) throw new Error(d.error?.message || `HTTP ${r.status}`);
