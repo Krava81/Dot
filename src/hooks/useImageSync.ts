@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { storage } from '../services/standaloneService';
+import { storage } from '../services/storage';
 import { CapacitorHttp } from '@capacitor/core';
 
 export function useImageSync(isStandalone: boolean, getCleanBaseUrl: () => string | null) {

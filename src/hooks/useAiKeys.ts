@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { storage } from '../services/standaloneService';
+import { storage } from '../services/storage';
 
 export function useAiKeys(isStandalone: boolean) {
   const [aiKeys, setAiKeys] = useState<Record<string, string>>({ gemini: '', github: '', openrouter: '', deepseek: '' });

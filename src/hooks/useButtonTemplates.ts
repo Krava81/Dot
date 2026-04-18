@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { storage } from '../services/standaloneService';
+import { storage } from '../services/storage';
 import { ButtonTemplate } from '../types';
 
 export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () => string | null, universalFetch: any) {

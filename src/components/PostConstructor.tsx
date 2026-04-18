@@ -96,18 +96,14 @@ interface PostConstructorProps {
 }
 
 export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
-  // Local state to avoid lag and focus issues with controlled SimpleMDE
-  const [localText, setLocalText] = React.useState(props.aiProcessedText);
   const [activeTab, setActiveTab] = React.useState<'text' | 'images' | 'buttons'>('text');
 
-  React.useEffect(() => {
-    setLocalText(props.aiProcessedText);
-  }, [props.aiProcessedText]);
-
-  const handleTextChange = (value: string) => {
-    setLocalText(value);
-    props.setAiProcessedText(value);
-  };
+  const handleEditorChange = React.useCallback(
+    ({ text }: { text: string }) => {
+      props.setAiProcessedText(text);
+    },
+    [props.setAiProcessedText]
+  );
 
   return (
     <motion.div 
@@ -162,17 +158,19 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Редактор поста</label>
                       <button 
                         onClick={() => {
-                          const editorItems = document.querySelectorAll('textarea');
+                          const elList = document.querySelectorAll('textarea');
                           let editor: HTMLTextAreaElement | null = null;
-                          editorItems.forEach(el => {
+                          for (let i = 0; i < elList.length; i++) {
+                            const el = elList[i] as HTMLTextAreaElement;
                             if (el.className.includes('input') || el.closest('.rc-md-editor')) {
                               editor = el;
+                              break;
                             }
-                          });
+                          }
                           
                           if (editor) {
-                            const start = editor.selectionStart;
-                            const end = editor.selectionEnd;
+                            const start = editor.selectionStart || 0;
+                            const end = editor.selectionEnd || 0;
                             const currentText = props.aiProcessedText;
                             
                             if (start !== end) {
@@ -222,7 +220,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       value={props.aiProcessedText}
                       style={{ height: '100%', border: 'none' }}
                       renderHTML={renderPreview}
-                      onChange={({ text }) => props.setAiProcessedText(text)}
+                      onChange={handleEditorChange}
                       config={{
                         view: { menu: true, md: true, html: true },
                         canView: { menu: true, md: true, html: true, fullScreen: false, hideMenu: false }

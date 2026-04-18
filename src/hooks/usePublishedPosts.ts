@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { storage } from '../services/standaloneService';
+import { storage } from '../services/storage';
 import { DraftPost } from '../types';
 
 export function usePublishedPosts(isStandalone: boolean, getCleanBaseUrl: () => string | null, universalFetch: any) {

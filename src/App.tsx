@@ -3,19 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { marked } from 'marked';
-import React, { useState, useEffect, useCallback, Component, useRef } from 'react';
+import React, { useState, useEffect, useCallback, Component, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, Sparkles, ChevronDown, Image, Calendar, Clock, Plus, Eye, EyeOff, Copy, FolderOpen, Check, Loader2, Folder, GripVertical, Smartphone, Play, Globe, Layout, Palette, Type, Wand2, ClipboardPaste } from 'lucide-react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import { Browser } from '@capacitor/browser';
 import { Preferences } from '@capacitor/preferences';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import MarkdownIt from 'markdown-it';
-import { storage, telegram, aiService } from './services/standaloneService';
-import { nativeStorage } from './services/nativeStorage';
-import { SecureStorage } from './services/secureStorage';
+import { storage } from './services/storage';
+import { telegram, TelegramAPI } from './services/telegram';
+import { AIService } from './services/aiService';
+import { AIProcessingError } from './utils/errors';
+import { universalFetch } from './services/http';
+import { errorTracker } from './utils/errorTracker';
+import { sanitizeForTelegram } from './utils/telegramHtml';
+import { mdToTelegramHtml, mdToTelegramMarkdown } from './utils/markdown';
+import { APP_VERSION, LOG_LIMIT, RETRY_CONFIG } from './constants';
 import { useDrafts } from './hooks/useDrafts';
+import { useDebounce } from './hooks/useDebounce';
+import { useAndroidLifecycle } from './hooks/useAndroidLifecycle';
 import { useServerConnection } from './hooks/useServerConnection';
 import { useImageSync } from './hooks/useImageSync';
 import { useButtonTemplates } from './hooks/useButtonTemplates';
@@ -43,61 +48,14 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-
-// ─── SafeLocalStorage ───────────────────────────────────────────────────────
-const safeLocalStorage = {
-  getItem: (key: string): string | null => {
-    try { return localStorage.getItem(key); } catch { return null; }
-  },
-  setItem: (key: string, value: string): void => {
-    try { localStorage.setItem(key, value); } catch {}
-  },
-  removeItem: (key: string): void => {
-    try { localStorage.removeItem(key); } catch {}
-  },
-  clear: (): void => {
-    try { localStorage.clear(); } catch {}
-  }
-};
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-const isNative = () => {
-  try { return Capacitor.isNativePlatform(); } catch { return false; }
-};
-
-const getInitialBaseUrl = () => {
-  try {
-    if (window.location.href.includes('run.app')) return window.location.origin;
-    return safeLocalStorage.getItem('tg_bot_server_url') || '';
-  } catch { return ''; }
-};
-
-const sanitizeBaseUrlInput = (raw: string): string => {
-  return String(raw || '')
-    .trim()
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/\s+/g, '');
-};
-
-const normalizeChatIdPresets = (value: unknown): string[] => {
-  const presets = Array.isArray(value)
-    ? value
-    : (value && typeof value === 'object' && Array.isArray((value as any).presets))
-      ? (value as any).presets
-      : [];
-  const normalized = presets.slice(0, 3).map((item: any) => String(item ?? '').trim());
-  while (normalized.length < 3) normalized.push('');
-  return normalized;
-};
-
-const shouldPreferHttp = (rawHost: string): boolean => {
-  const host = rawHost.toLowerCase();
-  if (host === 'localhost' || host === '127.0.0.1') return true;
-  if (host.endsWith('.local')) return true;
-  if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(host)) return true;
-  if (/^(10|192\.168|172\.(1[6-9]|2\d|3[0-1]))\./.test(host)) return true;
-  return false;
-};
+import { 
+  safeLocalStorage, 
+  isNative, 
+  getInitialBaseUrl, 
+  sanitizeBaseUrlInput, 
+  normalizeChatIdPresets, 
+  shouldPreferHttp 
+} from './utils/http';
 
 // ─── Components ─────────────────────────────────────────────────────────────
 const SortableImage = ({ id, url, isMain, onSelect, onSetMain, onEnlarge }: any) => {
@@ -201,61 +159,6 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<'editor' | 'images' | 'logs'>('editor');
   const [showSettings, setShowSettings] = useState(false);
 
-  // ─── Universal Fetch ──────────────────────────────────────────────────────
-  const universalFetch = useCallback(async (url: string, options: any = {}) => {
-    if (!url || url.includes('undefined') || url.includes('null') || url === 'https://' || url === 'http://') {
-      throw new Error("INVALID_URL");
-    }
-    try { const p = new URL(url); if (!p.hostname) throw new Error(); } catch { throw new Error("MALFORMED_URL"); }
-
-    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(options.headers || {}) };
-
-    // Primary: Standard web fetch (happy eyeballs, native v4/v6 fallback, proxies)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
-      const res = await fetch(url, { ...options, headers, signal: controller.signal });
-      clearTimeout(timeoutId);
-      
-      return {
-        ok: res.ok,
-        status: res.status,
-        json: () => res.json(),
-        text: () => res.text(),
-        headers: { get: (name: string) => res.headers.get(name) }
-      } as any;
-    } catch (fetchErr: any) {
-      if (fetchErr.name === 'AbortError') throw new Error("TIMEOUT_ERROR");
-      
-      // Secondary Fallback: Capacitor HTTP (if running natively and CORS or Webview blocked the fetch)
-      if (isNative()) {
-        let requestData: any = undefined;
-        if (options.method && options.method.toUpperCase() !== 'GET' && options.body) {
-          try { requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; } 
-          catch { requestData = options.body; }
-        }
-        
-        try {
-          const response = await CapacitorHttp.request({
-            url, method: options.method || 'GET', headers, data: requestData,
-            connectTimeout: 30000, readTimeout: 60000,
-          });
-          return {
-            ok: response.status >= 200 && response.status < 300,
-            status: response.status,
-            json: async () => typeof response.data === 'string' ? JSON.parse(response.data) : response.data,
-            text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
-            headers: { get: (name: string) => response.headers?.[name] || response.headers?.[name.toLowerCase()] || null }
-          } as any;
-        } catch (capErr: any) {
-          throw new Error(`Fetch failed: ${fetchErr.message}. Native fallback failed: ${capErr.message || "Unknown"}`);
-        }
-      }
-      
-      throw fetchErr;
-    }
-  }, []);
-
   // ─── Validate URL ─────────────────────────────────────────────────────────
   const getCleanBaseUrl = useCallback((url?: string) => {
     let u = sanitizeBaseUrlInput(url !== undefined ? url : baseUrl);
@@ -276,6 +179,16 @@ function AppContent() {
     updateSetting: updateBotSetting,
     loadSettings: loadBotSettings 
   } = useBotSettings(isStandalone);
+
+  const telegramClient = useMemo(() => 
+    botToken ? new TelegramAPI(botToken) : null,
+    [botToken]
+  );
+
+  const aiServiceInstance = useMemo(() => 
+    new AIService(RETRY_CONFIG), 
+    []
+  );
 
   const updateSetting = async (key: string, value: string) => {
     if (key === 'standalone_bot_token' || key === 'server_bot_token') {
@@ -298,6 +211,10 @@ function AppContent() {
   const [needsKey, setNeedsKey] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [fullResponse, setFullResponse] = useState<string | null>(null);
+  const [lastSaved, setLastSaved] = useState({ text: '', images: [] });
+
+  const lastSavedRef = useRef({ text: '', images: [] as string[] });
+  const constructorMountedRef = useRef(false);
   const [showFullResponse, setShowFullResponse] = useState(false);
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
@@ -315,6 +232,10 @@ function AppContent() {
   const [parsedContent, setParsedContent] = useState<ParsedContent | null>(null);
   const [aiProcessedText, setAiProcessedText] = useState('');
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  
+  const debouncedText = useDebounce(aiProcessedText, 2000);
+  const debouncedImages = useDebounce(selectedImages, 1000);
+
   const [mainImage, setMainImage] = useState<string>('');
   const [postButtons, setPostButtons] = useState<PostButton[]>([]);
   const [originalText, setOriginalText] = useState('');
@@ -333,6 +254,25 @@ function AppContent() {
   const { buttonTemplates, setButtonTemplates, loadButtonTemplates } = useButtonTemplates(isStandalone, getCleanBaseUrl, universalFetch);
   const { scheduledPosts, setScheduledPosts, loadScheduledPosts } = useScheduledPosts(isStandalone, getCleanBaseUrl, universalFetch);
   const { publishedPosts, setPublishedPosts, loadPublishedPosts } = usePublishedPosts(isStandalone, getCleanBaseUrl, universalFetch);
+
+  // ✅ ANDROID LIFECYCLE
+  useAndroidLifecycle(
+    // onPause - приложение ушло в background
+    () => {
+      console.log('[Android] App paused - saving state');
+      if (aiProcessedText || selectedImages.length > 0) {
+        saveDraft('draft');
+      }
+    },
+    // onResume - приложение вернулось из background
+    () => {
+      console.log('[Android] App resumed - refreshing data');
+      loadDrafts();
+      if (!isStandalone) refetchStatus();
+      syncLocalImages();
+    }
+  );
+
   const [isDraftsCollapsed, setIsDraftsCollapsed] = useState(true);
   const [isScheduledCollapsed, setIsScheduledCollapsed] = useState(true);
   const [isPublishedOpen, setIsPublishedOpen] = useState(false);
@@ -351,100 +291,9 @@ function AppContent() {
     setSubmitMsg({ type: 'success', text: 'Путь к изображениям сохранен' });
   };
 
-  const sanitizeForTelegram = (html: string): string => {
-    if (!html) return "";
-    let s = html
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/&nbsp;/gi, " ")
-      .replace(/<\/?(div|p|h[1-6])>/gi, "\n")
-      .replace(/\r\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n");
-
-    const allowed = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'a', 'tg-spoiler'];
-    const placeholders: { tag: string; ph: string }[] = [];
-    
-    s = s.replace(new RegExp(`<(/?)(${allowed.join('|')})(\\b[^>]*)?>`, 'gi'), (m) => {
-      const ph = `__PH_${placeholders.length}__`;
-      placeholders.push({ tag: m, ph });
-      return ph;
-    });
-
-    s = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    placeholders.forEach(({ tag, ph }) => {
-      s = s.replace(ph, tag);
-    });
-
-    return s.trim().replace(/\n{3,}/g, "\n\n");
-  };
-  
-  // Convert Markdown to Telegram MarkdownV2 format
-  const mdToTelegramMarkdown = useCallback((md: string) => {
-    if (!md) return "";
-
-    let result = md;
-
-    // Process line by line to handle different elements
-    const lines = result.split('\n');
-    const processedLines = lines.map(line => {
-      // Handle headers (# Header -> *Header*)
-      line = line.replace(/^# (.*$)/g, '*$1*');
-      line = line.replace(/^## (.*$)/g, '*$1*');
-      line = line.replace(/^### (.*$)/g, '*$1*');
-
-      // Handle bold (**text** -> *text*)
-      line = line.replace(/\*\*(.+?)\*\*/g, '*$1*');
-
-      // Handle italic (__text__ or _text_ -> _text_)
-      line = line.replace(/__(.+?)__/g, '_$1_');
-
-      // Handle strikethrough (~~text~~ -> ~text~)
-      line = line.replace(/~~(.+?)~~/g, '~$1~');
-
-      // Handle spoiler (||text|| -> ||text|| - Telegram supports this natively in MDv2)
-      // No conversion needed, Telegram MarkdownV2 supports ||spoiler||
-
-      // Handle code (`code` -> `code`)
-      line = line.replace(/`(.+?)`/g, '`$1`');
-
-      // Handle multiline code blocks
-      line = line.replace(/```([\s\S]*?)```/g, '```\n$1\n```');
-
-      return line;
-    });
-
-    result = processedLines.join('\n');
-
-    // Clean up excessive newlines
-    result = result.replace(/\n{3,}/g, '\n\n');
-
-    return result.trim();
-  }, []);
-  const mdToTelegramHtml = useCallback((md: string) => {
-    const mdParser = new MarkdownIt({ breaks: true, html: true, linkify: true });
-    
-    // Custom spoiler rule for ||text||
-    mdParser.inline.ruler.before('text', 'spoiler', (state, silent) => {
-      const start = state.pos;
-      if (state.src.charCodeAt(start) !== 0x7C || state.src.charCodeAt(start + 1) !== 0x7C) return false;
-      const match = state.src.slice(start + 2).match(/^([\s\S]+?)\|\|/);
-      if (!match) return false;
-      if (!silent) {
-        state.push('spoiler_open', 'tg-spoiler', 1);
-        const t = state.push('text', '', 0);
-        t.content = match[1];
-        state.push('spoiler_close', 'tg-spoiler', -1);
-      }
-      state.pos += 4 + match[1].length;
-      return true;
-    });
-
-    // Replace leading spaces to prevent them from turning into code blocks
-    // and correctly preserve manual text indents.
-    const preprocessed = md.replace(/^[ \t]+/gm, (match) => '&nbsp;'.repeat(match.length));
-    const rawHtml = mdParser.render(preprocessed);
-    return sanitizeForTelegram(rawHtml);
-  }, []);
+  const cleanBaseUrl = useMemo(() => {
+    return getCleanBaseUrl();
+  }, [getCleanBaseUrl]);
 
   const syncLocalImages = useCallback(async (shouldSavePath = false, overridePath?: string) => {
     setIsActionInProgress(true);
@@ -574,12 +423,11 @@ function AppContent() {
   }, [syncLocalImages]);
 
   const processedTextRef = useRef<HTMLTextAreaElement>(null);
-  const constructorMountedRef = useRef(false);  // ✅ FIX: prevent auto-save on mount
 
   // ─── Logs ─────────────────────────────────────────────────────────────────
   const addClientLog = useCallback((msg: string) => {
     const line = `[${new Date().toLocaleTimeString()}] [Client] ${msg}`;
-    setLogs(prev => [line, ...prev].slice(0, 50));
+    setLogs(prev => [line, ...prev].slice(0, LOG_LIMIT));
   }, []);
 
   // ─── Fetch Data ───────────────────────────────────────────────────────────
@@ -639,7 +487,7 @@ function AppContent() {
       let offset = botOffset;
       while (isPolling) {
         try {
-          const updates = await telegram.getUpdates(botToken, offset, abortController.signal);
+          const updates = await telegramClient?.getUpdates(offset, abortController.signal);
           setIsBotOnline(true);
           if (!isPolling) break;
           for (const update of updates) {
@@ -674,7 +522,7 @@ function AppContent() {
   const handleStandaloneBotMessage = async (message: any) => {
     const text = message.text;
     if (text === '/start') {
-      await telegram.sendMessage(botToken, message.chat.id, "✅ Бот запущен автономно!\n\nПришлите текст для публикации.", { parse_mode: 'HTML' });
+      await telegramClient?.sendMessage(message.chat.id, "✅ Бот запущен автономно!\n\nПришлите текст для публикации.", { parse_mode: 'HTML' });
       return;
     }
     addClientLog(`📝 Обработка текста: ${text.substring(0, 20)}...`);
@@ -749,112 +597,6 @@ function AppContent() {
     return () => { if (eventSource) eventSource.close(); if (reconnectTimeout) clearTimeout(reconnectTimeout); };
   }, [baseUrl, isLogsPaused, isLogsCollapsed, getCleanBaseUrl]);
 
-  // ✅ FIX: Polling logs on Android
-  useEffect(() => {
-    if (!isNative() || isLogsCollapsed || !baseUrl) return;
-    const cleanUrl = getCleanBaseUrl();
-    if (!cleanUrl) return;
-    const poll = async () => {
-      try {
-        const res = await universalFetch(`${cleanUrl}/api/logs`);
-        if (res.ok) {
-          const d = await res.json();
-          if (Array.isArray(d?.logs)) setLogs(d.logs.map((log: unknown) => String(log ?? '')).slice().reverse());
-        }
-      } catch {}
-    };
-    poll();
-    const interval = setInterval(poll, 4000);
-    return () => clearInterval(interval);
-  }, [baseUrl, isLogsCollapsed, getCleanBaseUrl, universalFetch]);
-
-  // ✅ FIX: Load presets only when URL is valid
-  useEffect(() => {
-    const cleanUrl = getCleanBaseUrl();
-    if (!cleanUrl) return;
-    universalFetch(`${cleanUrl}/api/config/chat-id-presets`)
-      .then(r => r.json())
-      .then(d => setChatIdPresets(normalizeChatIdPresets(d)))
-      .catch(() => {});
-  }, [baseUrl, getCleanBaseUrl, universalFetch]);
-
-  // ✅ FIX: Load image path only when URL is valid
-  useEffect(() => {
-    const cleanUrl = getCleanBaseUrl();
-    if (!cleanUrl) return;
-    universalFetch(`${cleanUrl}/api/config/image-path`).then(r => r.json()).then(d => { if (d.path) { setImagePath(d.path); } }).catch(() => {});
-  }, [baseUrl, getCleanBaseUrl, universalFetch]);
-
-  // ✅ FIX: Auto-save image path with debounce and validity check
-  useEffect(() => {
-    const cleanUrl = getCleanBaseUrl();
-    if (!cleanUrl || !imagePath) return;
-    const timer = setTimeout(() => {
-      universalFetch(`${cleanUrl}/api/config/image-path`, { method: 'POST', body: JSON.stringify({ path: imagePath }) }).catch(() => {});
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [imagePath, baseUrl, getCleanBaseUrl, universalFetch]);
-
-  // Sync status with chatId
-  useEffect(() => {
-    if (status?.defaultChatId && !tempChatId) {
-      updateSetting('chat_id', String(status.defaultChatId));
-      safeLocalStorage.setItem('tg_bot_chat_id', String(status.defaultChatId));
-    }
-  }, [status]);
-
-  // Load drafts and lists when constructor opens
-  useEffect(() => {
-    if (isConstructorOpen) {
-      loadDrafts();
-      loadButtonTemplates();
-    }
-  }, [isConstructorOpen]);
-
-  // Initial loads
-  useEffect(() => {
-    loadDrafts();
-    loadScheduledPosts();
-    loadPublishedPosts();
-    loadButtonTemplates();
-    safeLocalStorage.removeItem('tg_bot_button_presets');
-  }, []);
-
-  // ✅ FIX: Auto-save draft on constructor close — skip first render and check for changes
-  useEffect(() => {
-    if (!constructorMountedRef.current) { constructorMountedRef.current = true; return; }
-    
-    if (!isConstructorOpen) {
-      const hasChanges = 
-        aiProcessedText.trim() !== lastSavedRef.current.text ||
-        JSON.stringify(selectedImages) !== JSON.stringify(lastSavedRef.current.images);
-      
-      if (hasChanges && (aiProcessedText.trim() || selectedImages.length > 0)) {
-        saveDraft('draft').then(() => {
-          lastSavedRef.current = {
-            text: aiProcessedText,
-            images: [...selectedImages]
-          };
-        });
-      }
-    }
-  }, [isConstructorOpen, aiProcessedText, selectedImages]);
-
-  useEffect(() => {
-    if (showSettings) { setTempBotToken(botToken); }
-  }, [showSettings, botToken]);
-
-  useEffect(() => {
-    const init = async () => {
-      // Keys are loaded by useAiKeys hook
-    };
-    init();
-  }, []);
-
-  useEffect(() => {
-    // Keys are managed by useAiKeys hook and storage/updateAiKey
-  }, [aiKeys]);
-
   // ─── DnD ──────────────────────────────────────────────────────────────────
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -868,13 +610,6 @@ function AppContent() {
     }
   };
 
-  // ─── Data Loaders ─────────────────────────────────────────────────────────
-
-
-
-
-
-
   // ─── Actions ──────────────────────────────────────────────────────────────
   const resetConstructor = () => {
     setEditingDraftId(null);
@@ -885,79 +620,38 @@ function AppContent() {
     setPostButtons([]);
   };
 
-  const lastSavedRef = useRef<{text: string, images: string[]}>({
-    text: '',
-    images: []
-  });
-
   const processAI = async () => {
     if (!originalText) return;
     setIsProcessingAI(true);
+    setLastError(null);
     try {
-      let result = '';
-      if (isStandalone) {
-        const provider = serverStatus?.preferredProvider || 'gemini';
-        
-        const prompt = `Ты — опытный редактор новостей. Твоя задача — перевести текст на русский язык.
-
-ИНСТРУКЦИИ:
-1. ПЕРЕВОД: Переведи всё на русский. Бренды и модели авто можно оставить на латинице, если так лучше для понимания.
-2. ЗАПРЕТ: Никаких китайских иероглифов. Если слово нельзя перевести, используй английский эквивалент.
-3. ОФОРМЛЕНИЕ:
-   - Заголовок в начале. Разделяй текст на логические абзацы.
-   - Используй ТОЛЬКО разрешенные Telegram HTML теги: <b>жирный</b>, <i>курсив</i>, <u>подчеркнутый</u>, <s>зачеркнутый</s>, <a>ссылка</a>, <code>код</code>.
-   - СТРОГО ЗАПРЕЩЕНО использовать теги <h1>, <h2>, <h3>, <p>, <br> и любые другие HTML-теги, не указанные выше. Заголовки выделяй просто жирным шрифтом <b>Заголовок</b>.
-4. ХЭШТЕГИ: Добавь тематические теги в конце.`;
-
-        result = await aiService.processWithAI(
-          originalText, 
-          aiKeys, 
-          prompt, 
-          provider, 
-          (msg: string) => addClientLog(msg)
-        );
-      } else {
-        const cleanUrl = getCleanBaseUrl();
-        if (!cleanUrl) return;
-        const r = await universalFetch(`${cleanUrl}/api/process-text`, { 
-          method: 'POST', 
-          body: JSON.stringify({ 
-            text: originalText, 
-            provider: serverStatus?.preferredProvider || 'gemini' 
-          }) 
-        });
-        if (r.ok) { 
-          const d = await r.json(); 
-          if (d.processedText) result = d.processedText; 
-        } else {
-          const err = await r.json();
-          throw new Error(err.error || 'Ошибка сервера при обработке текста');
-        }
-      }
-
-      if (!result || typeof result !== 'string') {
-        throw new Error('Получен пустой или некорректный ответ от AI');
-      }
-
-      const errorMarkers = ['⚠️ Ошибка', 'ERROR:', 'Failed to'];
-      if (errorMarkers.some(marker => result.startsWith(marker))) {
-        throw new Error(`AI вернул ошибку:\n${result}`);
-      }
+      const result = await aiServiceInstance.processText(
+        originalText,
+        aiKeys,
+        serverStatus?.preferredProvider || 'gemini',
+        (msg: string) => addClientLog(msg)
+      );
 
       setAiProcessedText(result);
       setSubmitMsg({ type: 'success', text: 'Текст обработан!' });
     } catch (e: any) { 
-      let errorMessage = e.message || String(e);
-      let userFriendlyMessage = errorMessage;
+      if (e instanceof AIProcessingError) {
+        setLastError(
+          `Все AI провайдеры не сработали:\n${e.providerErrors.join('\n')}`
+        );
+      } else {
+        let errorMessage = e.message || String(e);
+        let userFriendlyMessage = errorMessage;
 
-      if (errorMessage.includes('quota')) {
-        userFriendlyMessage = 'Превышен лимит запросов AI. Попробуйте позже или смените провайдера.';
-      } else if (errorMessage.includes('401') || errorMessage.includes('key')) {
-        userFriendlyMessage = 'Ошибка API ключа. Проверьте настройки ключей ИИ.';
+        if (errorMessage.includes('quota')) {
+          userFriendlyMessage = 'Превышен лимит запросов AI. Попробуйте позже или смените провайдера.';
+        } else if (errorMessage.includes('401') || errorMessage.includes('key')) {
+          userFriendlyMessage = 'Ошибка API ключа. Проверьте настройки ключей ИИ.';
+        }
+
+        addClientLog(`❌ AI Error: ${errorMessage}`);
+        setLastError(userFriendlyMessage);
       }
-
-      addClientLog(`❌ AI Error: ${errorMessage}`);
-      setLastError(userFriendlyMessage);
     } finally { setIsProcessingAI(false); }
   };
 
@@ -1034,9 +728,9 @@ function AppContent() {
 
         // Standalone publishing with photos
         if (post.selectedImages.length === 0) {
-          await telegram.sendMessage(botToken, tempChatId, htmlText, extra);
+          await telegramClient?.sendMessage(tempChatId, htmlText, extra);
         } else if (post.selectedImages.length === 1) {
-          await telegram.sendPhoto(botToken, tempChatId, post.selectedImages[0], htmlText, extra);
+          await telegramClient?.sendPhoto(tempChatId, post.selectedImages[0], htmlText, extra);
         } else {
           // For media group, prepare media items with HTML captions
           const mediaItems = post.selectedImages.map((img, i) => ({
@@ -1045,9 +739,9 @@ function AppContent() {
             caption: i === 0 ? htmlText : undefined,
             parse_mode: i === 0 ? 'HTML' : undefined
           }));
-          await telegram.sendMediaGroup(botToken, tempChatId, mediaItems);
+          await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
           if (post.buttons?.length) {
-             await telegram.sendMessage(botToken, tempChatId, "👇 Действия:", extra);
+             await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
           }
         }
         
@@ -1076,7 +770,7 @@ function AppContent() {
         } else { const err = await res.json(); setLastError(`Ошибка: ${err.error}`); }
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, aiProcessedText, editingDraftId, selectedImages, mainImage, postButtons, isStandalone, botToken, tempChatId, telegram, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData]);
+  }, [isActionInProgress, aiProcessedText, editingDraftId, selectedImages, mainImage, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData]);
 
   const publishDraft = useCallback(async (draftId: string) => {
     if (isActionInProgress) return;
@@ -1095,7 +789,7 @@ function AppContent() {
         // Send using HTML
         if (postToPublish.selectedImages?.length) {
            if (postToPublish.selectedImages.length === 1) {
-             await telegram.sendPhoto(botToken, tempChatId, postToPublish.selectedImages[0], htmlText, { parse_mode: 'HTML' });
+             await telegramClient?.sendPhoto(tempChatId, postToPublish.selectedImages[0], htmlText, { parse_mode: 'HTML' });
            } else {
              const mediaItems = postToPublish.selectedImages.map((img: string, i: number) => ({
                 type: 'photo',
@@ -1103,10 +797,10 @@ function AppContent() {
                 caption: i === 0 ? htmlText : undefined,
                 parse_mode: i === 0 ? 'HTML' : undefined
               }));
-              await telegram.sendMediaGroup(botToken, tempChatId, mediaItems);
+              await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
            }
         } else {
-           await telegram.sendMessage(botToken, tempChatId, htmlText, { parse_mode: 'HTML' });
+           await telegramClient?.sendMessage(tempChatId, htmlText, { parse_mode: 'HTML' });
         }
         // Move from drafts/scheduled to published
         const currentPublished = await storage.loadJson('published.json', []);
@@ -1136,7 +830,7 @@ function AppContent() {
         }
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramMarkdown, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegram, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts]);
+  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramMarkdown, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts]);
 
   const deleteDraft = async (draftId: string) => {
     try {
@@ -1311,7 +1005,7 @@ function AppContent() {
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); }
   };
 
-  const handleSaveChatId = async () => {
+  const handleSaveChatId = useCallback(async () => {
     if (isStandalone) {
       await storage.setSetting('chat_id', tempChatId);
       setSubmitMsg({ type: 'success', text: 'ID сохранен локально!' });
@@ -1326,7 +1020,7 @@ function AppContent() {
       if (res.ok) { setSubmitMsg({ type: 'success', text: 'ID сохранен!' }); safeLocalStorage.setItem('tg_bot_chat_id', tempChatId); refetchStatus(); }
       else { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Ошибка'); }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsSavingToken(false); }
-  };
+  }, [isStandalone, tempChatId, getCleanBaseUrl, loadAllStandaloneData, refetchStatus]);
 
   const handleDeleteToken = async () => {
     try {
@@ -1356,7 +1050,7 @@ function AppContent() {
     try {
       if (isStandalone) {
         if (!botToken || !tempChatId) throw new Error("Токен или Chat ID не настроены");
-        await telegram.sendMessage(botToken, tempChatId, "✅ <b>Тест Standalone успешен!</b>");
+        await telegramClient?.sendMessage(tempChatId, "✅ <b>Тест Standalone успешен!</b>");
         setSubmitMsg({ type: 'success', text: 'Тест отправлен!' });
       } else {
         const cleanUrl = getCleanBaseUrl();
@@ -1396,13 +1090,13 @@ function AppContent() {
       
       // Save token to secure storage
       if (isStandalone) {
-        await SecureStorage.setToken('bot_token', botToken);
+        await storage.setSecure('bot_token', botToken);
       } else {
-        await nativeStorage.setToken(botToken);
+        await storage.setSetting('bot_token', botToken);
       }
       
       if (cleanUrl) {
-        await SecureStorage.setToken('base_url', cleanUrl);
+        await storage.setSecure('base_url', cleanUrl);
       }
 
       if (!isStandalone && cleanUrl) {
@@ -1416,7 +1110,8 @@ function AppContent() {
         if (ct.includes('text/html')) {
           const htmlText = await res.text().catch(() => '');
           if (htmlText.includes('security cookie') || htmlText.includes('Action required') || htmlText.includes('AI Studio')) {
-            throw new Error("Доступ заблокирован. Используйте URL Cloud Run.");
+            // Warn but allow continue for testing purposes in web
+            setSubmitMsg({ type: 'error', text: "URL Preview обнаружен. API сервера может быть ограничен." });
           }
         }
 
@@ -1441,7 +1136,10 @@ function AppContent() {
       if (ct.includes('text/html')) {
         const htmlText = await res.text().catch(() => '');
         if (htmlText.includes('security cookie') || htmlText.includes('Action required') || htmlText.includes('AI Studio')) {
-          throw new Error("Доступ заблокирован. Вы используете URL предварительного просмотра AI Studio. Для работы мобильного приложения необходимо развернуть сервер: Настройки (⚙️) -> 'Deploy to Cloud Run' и использовать полученный URL.");
+          const msg = "Обнаружен URL предварительного просмотра AI Studio. В этом режиме API может быть заблокирован (нужна авторизация через браузер). Для мобильного приложения Android ОБЯЗАТЕЛЬНО разверните сервер через 'Deploy to Cloud Run' и используйте полученный URL.";
+          setSubmitMsg({ type: 'error', text: msg });
+          // Не блокируем сохранение, но предупреждаем
+          return;
         } else {
           throw new Error("Сервер вернул HTML вместо JSON. Убедитесь, что вы используете корректный URL Cloud Run.");
         }
@@ -1463,10 +1161,75 @@ function AppContent() {
   };
 
   const handleOpenKeyDialog = async () => {
-    if (window.aistudio) { await window.aistudio.openSelectKey(); setNeedsKey(false); }
+    if (window.aistudio) { await window.aistudio?.openSelectKey?.(); setNeedsKey(false); }
   };
 
-  // ─── Loading screen ───────────────────────────────────────────────────────
+  // ✅ Мемоизация props объектов для PostConstructor
+  const constructorProps = useMemo(() => ({
+    isOpen: isConstructorOpen,
+    onClose: () => setIsConstructorOpen(false),
+    isConstructorOpen,
+    setIsConstructorOpen,
+    parsedContent,
+    setParsedContent,
+    aiProcessedText,
+    setAiProcessedText,
+    selectedImages,
+    setSelectedImages,
+    mainImage,
+    setMainImage,
+    postButtons,
+    setPostButtons,
+    originalText,
+    setOriginalText,
+    isProcessingAI,
+    processAI,
+    showTemplates,
+    setShowTemplates,
+    buttonTemplates,
+    handleDeleteTemplate,
+    saveButtonTemplate,
+    templateName,
+    setTemplateName,
+    imagePath,
+    setImagePath,
+    openFolderBrowser,
+    isBrowserLoading,
+    saveImagePath: handleSaveImagePath,
+    handleFolderSelect,
+    syncLocalImages,
+    isActionInProgress,
+    sensors,
+    handleDragEnd,
+    toggleImageSelection,
+    scheduleDateTime,
+    setScheduleDateTime,
+    saveDraft,
+    handlePublish,
+    submitMsg,
+    SortableImage,
+    processedTextRef,
+    onEnlarge: (url: string) => setFullScreenImage(url)
+  }), [
+    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, mainImage, 
+    postButtons, originalText, isProcessingAI, processAI, showTemplates, 
+    buttonTemplates, handleDeleteTemplate, saveButtonTemplate, templateName, 
+    imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
+    syncLocalImages, isActionInProgress, sensors, handleDragEnd, 
+    toggleImageSelection, scheduleDateTime, saveDraft, handlePublish, 
+    submitMsg, SortableImage, processedTextRef
+  ]);
+
+  // ✅ DEBUG LOGS
+  useEffect(() => {
+    console.log(`[App] State changed:`, { 
+      isConstructorOpen, 
+      debouncedTextLength: debouncedText?.length || 0,
+      imagesCount: debouncedImages?.length || 0 
+    });
+  }, [isConstructorOpen, debouncedText, debouncedImages]);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-6">
@@ -1480,7 +1243,6 @@ function AppContent() {
     );
   }
 
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-8">
@@ -1494,7 +1256,7 @@ function AppContent() {
                 <Send size={20} className="text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-lg leading-tight">TG Bot Manager <span className="text-[10px] text-blue-500 font-mono">v5.1.2</span></h1>
+                <h1 className="font-bold text-lg leading-tight">TG Bot Manager <span className="text-[10px] text-blue-500 font-mono">v{APP_VERSION}</span></h1>
                 <p className="text-[10px] text-neutral-500 uppercase tracking-widest">Android Control Panel</p>
               </div>
             </div>
@@ -1778,7 +1540,7 @@ function AppContent() {
                     if (isStandalone) {
                       try {
                         const prompt = "Test connection";
-                        await aiService.processWithAI("Hello", key, prompt, provider);
+                        await aiServiceInstance.processText("Hello", { [provider]: key }, provider);
                         setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
                       } catch (e: any) { setLastError(e.message); }
                       return;
@@ -1866,52 +1628,7 @@ function AppContent() {
       {/* ── Post Constructor ── */}
       <AnimatePresence>
         {isConstructorOpen && (
-          <PostConstructor
-            isOpen={isConstructorOpen}
-            onClose={() => setIsConstructorOpen(false)}
-            isConstructorOpen={isConstructorOpen}
-            setIsConstructorOpen={setIsConstructorOpen}
-            parsedContent={parsedContent}
-            setParsedContent={setParsedContent}
-            aiProcessedText={aiProcessedText}
-            setAiProcessedText={setAiProcessedText}
-            selectedImages={selectedImages}
-            setSelectedImages={setSelectedImages}
-            mainImage={mainImage}
-            setMainImage={setMainImage}
-            postButtons={postButtons}
-            setPostButtons={setPostButtons}
-            originalText={originalText}
-            setOriginalText={setOriginalText}
-            isProcessingAI={isProcessingAI}
-            processAI={processAI}
-            showTemplates={showTemplates}
-            setShowTemplates={setShowTemplates}
-            buttonTemplates={buttonTemplates}
-            handleDeleteTemplate={handleDeleteTemplate}
-            saveButtonTemplate={saveButtonTemplate}
-            templateName={templateName}
-            setTemplateName={setTemplateName}
-            imagePath={imagePath}
-            setImagePath={setImagePath}
-            openFolderBrowser={openFolderBrowser}
-            isBrowserLoading={isBrowserLoading}
-            saveImagePath={handleSaveImagePath}
-            handleFolderSelect={handleFolderSelect}
-            syncLocalImages={syncLocalImages}
-            isActionInProgress={isActionInProgress}
-            sensors={sensors}
-            handleDragEnd={handleDragEnd}
-            toggleImageSelection={toggleImageSelection}
-            scheduleDateTime={scheduleDateTime}
-            setScheduleDateTime={setScheduleDateTime}
-            saveDraft={saveDraft}
-            handlePublish={handlePublish}
-            submitMsg={submitMsg}
-            SortableImage={SortableImage}
-            processedTextRef={processedTextRef}
-            onEnlarge={(url) => setFullScreenImage(url)}
-          />
+          <PostConstructor {...constructorProps} />
         )}
       </AnimatePresence>
 

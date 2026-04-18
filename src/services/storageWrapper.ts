@@ -1,19 +1,17 @@
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
-import fs from 'fs';
-import path from 'path';
 
 const isNative = Capacitor.isNativePlatform();
-const DATA_DIR = 'app_data';
+const DATA_DIR = 'news_bot_data';
 
 export const storageWrapper = {
   async readJsonFile<T>(filePath: string, defaultValue: T): Promise<T> {
     if (isNative) {
       try {
-        const filename = path.basename(filePath);
+        const filename = filePath.split('/').pop() || filePath;
         const result = await Filesystem.readFile({
           path: `${DATA_DIR}/${filename}`,
-          directory: Directory.Data,
+          directory: Directory.Documents,
           encoding: Encoding.UTF8,
         });
         return JSON.parse(result.data as string);
@@ -21,45 +19,37 @@ export const storageWrapper = {
         return defaultValue;
       }
     } else {
-      try {
-        if (fs.existsSync(filePath)) {
-          return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-        }
-      } catch (e) {
-        console.error(`Error reading ${filePath}:`, e);
-      }
-      return defaultValue;
+      const filename = filePath.split('/').pop() || filePath;
+      const data = localStorage.getItem(`wrap_${filename}`);
+      return data ? JSON.parse(data) : defaultValue;
     }
   },
 
   async writeJsonFile(filePath: string, data: any): Promise<void> {
     if (isNative) {
       try {
-        await Filesystem.mkdir({ path: DATA_DIR, directory: Directory.Data, recursive: true });
+        await Filesystem.mkdir({ path: DATA_DIR, directory: Directory.Documents, recursive: true });
       } catch (e) {}
-      const filename = path.basename(filePath);
+      const filename = filePath.split('/').pop() || filePath;
       await Filesystem.writeFile({
         path: `${DATA_DIR}/${filename}`,
         data: JSON.stringify(data, null, 2),
-        directory: Directory.Data,
+        directory: Directory.Documents,
         encoding: Encoding.UTF8,
       });
     } else {
-      try {
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-      } catch (err) {
-        console.error(`Error writing ${filePath}:`, err);
-      }
+      const filename = filePath.split('/').pop() || filePath;
+      localStorage.setItem(`wrap_${filename}`, JSON.stringify(data));
     }
   },
 
   async readTextFile(filePath: string, defaultValue = ''): Promise<string> {
     if (isNative) {
       try {
-        const filename = path.basename(filePath);
+        const filename = filePath.split('/').pop() || filePath;
         const result = await Filesystem.readFile({
           path: `${DATA_DIR}/${filename}`,
-          directory: Directory.Data,
+          directory: Directory.Documents,
           encoding: Encoding.UTF8,
         });
         return (result.data as string).trim();
@@ -67,33 +57,26 @@ export const storageWrapper = {
         return defaultValue;
       }
     } else {
-      try {
-        if (fs.existsSync(filePath)) {
-          return fs.readFileSync(filePath, "utf-8").trim();
-        }
-      } catch {}
-      return defaultValue;
+      const filename = filePath.split('/').pop() || filePath;
+      return localStorage.getItem(`wrap_${filename}`) || defaultValue;
     }
   },
 
   async writeTextFile(filePath: string, content: string): Promise<void> {
     if (isNative) {
       try {
-        await Filesystem.mkdir({ path: DATA_DIR, directory: Directory.Data, recursive: true });
+        await Filesystem.mkdir({ path: DATA_DIR, directory: Directory.Documents, recursive: true });
       } catch (e) {}
-      const filename = path.basename(filePath);
+      const filename = filePath.split('/').pop() || filePath;
       await Filesystem.writeFile({
         path: `${DATA_DIR}/${filename}`,
         data: content,
-        directory: Directory.Data,
+        directory: Directory.Documents,
         encoding: Encoding.UTF8,
       });
     } else {
-      try {
-        fs.writeFileSync(filePath, content, "utf-8");
-      } catch (err) {
-        console.error(`Error writing ${filePath}:`, err);
-      }
+      const filename = filePath.split('/').pop() || filePath;
+      localStorage.setItem(`wrap_${filename}`, content);
     }
   }
 };

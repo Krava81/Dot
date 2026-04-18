@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { storage } from '../services/standaloneService';
-import { SecureStorage } from '../services/secureStorage';
+import { storage } from '../services/storage';
 
 export function useBotSettings(isStandalone: boolean) {
   const [botToken, setBotToken] = useState('');
@@ -8,7 +7,7 @@ export function useBotSettings(isStandalone: boolean) {
 
   const loadSettings = useCallback(async () => {
     if (isStandalone) {
-      const token = await SecureStorage.getToken('bot_token');
+      const token = await storage.getSecure('bot_token');
       if (token) setBotToken(token);
 
       const chatId = await storage.getSetting('chat_id');
@@ -26,7 +25,7 @@ export function useBotSettings(isStandalone: boolean) {
     if (key.includes('bot_token')) {
       setBotToken(value);
       if (isStandalone) {
-        await SecureStorage.setToken('bot_token', value);
+        await storage.setSecure('bot_token', value);
       } else {
         localStorage.setItem('server_bot_token', value);
       }

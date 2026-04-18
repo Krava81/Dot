@@ -4,7 +4,7 @@ import path from "path";
 import { Telegraf } from "telegraf";
 import axios from "axios";
 import * as dotenv from "dotenv";
-import { storageWrapper } from './src/services/storageWrapper';
+import { serverStorage } from './serverStorage';
 import { FileLogger } from './src/serverUtils';
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
@@ -125,51 +125,51 @@ function writeJsonFileSync(filePath: string, data: any): void {
 }
 
 async function loadAllData() {
-  cachedApiKeys       = await storageWrapper.readJsonFile<ApiKeys>(API_KEYS_FILE, {});
-  cachedPosts         = await storageWrapper.readJsonFile<any[]>(POSTS_FILE, []);
-  cachedPublishedPosts = (await storageWrapper.readJsonFile<any[]>(PUBLISHED_POSTS_FILE, [])).map(p => {
+  cachedApiKeys       = await serverStorage.readJsonFile<ApiKeys>(API_KEYS_FILE, {});
+  cachedPosts         = await serverStorage.readJsonFile<any[]>(POSTS_FILE, []);
+  cachedPublishedPosts = (await serverStorage.readJsonFile<any[]>(PUBLISHED_POSTS_FILE, [])).map(p => {
     if (!p.id) p.id = uuidv4();
     return p;
   });
-  cachedTemplates     = await storageWrapper.readJsonFile(TEMPLATES_FILE, { buttons: [], reactions: [] });
-  cachedImagePath     = await storageWrapper.readTextFile(IMAGE_PATH_FILE, "");
-  cachedChatIdPresets = await storageWrapper.readJsonFile<string[]>(CHAT_ID_PRESETS_FILE, ["", "", ""]);
+  cachedTemplates     = await serverStorage.readJsonFile(TEMPLATES_FILE, { buttons: [], reactions: [] });
+  cachedImagePath     = await serverStorage.readTextFile(IMAGE_PATH_FILE, "");
+  cachedChatIdPresets = await serverStorage.readJsonFile<string[]>(CHAT_ID_PRESETS_FILE, ["", "", ""]);
   if (!cachedTemplates.buttons)   cachedTemplates.buttons   = [];
   if (!cachedTemplates.reactions) cachedTemplates.reactions = [];
   
   // Force save templates to ensure file exists
-  await storageWrapper.writeJsonFile(TEMPLATES_FILE, cachedTemplates);
+  await serverStorage.writeJsonFile(TEMPLATES_FILE, cachedTemplates);
 }
 
 function getPersistentApiKeys(): ApiKeys { return cachedApiKeys; }
 async function savePersistentApiKeys(k: ApiKeys) {
   Object.assign(cachedApiKeys, k);
-  await storageWrapper.writeJsonFile(API_KEYS_FILE, cachedApiKeys);
+  await serverStorage.writeJsonFile(API_KEYS_FILE, cachedApiKeys);
 }
 function getPersistentPosts(): any[] { return cachedPosts; }
 async function savePersistentPosts(p: any[]) {
   cachedPosts = p;
-  await storageWrapper.writeJsonFile(POSTS_FILE, cachedPosts);
+  await serverStorage.writeJsonFile(POSTS_FILE, cachedPosts);
 }
 function getPersistentPublishedPosts(): any[] { return cachedPublishedPosts; }
 async function savePersistentPublishedPosts(p: any[]) {
   cachedPublishedPosts = p;
-  await storageWrapper.writeJsonFile(PUBLISHED_POSTS_FILE, cachedPublishedPosts);
+  await serverStorage.writeJsonFile(PUBLISHED_POSTS_FILE, cachedPublishedPosts);
 }
 function getPersistentTemplates(): any { return cachedTemplates; }
 async function savePersistentTemplates(t: any) {
   cachedTemplates = t;
-  await storageWrapper.writeJsonFile(TEMPLATES_FILE, cachedTemplates);
+  await serverStorage.writeJsonFile(TEMPLATES_FILE, cachedTemplates);
 }
 function getPersistentImagePath(): string { return cachedImagePath; }
 async function savePersistentImagePath(p: string) {
   cachedImagePath = p;
-  await storageWrapper.writeTextFile(IMAGE_PATH_FILE, p);
+  await serverStorage.writeTextFile(IMAGE_PATH_FILE, p);
 }
 function getPersistentChatIdPresets(): string[] { return cachedChatIdPresets; }
 async function savePersistentChatIdPresets(p: string[]) {
   cachedChatIdPresets = p;
-  await storageWrapper.writeJsonFile(CHAT_ID_PRESETS_FILE, cachedChatIdPresets);
+  await serverStorage.writeJsonFile(CHAT_ID_PRESETS_FILE, cachedChatIdPresets);
 }
 
 function getPersistentToken(): string {
@@ -183,7 +183,7 @@ function getPersistentToken(): string {
 }
 
 async function savePersistentToken(token: string) {
-  await storageWrapper.writeTextFile(TOKEN_FILE, token);
+  await serverStorage.writeTextFile(TOKEN_FILE, token);
 }
 
 function getPersistentChatId(): string {
@@ -197,7 +197,7 @@ function getPersistentChatId(): string {
 }
 
 async function savePersistentChatId(id: string) {
-  await storageWrapper.writeTextFile(CHAT_ID_FILE, id);
+  await serverStorage.writeTextFile(CHAT_ID_FILE, id);
   console.log(`✅ Saved Chat ID: ${id}`);
 }
 
