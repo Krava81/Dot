@@ -246,6 +246,9 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                           <Folder size={12} className="text-blue-500" /> Путь к папке
                         </label>
                         <div className="flex gap-2">
+                          <button onClick={() => props.openFolderBrowser()} disabled={props.isBrowserLoading} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-blue-400 rounded-lg border border-neutral-700 transition-colors" title="Выбрать папку">
+                            {props.isBrowserLoading ? <Loader2 size={16} className="animate-spin" /> : <FolderOpen size={16} />}
+                          </button>
                           <input 
                             type="text" 
                             value={props.imagePath} 
@@ -253,7 +256,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                             placeholder="DCIM/Camera" 
                             className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/50 font-mono text-white" 
                           />
-                          <button onClick={props.saveImagePath} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg border border-neutral-700 transition-colors">
+                          <button onClick={props.saveImagePath} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg border border-neutral-700 transition-colors" title="Сохранить путь">
                             <Plus size={16} />
                           </button>
                         </div>

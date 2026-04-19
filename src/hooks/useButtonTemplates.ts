@@ -10,7 +10,15 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
     setLoading(true);
     try {
       if (isStandalone) {
-        const t = await storage.loadJson('templates.json', []);
+        let t = await storage.loadJson('templates.json', null);
+        if (t === null) {
+          t = [{
+            id: 'default_template',
+            name: 'Пример (Подписка)',
+            buttons: [{ id: 'b1', text: '🔥 Подписаться', url: 'https://t.me/' }]
+          }];
+          await storage.saveJson('templates.json', t);
+        }
         setButtonTemplates(Array.isArray(t) ? t : []);
       } else {
         const cleanUrl = getCleanBaseUrl();

@@ -68,17 +68,17 @@ const SortableImage = ({ id, url, isMain, onSelect, onSetMain, onEnlarge }: any)
         <img src={url} alt="Post" className="w-full h-full object-cover pointer-events-none" referrerPolicy="no-referrer" />
       </div>
       {isMain && (
-        <div className="absolute top-0 right-0 bg-amber-500 text-neutral-950 text-[6px] font-black px-1.5 py-0.5 rounded-bl-lg uppercase tracking-tighter">
+        <div className="absolute top-0 right-0 bg-amber-500 text-neutral-950 text-[6px] font-black px-1.5 py-0.5 rounded-bl-lg uppercase tracking-tighter z-20">
           Main
         </div>
       )}
-      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 z-20 pointer-events-none">
-        <button className="p-1 bg-white/20 hover:bg-white/30 rounded-full text-white pointer-events-auto" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }} title="Удалить"><Trash2 size={12} /></button>
-        {!isMain && <button className="p-1 bg-amber-500/80 hover:bg-amber-600 rounded-full text-white pointer-events-auto" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSetMain(url); }} title="Главное"><Check size={12} /></button>}
+      <div className="absolute inset-0 bg-black/40 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 z-20 pointer-events-none">
+        <button className="p-2 md:p-1 bg-neutral-900/80 md:bg-white/20 hover:bg-neutral-800 md:hover:bg-white/30 rounded-full text-white pointer-events-auto shadow-md" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }} title="Удалить"><Trash2 size={16} className="md:w-3 md:h-3 text-red-400 md:text-white" /></button>
+        {!isMain && <button className="p-2 md:p-1 bg-amber-500/90 hover:bg-amber-600 rounded-full text-white pointer-events-auto shadow-md" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSetMain(url); }} title="Главное"><Check size={16} className="md:w-3 md:h-3" /></button>}
       </div>
       <div className="absolute top-1 left-1 p-2 touch-none z-[30]" {...attributes} {...listeners}>
-        <div className="p-1 bg-black/70 rounded shadow cursor-grab active:cursor-grabbing">
-          <GripVertical size={12} className="text-white" />
+        <div className="p-1.5 md:p-1 bg-black/70 rounded shadow cursor-grab active:cursor-grabbing">
+          <GripVertical size={14} className="md:w-3 md:h-3 text-white" />
         </div>
       </div>
     </div>
@@ -141,15 +141,18 @@ export default function App() {
 function AppContent() {
   const [isStandalone, setIsStandalone] = useState(false);
 
+  // ─── Startup Default Mode ──────────────────────────────────────────────────
   useEffect(() => {
     const initSettings = async () => {
       try {
         const standalone = await Preferences.get({ key: 'setting_is_standalone' });
-        const val = standalone.value === 'true';
+        // default to standalone (true) if never set
+        const val = standalone.value !== null ? standalone.value === 'true' : true;
         setIsStandalone(val);
         console.log(`[App] Initialized Standalone mode: ${val}`);
       } catch (e) {
         console.error("[App] Failed to load standalone setting", e);
+        setIsStandalone(true);
       }
     };
     initSettings();
@@ -237,6 +240,16 @@ function AppContent() {
   const [filterRecentImages, setFilterRecentImages] = useState(true);
   const [syncedImages, setSyncedImages] = useState<string[]>([]);
   const [submitMsg, setSubmitMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  // ─── Auto-clear submit messages ───────────────────────────────────────────
+  useEffect(() => {
+    if (submitMsg) {
+      const timer = setTimeout(() => {
+        setSubmitMsg(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [submitMsg]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isBrowserLoading, setIsBrowserLoading] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
@@ -914,34 +927,42 @@ function AppContent() {
 
   const runDiagnostics = async () => {
     setIsDiagnosticsRunning(true);
-    addClientLog("🔍 Запуск диагностики сети...");
+    addClientLog("🔍 Запуск расширенной диагностики...");
     
     const targets = [
-      { name: "Google (Web Fetch)", url: "https://www.google.com" },
-      { name: "Telegram (Web Fetch)", url: "https://api.telegram.org" },
+      { name: "Google", url: "https://www.google.com" },
+      { name: "Telegram", url: "https://api.telegram.org" },
+      { name: "Cloudflare IP (1.1.1.1)", url: "https://1.1.1.1" },
     ];
 
+    addClientLog("🌐 Проверка публичного IP...");
+    try {
+      const res = await fetch("https://api.ipify.org?format=json", { cache: 'no-cache' });
+      const data = await res.json();
+      addClientLog(`🌍 Ваш IP в приложении: ${data.ip}`);
+    } catch (e: any) {
+      addClientLog(`❌ Не удалось определить IP. Приложение Off-line.`);
+    }
+
     for (const target of targets) {
-      addClientLog(`🌐 Проверка ${target.name}...`);
+      addClientLog(`🔌 Проверка ${target.name} (Web Fetch)...`);
       try {
         const start = Date.now();
-        // note: mode 'no-cors' needed for google/telegram from web origin
         await fetch(target.url, { mode: 'no-cors', cache: 'no-cache' });
-        const duration = Date.now() - start;
-        addClientLog(`✅ ${target.name}: Доступен (${duration}ms)`);
+        addClientLog(`✅ ${target.name}: Доступен (${Date.now() - start}ms)`);
       } catch (e: any) {
-        addClientLog(`❌ ${target.name}: ОШИБКА. ${e.message}`);
+        addClientLog(`❌ ${target.name}: Ошибка. ${e.message}`);
       }
     }
     
     if (isNative()) {
-       addClientLog(`📱 Проверка через Native HTTP (Capacitor)...`);
+       addClientLog(`📱 Проверка Native HTTP...`);
        try {
-         const res = await CapacitorHttp.request({ url: 'https://api.telegram.org', method: 'GET', connectTimeout: 10000 });
-         addClientLog(`✅ Native Telegram: Статус ${res.status}`);
-         if (res.status === 0) addClientLog("⚠️ Статус 0: Возможно блокировка VPN или Firewall");
+         // Прямой IP одного из серверов Telegram (Data Center 4)
+         const res = await CapacitorHttp.request({ url: 'https://149.154.167.220', method: 'GET', connectTimeout: 10000 });
+         addClientLog(`✅ Native Direct (149.154.167.220): Статус ${res.status}`);
        } catch (e: any) {
-         addClientLog(`❌ Native Telegram: ОШИБКА. ${e.message}`);
+         addClientLog(`❌ Native Direct: ОШИБКА. ${e.message}`);
        }
     }
 
@@ -965,9 +986,49 @@ function AppContent() {
   };
 
   const openFolderBrowser = async (startPath?: string) => {
-    const cleanUrl = getCleanBaseUrl();
-    if (!cleanUrl) return;
     setIsBrowserLoading(true);
+
+    if (isStandalone) {
+      if (isNative()) {
+        try {
+          const current = startPath || ""; // empty means ExternalStorage root
+          const result = await Filesystem.readdir({
+            path: current,
+            directory: Directory.ExternalStorage
+          });
+          
+          const dirs = result.files
+            .filter(f => f.type === 'directory' || !f.name.includes('.')) // fallback for early Capacitor versions
+            .sort((a,b) => a.name.localeCompare(b.name))
+            .map(f => ({
+              name: f.name,
+              path: current ? `${current}/${f.name}` : f.name
+            }));
+            
+          setBrowserPath(current || "/ (Корень хранилища)");
+          setBrowserDirs(dirs);
+          
+          let parent: string | null = null;
+          if (current) {
+            const lastSlash = current.lastIndexOf('/');
+            parent = lastSlash !== -1 ? current.substring(0, lastSlash) : "";
+          }
+          setBrowserParent(parent);
+          setShowFolderBrowser(true);
+        } catch(e: any) {
+          setLastError(`Ошибка обзора папок: ${e.message}`);
+        } finally {
+          setIsBrowserLoading(false);
+        }
+      } else {
+        setLastError("Обзор папок доступен только на устройстве Android.");
+        setIsBrowserLoading(false);
+      }
+      return;
+    }
+
+    const cleanUrl = getCleanBaseUrl();
+    if (!cleanUrl) { setIsBrowserLoading(false); return; }
     try {
       const url = `${cleanUrl}/api/utils/list-dirs${(startPath?.trim()) ? `?path=${encodeURIComponent(startPath)}` : ''}`;
       const res = await universalFetch(url);
