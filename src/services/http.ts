@@ -1,8 +1,15 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
  
+let useNativeHttpSetting = true;
+
+export const setUseNativeHttp = (val: boolean) => {
+  useNativeHttpSetting = val;
+  console.log(`[HTTP] useNativeHttp set to: ${val}`);
+};
+
 const isNative = () => {
   try {
-    return Capacitor.isNativePlatform();
+    return useNativeHttpSetting && Capacitor.isNativePlatform();
   } catch {
     return false;
   }

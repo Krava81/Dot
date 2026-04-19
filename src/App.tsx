@@ -13,7 +13,7 @@ import { storage } from './services/storage';
 import { telegram, TelegramAPI } from './services/telegram';
 import { AIService } from './services/aiService';
 import { AIProcessingError } from './utils/errors';
-import { universalFetch } from './services/http';
+import { universalFetch, setUseNativeHttp } from './services/http';
 import { errorTracker } from './utils/errorTracker';
 import { sanitizeForTelegram } from './utils/telegramHtml';
 import { mdToTelegramHtml, mdToTelegramMarkdown } from './utils/markdown';
@@ -205,6 +205,11 @@ function AppContent() {
       await Preferences.set({ key: 'setting_is_standalone', value });
     } else if (key === 'chat_id') {
       await updateBotSetting('chat_id', value);
+    } else if (key === 'use_native_http') {
+      const isNativeOn = value === 'true';
+      setUseNativeHttpState(isNativeOn);
+      setUseNativeHttp(isNativeOn);
+      await storage.setSetting('use_native_http', value);
     }
   };
 
@@ -227,6 +232,8 @@ function AppContent() {
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isBotOnline, setIsBotOnline] = useState(false);
   const [botRestartCounter, setBotRestartCounter] = useState(0);
+  const [useNativeHttp, setUseNativeHttpState] = useState(true);
+  const [isDiagnosticsRunning, setIsDiagnosticsRunning] = useState(false);
   const [botOffset, setBotOffset] = useState(0);
   const [filterRecentImages, setFilterRecentImages] = useState(true);
   const [syncedImages, setSyncedImages] = useState<string[]>([]);
@@ -484,6 +491,13 @@ function AppContent() {
     if (prefProvider) {
       setServerStatus(prev => ({ ...prev, preferredProvider: prefProvider } as any));
     }
+
+    const nativeHttp = await storage.getSetting('use_native_http');
+    if (nativeHttp !== null) {
+      const isNativeOn = nativeHttp === 'true';
+      setUseNativeHttpState(isNativeOn);
+      setUseNativeHttp(isNativeOn);
+    }
   };
 
   // ─── Standalone Bot Polling ───────────────────────────────────────────────
@@ -525,12 +539,14 @@ function AppContent() {
           setIsBotOnline(false);
           if (e.name === 'AbortError') break;
           
+          const httpMode = isNative() ? "Системный (Native)" : "Браузерный (Fetch)";
           if (e.message?.includes('409') || e.message?.includes('Conflict')) {
-            addClientLog("🔴 ОШИБКА 409: Конфликт! Бот запущен на другом устройстве.");
+            addClientLog(`🔴 ОШИБКА 409: Конфликт! (${httpMode}). Проверьте, не запущен ли бот где-то еще.`);
           } else {
-            const errExt = e.message?.includes('Failed to connect') 
-                ? " (Проблемы с сетью? Нужен VPN?)" 
-                : "";
+            const isNetworkErr = e.message?.toLowerCase().includes('failed') || e.message?.includes('status 0') || e.name === 'NetworkError';
+            const errExt = isNetworkErr 
+                ? `\n🌐 Режим: ${httpMode}\nℹ️ СОВЕТ: Проверьте VPN или смените "Сетевой режим" в настройках.` 
+                : ` (Режим: ${httpMode})`;
             addClientLog(`⚠️ Ошибка Telegram: ${e.message}${errExt}`);
           }
           // Exponential backoff on error
@@ -895,6 +911,43 @@ function AppContent() {
         if (res.ok) { setTemplateName(''); loadButtonTemplates(); }
       }
     } catch (e) { console.error(e); }
+  };
+
+  const runDiagnostics = async () => {
+    setIsDiagnosticsRunning(true);
+    addClientLog("🔍 Запуск диагностики сети...");
+    
+    const targets = [
+      { name: "Google (Web Fetch)", url: "https://www.google.com" },
+      { name: "Telegram (Web Fetch)", url: "https://api.telegram.org" },
+    ];
+
+    for (const target of targets) {
+      addClientLog(`🌐 Проверка ${target.name}...`);
+      try {
+        const start = Date.now();
+        // note: mode 'no-cors' needed for google/telegram from web origin
+        await fetch(target.url, { mode: 'no-cors', cache: 'no-cache' });
+        const duration = Date.now() - start;
+        addClientLog(`✅ ${target.name}: Доступен (${duration}ms)`);
+      } catch (e: any) {
+        addClientLog(`❌ ${target.name}: ОШИБКА. ${e.message}`);
+      }
+    }
+    
+    if (isNative()) {
+       addClientLog(`📱 Проверка через Native HTTP (Capacitor)...`);
+       try {
+         const res = await CapacitorHttp.request({ url: 'https://api.telegram.org', method: 'GET', connectTimeout: 10000 });
+         addClientLog(`✅ Native Telegram: Статус ${res.status}`);
+         if (res.status === 0) addClientLog("⚠️ Статус 0: Возможно блокировка VPN или Firewall");
+       } catch (e: any) {
+         addClientLog(`❌ Native Telegram: ОШИБКА. ${e.message}`);
+       }
+    }
+
+    setIsDiagnosticsRunning(false);
+    addClientLog("🏁 Диагностика завершена.");
   };
 
   const handleDeleteTemplate = async (idOrName: string) => {
@@ -1499,6 +1552,29 @@ function AppContent() {
             </div>
 
             {status?.botError && <div className="text-[10px] text-red-400 p-2 bg-red-500/10 rounded border border-red-500/20 font-mono">⚠️ {status.botError}</div>}
+
+            <div className="bg-neutral-800/40 rounded-xl p-3 border border-neutral-800/60 flex items-center justify-between">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5"><Globe size={10} /> Сетевой режим</span>
+                <span className="text-[9px] text-neutral-500 italic">Использовать системный (Native) HTTP</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => updateSetting('use_native_http', (!useNativeHttp).toString())}
+                  className={`w-10 h-5 rounded-full relative transition-colors ${useNativeHttp ? 'bg-emerald-500' : 'bg-neutral-700'}`}
+                >
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${useNativeHttp ? 'left-[22px]' : 'left-0.5'}`} />
+                </button>
+                <button 
+                  onClick={runDiagnostics} 
+                  disabled={isDiagnosticsRunning} 
+                  className={`p-2 rounded-lg border transition-all ${isDiagnosticsRunning ? 'bg-neutral-800 text-neutral-600 border-neutral-700' : 'bg-blue-600/10 text-blue-400 border-blue-500/20 hover:bg-blue-600/20'}`}
+                  title="Диагностика сети"
+                >
+                  <Activity size={14} className={isDiagnosticsRunning ? 'animate-pulse' : ''} />
+                </button>
+              </div>
+            </div>
 
             <div className="flex flex-wrap gap-2">
               <button onClick={async () => {
