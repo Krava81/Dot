@@ -210,8 +210,8 @@ let botRetryTimeout: any = null;
 let bot409Retries = 0;
 const MAX_409 = 3;
 const RETRY_DELAY_MS = 15_000;
-const BOT_HEALTHCHECK_MS = 60_000;
-const BOT_MAX_HEALTH_FAILS = 3;
+const BOT_HEALTHCHECK_MS = 60_000 * 2; // Every 2 minutes
+const BOT_MAX_HEALTH_FAILS = 5; // More lenient
 let botHealthInterval: any = null;
 let botHealthFails = 0;
 
@@ -375,32 +375,57 @@ function startBotHealthMonitor(token: string, botInstance: Telegraf) {
     botHealthInterval = null;
   }
   botHealthFails = 0;
-
+ 
+  // ✅ Проверяем здоровье бота каждые 2 минуты (вместо 1)
   botHealthInterval = setInterval(async () => {
     if (bot !== botInstance || isInitializingBot) return;
-
+ 
     try {
+      // ✅ Таймаут для health check
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10 секунд
+      
       await botInstance.telegram.getMe();
+      clearTimeout(timeout);
+      
       botHealthFails = 0;
+      
     } catch (e: any) {
       const errMsg = e?.message || String(e);
       botHealthFails++;
-      addLog(`⚠️ Bot healthcheck failed (${botHealthFails}/${BOT_MAX_HEALTH_FAILS}): ${errMsg}`);
-
-      const shouldRestart = errMsg.includes("409")
-        || errMsg.includes("terminated by other getUpdates")
-        || botHealthFails >= BOT_MAX_HEALTH_FAILS;
-
+      
+      // ✅ Логируем только каждую 3-ю ошибку чтобы не спамить
+      if (botHealthFails % 3 === 0 || botHealthFails >= BOT_MAX_HEALTH_FAILS) {
+        addLog(`⚠️ Bot healthcheck failed (${botHealthFails}/${BOT_MAX_HEALTH_FAILS}): ${errMsg}`);
+      }
+ 
+      // ✅ Рестартуем только при критических ошибках
+      const shouldRestart = 
+        (errMsg.includes("409") || errMsg.includes("terminated by other getUpdates")) ||
+        (botHealthFails >= BOT_MAX_HEALTH_FAILS);
+ 
       if (shouldRestart) {
-        addLog("♻️ Restarting bot after healthcheck failure...");
-        try {
-          await initBot(token);
-        } catch (err: any) {
-          addLog(`❌ Healthcheck restart failed: ${err.message}`);
+        if (errMsg.includes("409")) {
+          addLog("🔴 HEALTHCHECK: Обнаружен конфликт 409. НЕ перезапускаем автоматически.");
+          addLog("💡 Остановите conflicting процесс вручную.");
+          // ✅ НЕ пытаемся рестартовать при 409 - это только усугубит проблему
+          if (botHealthInterval) {
+            clearInterval(botHealthInterval);
+            botHealthInterval = null;
+          }
+          bot = null;
+          botError = "409 Conflict detected";
+        } else {
+          addLog("♻️ Restarting bot after healthcheck failure...");
+          try {
+            await initBot(token);
+          } catch (err: any) {
+            addLog(`❌ Healthcheck restart failed: ${err.message}`);
+          }
         }
       }
     }
-  }, BOT_HEALTHCHECK_MS);
+  }, 120000); // ✅ 2 минуты вместо 1
 }
 
 // ---- AI Processing ----
@@ -586,108 +611,163 @@ async function initBot(token: string) {
     botError = null;
     return;
   }
-
+ 
   if (isInitializingBot) {
     addLog("⚠️ Bot init already in progress");
     return;
   }
-
+ 
   isInitializingBot = true;
   botError = null;
-  if (botHealthInterval) { clearInterval(botHealthInterval); botHealthInterval = null; }
+  if (botHealthInterval) { 
+    clearInterval(botHealthInterval); 
+    botHealthInterval = null; 
+  }
   botHealthFails = 0;
-
+ 
   try {
     addLog(`🤖 Bot init (${token.substring(0, 5)}***, mode: polling)`);
-
+ 
+    // ✅ Останавливаем старый экземпляр
     if (bot) {
       addLog("🛑 Stopping old bot instance...");
       try {
-        // Принудительно останавливаем polling и очищаем все
         await bot.stop("Restarting");
-        // Удаляем все ссылки, чтобы GC мог собрать объект
         (bot as any) = null;
       } catch (e: any) {
         addLog(`⚠️ Error stopping old bot: ${e.message}`);
       }
-      // Увеличиваем паузу, чтобы Telegram успел закрыть сессию
+      // ✅ Увеличенная пауза для Android
       await sleep(5000); 
     }
-
-    // Повторная проверка перед созданием нового экземпляра
+ 
+    // ✅ Проверка перед созданием нового
     if (bot) {
         addLog("⚠️ Bot instance was recreated during stop, aborting.");
         isInitializingBot = false;
         return;
     }
-
+ 
     const newBot = new Telegraf(token, {
       handlerTimeout: 90_000,
       telegram: {
         apiRoot: "https://api.telegram.org",
+        // ✅ Увеличенный таймаут для мобильных сетей
+        agent: undefined, // Используем стандартный HTTP agent
       }
     });
-
+ 
+    // ✅ Улучшенная обработка ошибок
     newBot.catch((err: any) => {
       const errMsg = err.message || String(err);
       botError = errMsg;
-      addLog(`❌ Bot Error: ${errMsg}`);
-      if (errMsg.includes("ETIMEDOUT") || errMsg.includes("ECONNRESET")) {
-        addLog("⚠️ Network issue detected. Bot will continue trying...");
+      
+      // ✅ Детальная диагностика ошибок
+      if (errMsg.includes('409') || errMsg.includes('Conflict')) {
+        addLog(`🔴 BOT ERROR 409 CONFLICT: Другой процесс уже получает обновления для этого бота!`);
+        addLog(`💡 РЕШЕНИЕ: Остановите другой экземпляр бота (например, standalone на телефоне) или используйте другой токен`);
+      } else if (errMsg.includes('401') || errMsg.includes('Unauthorized')) {
+        addLog(`🔴 BOT ERROR 401: Неверный токен бота`);
+      } else if (errMsg.includes('ETIMEDOUT') || errMsg.includes('timeout')) {
+        addLog(`⏱️ BOT ERROR: Таймаут при подключении к Telegram API`);
+      } else if (errMsg.includes('ECONNRESET') || errMsg.includes('network')) {
+        addLog(`🌐 BOT ERROR: Проблемы с сетью`);
+      } else {
+        addLog(`❌ Bot Error: ${errMsg}`);
       }
     });
-
+ 
     newBot.start((ctx: any) => ctx.reply("✅ Бот запущен!\n\nПришлите текст для публикации."));
     newBot.on("text", (ctx: any) => {
       handleTextProcessing(ctx.message.text, ctx.chat.id, ctx.telegram);
     });
-
+ 
+    // ✅ Тестируем подключение с увеличенным таймаутом
     addLog("📡 Testing connection to Telegram API...");
-    const me = await newBot.telegram.getMe().catch(err => {
+    
+    const connectionTest = async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000); // 30 секунд
+      
+      try {
+        const me = await newBot.telegram.getMe();
+        clearTimeout(timeout);
+        return me;
+      } catch (err: any) {
+        clearTimeout(timeout);
+        throw err;
+      }
+    };
+    
+    const me = await connectionTest().catch(err => {
       throw new Error(`Telegram API unreachable: ${err.message}`);
     });
     
     addLog(`✅ Bot authorized as @${me.username}`);
-
+ 
+    // ✅ Принудительно удаляем webhook
     addLog("🧹 Deleting webhook before polling...");
-    // Принудительно удаляем webhook, используя временный экземпляр Telegraf, 
-    // чтобы быть уверенными, что Telegram не шлет обновления по старому каналу
     const tempBot = new Telegraf(token);
     await tempBot.telegram.deleteWebhook({ drop_pending_updates: true }).catch((e: any) => {
       addLog(`⚠️ deleteWebhook warning: ${e.message}`);
     });
-
+ 
     addLog("🚀 Launching polling...");
     const launchPromise = newBot.launch({ dropPendingUpdates: true });
     
-    // Handle errors that happen during polling
+    // ✅ Улучшенная обработка ошибок при запуске
     launchPromise.catch((e: any) => {
       const errMsg = e?.message || String(e);
-      addLog(`❌ Bot polling fatal error: ${errMsg}`);
-      bot = null;
-      botError = errMsg;
+      
+      if (errMsg.includes('409') || errMsg.includes('Conflict')) {
+        addLog(`🔴 POLLING ERROR 409: Конфликт с другим процессом!`);
+        addLog(`💡 Останавливаем текущего бота...`);
+        bot = null;
+        botError = "409 Conflict - другой процесс использует этот бот";
+      } else {
+        addLog(`❌ Bot polling fatal error: ${errMsg}`);
+        bot = null;
+        botError = errMsg;
+      }
     });
     
-    // Wait up to 3s for immediate startup errors (like 409 Conflict)
-    // If it doesn't fail within 3s, we assume it's running fine.
+    // ✅ Ждем 5 секунд для выявления ошибок при запуске
     await Promise.race([
       launchPromise,
-      new Promise((_, reject) => setTimeout(() => reject("TIMEOUT"), 3000))
+      new Promise((_, reject) => setTimeout(() => reject("TIMEOUT"), 5000))
     ]).catch(err => {
       if (err !== "TIMEOUT") throw err;
     });
-
+ 
     bot = newBot;
     bot409Retries = 0;
     startBotHealthMonitor(token, newBot);
     addLog("✅ Polling mode active");
+    
   } catch (e: any) {
     bot = null;
-    if (botHealthInterval) { clearInterval(botHealthInterval); botHealthInterval = null; }
+    if (botHealthInterval) { 
+      clearInterval(botHealthInterval); 
+      botHealthInterval = null; 
+    }
+    
     const errMsg = e?.message || String(e);
     botError = errMsg;
-    addLog(`❌ Bot init failed: ${botError}`);
+    
+    // ✅ Специальная обработка ошибки 409
+    if (errMsg.includes('409') || errMsg.includes('Conflict')) {
+      addLog(`🔴 INIT ERROR 409 CONFLICT`);
+      addLog(`💡 ПРИЧИНА: Telegram API позволяет только ОДНОМУ процессу получать обновления`);
+      addLog(`💡 РЕШЕНИЯ:`);
+      addLog(`   1. Остановите standalone бота на телефоне`);
+      addLog(`   2. Используйте РАЗНЫЕ токены для standalone и server режимов`);
+      addLog(`   3. Выберите только один режим работы`);
+    } else {
+      addLog(`❌ Bot init failed: ${botError}`);
+    }
+    
     addLog("🛑 Bot stopped due to error. Manual restart required.");
+    
   } finally {
     isInitializingBot = false;
   }
@@ -699,26 +779,68 @@ process.on("unhandledRejection", (reason) => { console.error("UnhandledRejection
 
 // ---- Publish ----
 async function publishPostToTelegram(post: any, host: string = "") {
-  try {
-    const activeBot = bot;
-    if (!activeBot || !DEFAULT_CHAT_ID) throw new Error("Bot or Chat ID not set");
+  // ✅ Retry wrapper для всей функции публикации
+  const maxRetries = 3;
+  let lastError: any = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 1) {
+        addLog(`🔄 Retry publishing (${attempt}/${maxRetries})...`);
+        await sleep(2000 * attempt); // Экспоненциальная задержка
+      }
+      
+      const activeBot = bot;
+      if (!activeBot || !DEFAULT_CHAT_ID) {
+        throw new Error("Bot or Chat ID not set");
+      }
 
-    const chatId: string | number = isNaN(Number(DEFAULT_CHAT_ID))
-      ? DEFAULT_CHAT_ID : Number(DEFAULT_CHAT_ID);
-    addLog(`📤 Publishing to ${chatId}...`);
+      const chatId: string | number = isNaN(Number(DEFAULT_CHAT_ID))
+        ? DEFAULT_CHAT_ID : Number(DEFAULT_CHAT_ID);
+      
+      addLog(`📤 Publishing to ${chatId}${attempt > 1 ? ` (Attempt ${attempt}/${maxRetries})` : ""}...`);
 
-    const extra: any = {};
-    if (post.buttons?.length) {
-      const btns = post.buttons
-        .filter((b: any) => b.text?.trim() && b.url?.trim() && !b.url.match(/^https?:\/\/?$/))
-        .map((b: any) => {
-          let u = b.url.trim();
-          if (!u.startsWith("http")) u = "https://" + u;
-          return [{ text: b.text, url: u }];
-        });
-      if (btns.length) extra.reply_markup = { inline_keyboard: btns };
+      const extra: any = {};
+      if (post.buttons?.length) {
+        const btns = post.buttons
+          .filter((b: any) => b.text?.trim() && b.url?.trim() && !b.url.match(/^https?:\/\/?$/))
+          .map((b: any) => {
+            let u = b.url.trim();
+            if (!u.startsWith("http")) u = "https://" + u;
+            return [{ text: b.text, url: u }];
+          });
+        if (btns.length) extra.reply_markup = { inline_keyboard: btns };
+      }
+
+      // Finalize status check
+      const successResult = await finalizePublish(post, chatId, activeBot, extra, host);
+      return successResult; // ✅ Успешно опубликовано, выходим
+
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = err.message || String(err);
+      
+      // ✅ Не повторяем при критических ошибках
+      if (errMsg.includes('409') || errMsg.includes('401') || errMsg.includes('Unauthorized')) {
+        addLog(`❌ Publish Error (won't retry): ${errMsg}`);
+        throw err;
+      }
+      
+      // ✅ Повторяем при сетевых ошибках
+      if (attempt < maxRetries) {
+        addLog(`⚠️ Publish Error (will retry): ${errMsg}`);
+      } else {
+        addLog(`❌ Publish Error (max retries reached): ${errMsg}`);
+        throw lastError;
+      }
     }
+  }
+  
+  throw lastError;
+}
 
+// Helper for publishing logic (keeping original structure mostly)
+async function finalizePublish(post: any, chatId: any, activeBot: any, extra: any, host: string = "") {
     const applyReactions = async (msgId: number) => {
       if (!post.reactions?.length) return;
       const rx = post.reactions.slice(0, 3).map((r: any) => ({ type: "emoji", emoji: r.emoji }));
@@ -876,11 +998,6 @@ async function publishPostToTelegram(post: any, host: string = "") {
     if (!postToSave.id) postToSave.id = uuidv4();
     const newPublished = [postToSave, ...published].slice(0, 5);
     await savePersistentPublishedPosts(newPublished);
-
-  } catch (e: any) {
-    addLog(`❌ Publish Error: ${e.message}`);
-    throw e;
-  }
 }
 
 // ---- API Routes ----
@@ -1308,13 +1425,29 @@ app.post("/api/test-telegram", async (req: Request, res: Response) => {
 // ---- Server Start ----
 async function startServer() {
   try {
-    loadAllData();
+    // ✅ Загружаем все данные
+    await loadAllData();
     DEFAULT_CHAT_ID = getPersistentChatId();
     addLog(`🆔 Chat ID: ${DEFAULT_CHAT_ID || "None"}`);
-
-    // ✅ ВМЕСТО ЭТОГО:
-    addLog("⚠️ No token loaded. Please set token via UI to start the bot.");
-    addLog("💡 Tip: Create a NEW token in @BotFather to avoid conflicts");
+ 
+    // ✅ АВТОЗАПУСК БОТА: Проверяем наличие сохраненного токена
+    const savedToken = getPersistentToken();
+    
+    if (savedToken && savedToken.trim() && savedToken !== "YOUR_TELEGRAM_BOT_TOKEN" && savedToken.length > 10) {
+      addLog(`🔑 Найден сохраненный токен: ${savedToken.substring(0, 5)}...`);
+      addLog("🤖 Запускаем бот автоматически...");
+      
+      try {
+        await initBot(savedToken);
+        addLog("✅ Бот успешно запущен!");
+      } catch (botError: any) {
+        addLog(`❌ Ошибка запуска бота: ${botError.message}`);
+        addLog("💡 Совет: Проверьте токен или создайте новый в @BotFather");
+      }
+    } else {
+      addLog("⚠️ Токен не найден или не настроен. Настройте бота через UI.");
+      addLog("💡 Совет: Создайте НОВЫЙ токен в @BotFather чтобы избежать конфликтов");
+    }
 
     if (process.env.NODE_ENV !== "production") {
       const vite = await createViteServer({

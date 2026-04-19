@@ -1,21 +1,26 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { universalFetch } from "./http";
 import { errorTracker } from "../utils/errorTracker";
 import { AIProcessingError } from "../utils/errors";
 import { DEFAULT_AI_PROMPT } from "../constants/prompts";
-
+ 
 export interface AIServiceConfig {
   maxRetries: number;
   retryDelay: number;
+  timeout: number; 
 }
-
+ 
 export class AIService {
   private config: AIServiceConfig;
-
-  constructor(config: AIServiceConfig = { maxRetries: 3, retryDelay: 2000 }) {
+ 
+  constructor(config: AIServiceConfig = { 
+    maxRetries: 5,
+    retryDelay: 3000,
+    timeout: 120000
+  }) {
     this.config = config;
   }
-
+ 
   async processText(
     text: string,
     keys: Record<string, string>,
@@ -26,23 +31,31 @@ export class AIService {
     const effective = preferredProvider || "gemini";
     const ordered = [effective, ...providers.filter(p => p !== effective)];
     const lastErrors: string[] = [];
-
+ 
     for (let cycle = 1; cycle <= this.config.maxRetries; cycle++) {
       if (cycle > 1) {
         logCallback(`🔄 AI retry ${cycle}/${this.config.maxRetries}...`);
-        await new Promise(resolve => setTimeout(resolve, this.config.retryDelay));
+        const delay = this.config.retryDelay * Math.pow(1.5, cycle - 1);
+        await new Promise(resolve => setTimeout(resolve, Math.min(delay, 10000)));
       }
-
+ 
       for (const provider of ordered) {
         const apiKey = keys[provider];
         if (!apiKey) {
           if (cycle === 1) lastErrors.push(`${provider}: no API key configured`);
           continue;
         }
-
+ 
         try {
-          console.log(`[AI] Provider: ${provider}, Text length: ${text.length}`);
-          const result = await this.callProvider(provider, apiKey, text, logCallback);
+          console.log(`[AI] Provider: ${provider}, Text length: ${text.length}, Attempt: ${cycle}`);
+          
+          const result = await Promise.race([
+            this.callProvider(provider, apiKey, text, logCallback),
+            new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error('AI request timeout')), this.config.timeout)
+            )
+          ]);
+          
           if (result && result.trim()) {
             logCallback(`✅ AI processing succeeded using provider: ${provider}`);
             return result.trim();
@@ -51,15 +64,25 @@ export class AIService {
         } catch (err: any) {
           const msg = err.message || String(err);
           errorTracker.track(err, `AIService.processText.${provider}.cycle${cycle}`);
-          logCallback(`❌ AI Provider ${provider} error: ${msg}`);
+          
+          if (msg.includes('timeout')) {
+            logCallback(`⏱️ AI Provider ${provider} timeout (slow connection)`);
+          } else if (msg.includes('429') || msg.includes('quota')) {
+            logCallback(`🚫 AI Provider ${provider} quota exceeded`);
+          } else if (msg.includes('network') || msg.includes('ECONNREFUSED')) {
+            logCallback(`🌐 AI Provider ${provider} network error`);
+          } else {
+            logCallback(`❌ AI Provider ${provider} error: ${msg}`);
+          }
+          
           lastErrors.push(`${provider}: ${msg}`);
         }
       }
     }
-
+ 
     throw new AIProcessingError("Все AI провайдеры не сработали", lastErrors);
   }
-
+ 
   private async callProvider(
     provider: string,
     apiKey: string,
@@ -67,10 +90,10 @@ export class AIService {
     logCallback: (msg: string) => void
   ): Promise<string> {
     const prompt = `${DEFAULT_AI_PROMPT}
-
+ 
 ТЕКСТ ДЛЯ ОБРАБОТКИ:
 ${text}`;
-
+ 
     switch (provider) {
       case 'gemini':
         return this.callGemini(apiKey, prompt, logCallback);
@@ -84,27 +107,45 @@ ${text}`;
         throw new Error(`Unknown provider: ${provider}`);
     }
   }
-
+ 
   private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
-    logCallback(`📡 Google Gemini (gemini-2.0-flash)...`);
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash", // Using a standard stable model
-      contents: [{ parts: [{ text: prompt }] }],
+    logCallback(`📡 Google Gemini (gemini-2.0-flash-exp)...`);
+    
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.0-flash-exp",
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 4000
+      }
     });
     
-    if (!response.text) {
-      throw new Error("Gemini returned no text content");
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
+    
+    if (!text || !text.trim()) {
+      throw new Error("Gemini returned empty response");
     }
-    return response.text;
+    
+    return text;
   }
-
+ 
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     logCallback(`📡 GitHub Models (gpt-4o-mini)...`);
     const url = "https://models.inference.ai.azure.com/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
-      headers: { "Authorization": `Bearer ${apiKey}` },
+      headers: { 
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
       body: {
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
@@ -112,44 +153,77 @@ ${text}`;
         max_tokens: 4000
       }
     });
-
+ 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || `GitHub AI error ${response.status}`);
-    return data.choices?.[0]?.message?.content || "";
+    if (!response.ok) {
+      const errorMsg = data.error?.message || `GitHub AI error ${response.status}`;
+      throw new Error(errorMsg);
+    }
+    
+    const content = data.choices?.[0]?.message?.content || "";
+    if (!content.trim()) {
+      throw new Error("GitHub returned empty response");
+    }
+    
+    return content;
   }
-
+ 
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     logCallback(`📡 OpenRouter (gpt-4o-mini)...`);
     const url = "https://openrouter.ai/api/v1/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
-      headers: { "Authorization": `Bearer ${apiKey}` },
+      headers: { 
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
       body: {
         model: "openai/gpt-4o-mini",
         messages: [{ role: "user", content: prompt }]
       }
     });
-
+ 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || `OpenRouter error ${response.status}`);
-    return data.choices?.[0]?.message?.content || "";
+    if (!response.ok) {
+      const errorMsg = data.error?.message || `OpenRouter error ${response.status}`;
+      throw new Error(errorMsg);
+    }
+    
+    const content = data.choices?.[0]?.message?.content || "";
+    if (!content.trim()) {
+      throw new Error("OpenRouter returned empty response");
+    }
+    
+    return content;
   }
-
+ 
   private async callDeepSeek(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     logCallback(`📡 DeepSeek (deepseek-chat)...`);
     const url = "https://api.deepseek.com/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
-      headers: { "Authorization": `Bearer ${apiKey}` },
+      headers: { 
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
       body: {
         model: "deepseek-chat",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.1
       }
     });
-
+ 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || `DeepSeek error ${response.status}`);
-    return data.choices?.[0]?.message?.content || "";
+    if (!response.ok) {
+      const errorMsg = data.error?.message || `DeepSeek error ${response.status}`;
+      throw new Error(errorMsg);
+    }
+    
+    const content = data.choices?.[0]?.message?.content || "";
+    if (!content.trim()) {
+      throw new Error("DeepSeek returned empty response");
+    }
+    
+    return content;
   }
 }

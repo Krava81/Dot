@@ -10,8 +10,9 @@ export const MAX_TELEGRAM_CAPTION_LENGTH = 1024;
 export const MAX_TELEGRAM_MESSAGE_LENGTH = 4096;
 
 export const RETRY_CONFIG = {
-  maxRetries: 3,
-  retryDelay: 2000,
+  maxRetries: 5,
+  retryDelay: 3000,
+  timeout: 120000,
 };
 
 export const LOG_LIMIT = 50;
