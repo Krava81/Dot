@@ -1,5 +1,6 @@
 import { errorTracker } from '../utils/errorTracker';
 import { universalFetch } from './http';
+import { Filesystem } from '@capacitor/filesystem';
 
 export class TelegramAPI {
   private token: string;
@@ -16,6 +17,7 @@ export class TelegramAPI {
       photo.startsWith('data:image') ||
       photo.startsWith('blob:') ||
       photo.startsWith('content://') ||
+      photo.startsWith('file://') ||
       photo.includes('/_capacitor_file_/') ||
       photo.includes('capacitor://')
     );
@@ -25,6 +27,26 @@ export class TelegramAPI {
     if (photo.startsWith('data:image')) {
       const response = await fetch(photo);
       return response.blob();
+    }
+    
+    try {
+      if (photo.includes('/_capacitor_file_/') || photo.includes('capacitor://') || photo.startsWith('file://')) {
+        let cleanPath = photo;
+        if (photo.includes('/_capacitor_file_/')) {
+          cleanPath = photo.split('/_capacitor_file_/')[1];
+          if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+        } else if (photo.startsWith('capacitor://localhost/_capacitor_file_/')) {
+          cleanPath = photo.replace('capacitor://localhost/_capacitor_file_/', '/');
+        } else if (photo.startsWith('file://')) {
+          cleanPath = photo.replace('file://', '');
+        }
+        
+        const fileContent = await Filesystem.readFile({ path: cleanPath });
+        const base64Response = await fetch(`data:image/jpeg;base64,${fileContent.data}`);
+        return base64Response.blob();
+      }
+    } catch (e) {
+      console.warn("Filesystem read failed, falling back to fetch:", e);
     }
 
     const response = await fetch(photo);

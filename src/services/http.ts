@@ -87,11 +87,7 @@ export async function universalFetch(url: string, options: any = {}) {
     if (isNative()) {
       let requestData: any = undefined;
       if (options.method && options.method.toUpperCase() !== 'GET' && options.body) {
-        try { 
-          requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; 
-        } catch { 
-          requestData = options.body; 
-        }
+        requestData = options.body;
       }
       
       try {

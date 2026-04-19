@@ -295,14 +295,14 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       </div>
                     </div>
 
-                    {(props.parsedContent?.images?.length || 0) > 0 && (
+                    {((props.parsedContent?.images?.length || 0) > 0 || (props.syncedImages?.length || 0) > 0) && (
                       <div className="pt-4 border-t border-neutral-800">
                         <div className="flex items-center justify-between mb-2">
-                          <div className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Галерея ({props.parsedContent?.images.length})</div>
+                          <div className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Галерея ({(props.parsedContent?.images?.length || 0) + (props.syncedImages?.length || 0)})</div>
                           {props.isActionInProgress && <Loader2 size={12} className="animate-spin text-blue-500" />}
                         </div>
                         <div className="grid grid-cols-6 gap-1.5 max-h-[300px] overflow-y-auto pr-2">
-                          {props.parsedContent?.images.map((img, idx) => {
+                          {[...(props.parsedContent?.images || []), ...(props.syncedImages || [])].map((img, idx) => {
                             const isSelected = props.selectedImages.includes(img);
                             return (
                               <div 

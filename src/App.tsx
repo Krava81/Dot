@@ -67,16 +67,17 @@ const SortableImage = ({ id, url, onSelect, onEnlarge }: any) => {
       <div className="w-full h-full cursor-pointer" onClick={() => onEnlarge(url)}>
         <img src={url} alt="Post" className="w-full h-full object-cover pointer-events-none" referrerPolicy="no-referrer" />
       </div>
-      <div className="absolute inset-0 bg-black/40 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 z-20 pointer-events-none">
-        <button className="p-3 md:p-2 bg-neutral-900/80 md:bg-white/20 hover:bg-neutral-800 md:hover:bg-white/30 rounded-full text-white pointer-events-auto shadow-md" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }} title="Удалить"><Trash2 size={18} className="md:w-4 md:h-4 text-red-400 md:text-white" /></button>
-      </div>
-      <div className="absolute top-1 left-1 p-2 touch-none z-[30]" {...attributes} {...listeners}>
-        <div className="p-1.5 md:p-1 bg-black/70 rounded shadow cursor-grab active:cursor-grabbing">
-          <GripVertical size={14} className="md:w-3 md:h-3 text-white" />
+      <button 
+        className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-500/80 rounded-full text-white cursor-pointer shadow-md pointer-events-auto" 
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }}
+        title="Удалить"
+      >
+        <X size={14} />
+      </button>
+      <div className="absolute top-1 left-1 p-1 touch-none pointer-events-auto z-[30]" {...attributes} {...listeners}>
+        <div className="p-1 bg-black/60 rounded shadow cursor-grab active:cursor-grabbing">
+          <GripVertical size={12} className="text-white" />
         </div>
-      </div>
-      <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 rounded text-[10px] text-white/50 pointer-events-none z-10">
-        Перетащите
       </div>
     </div>
   );
@@ -361,24 +362,9 @@ function AppContent() {
           if (imgs.length === 0) {
             setLastError(`В папке "${pathToScan}" не найдено изображений. Проверьте путь.`);
           } else {
-            const imgUris = imgs.map(i => i.uri);
+            const imgUris = imgs.map(i => i.uri).slice(-50); // limit gallery to 50
             setSyncedImages(imgUris);
-            setSelectedImages(prev => {
-              const combined = [...new Set([...prev, ...imgUris])];
-              return combined.slice(-50);
-            });
-            
-            if (imgUris.length > 0 && !mainImage) {
-              setMainImage(imgUris[0]);
-            }
-            
-            setParsedContent(prev => ({
-              title: prev?.title || '',
-              text: prev?.text || '',
-              images: imgUris
-            }));
-
-            setSubmitMsg({ type: 'success', text: `Синхронизировано ${imgs.length} изображений` });
+            setSubmitMsg({ type: 'success', text: `Найдено ${imgs.length} изображений` });
           }
 
           if (shouldSavePath && pathToScan) {
@@ -469,7 +455,15 @@ function AppContent() {
     const d = await storage.loadJson('drafts.json');
     setDrafts(Array.isArray(d) ? d : []);
     
-    const t = await storage.loadJson('templates.json');
+    let t = await storage.loadJson('templates.json', null);
+    if (t === null) {
+      t = [{
+        id: 'default_template',
+        name: 'Пример (Подписка)',
+        buttons: [{ id: 'b1', text: '🔥 Подписаться', url: 'https://t.me/' }]
+      }];
+      await storage.saveJson('templates.json', t);
+    }
     setButtonTemplates(Array.isArray(t) ? t : []);
     
     const p = await storage.loadJson('published.json');
@@ -912,7 +906,8 @@ function AppContent() {
         currentTemplates.push({ id: Date.now().toString(), name: templateName, buttons: postButtons });
         await storage.saveJson('templates.json', currentTemplates);
         setTemplateName('');
-        loadAllStandaloneData();
+        const t = await storage.loadJson('templates.json', []);
+        setButtonTemplates(Array.isArray(t) ? t : []);
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
@@ -1311,6 +1306,7 @@ function AppContent() {
     setAiProcessedText,
     selectedImages,
     setSelectedImages,
+    syncedImages,
     mainImage,
     setMainImage,
     postButtons,

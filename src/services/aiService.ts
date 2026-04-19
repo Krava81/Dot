@@ -109,38 +109,39 @@ ${text}`;
   }
  
   private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
-    const modelId = "gemini-2.0-flash";
-    logCallback(`📡 Google Gemini (${modelId})...`);
-    
-    try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ 
-        model: modelId,
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 4000
+    const models = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"];
+    const genAI = new GoogleGenerativeAI(apiKey);
+    let lastError: any = null;
+
+    for (const modelId of models) {
+      logCallback(`📡 Google Gemini (${modelId})...`);
+      try {
+        const model = genAI.getGenerativeModel({ 
+          model: modelId,
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          ],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+        });
+        
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        
+        if (!text || !text.trim()) {
+          throw new Error("Gemini returned empty response");
         }
-      });
-      
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      const text = response.text();
-      
-      if (!text || !text.trim()) {
-        throw new Error("Gemini returned empty response");
+        
+        return text;
+      } catch (e: any) {
+        logCallback(`⚠️ Gemini Model ${modelId} failed: ${e.message}`);
+        lastError = e;
       }
-      
-      return text;
-    } catch (e: any) {
-      console.error("[AI Gemini] Fatal error:", e);
-      throw e;
     }
+    
+    throw lastError;
   }
  
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
@@ -148,18 +149,10 @@ ${text}`;
     const url = "https://models.inference.ai.azure.com/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
-      headers: { 
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1,
-        max_tokens: 4000
-      }
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: { model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4000 }
     });
- 
+
     const data = await response.json();
     if (!response.ok) {
       const errorMsg = data.error?.message || `GitHub AI error ${response.status}`;
@@ -167,24 +160,24 @@ ${text}`;
     }
     
     const content = data.choices?.[0]?.message?.content || "";
-    if (!content.trim()) {
-      throw new Error("GitHub returned empty response");
-    }
+    if (!content.trim()) throw new Error("GitHub returned empty response");
     
     return content;
   }
  
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
-    logCallback(`📡 OpenRouter (gpt-4o-mini)...`);
+    const defaultModel = "anthropic/claude-3.5-sonnet";
+    logCallback(`📡 OpenRouter (${defaultModel})...`);
     const url = "https://openrouter.ai/api/v1/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
       headers: { 
         "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://newsbot.manager", // recommended by OpenRouter
       },
       body: {
-        model: "openai/gpt-4o-mini",
+        model: defaultModel,
         messages: [{ role: "user", content: prompt }]
       }
     });
