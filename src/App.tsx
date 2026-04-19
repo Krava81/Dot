@@ -226,6 +226,7 @@ function AppContent() {
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isBotOnline, setIsBotOnline] = useState(false);
+  const [botRestartCounter, setBotRestartCounter] = useState(0);
   const [botOffset, setBotOffset] = useState(0);
   const [filterRecentImages, setFilterRecentImages] = useState(true);
   const [syncedImages, setSyncedImages] = useState<string[]>([]);
