@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+
 import { universalFetch } from "./http";
 import { errorTracker } from "../utils/errorTracker";
 import { AIProcessingError } from "../utils/errors";
@@ -40,7 +40,7 @@ export class AIService {
       }
  
       for (const provider of ordered) {
-        const apiKey = keys[provider];
+        const apiKey = (keys[provider] || "").trim();
         if (!apiKey) {
           if (cycle === 1) lastErrors.push(`${provider}: no API key configured`);
           continue;
@@ -108,40 +108,50 @@ ${text}`;
     }
   }
  
-  private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
+    private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     const models = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"];
-    const genAI = new GoogleGenerativeAI(apiKey);
     let lastError: any = null;
 
     for (const modelId of models) {
       logCallback(`📡 Google Gemini (${modelId})...`);
       try {
-        const model = genAI.getGenerativeModel({ 
-          model: modelId,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+        const response = await universalFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 4000 },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+            ]
+          }
         });
+
+        const data = await response.json();
         
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
+        if (!response.ok) {
+          const errorMsg = data.error?.message || `Gemini API error ${response.status}`;
+          throw new Error(errorMsg);
+        }
+
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
         
         if (!text || !text.trim()) {
           throw new Error("Gemini returned empty response");
         }
         
-        return text;
+        return text.trim();
       } catch (e: any) {
         logCallback(`⚠️ Gemini Model ${modelId} failed: ${e.message}`);
         lastError = e;
       }
     }
     
-    throw lastError;
+    throw lastError || new Error("Gemini failed for all configured models");
   }
  
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
@@ -166,34 +176,57 @@ ${text}`;
   }
  
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
-    const defaultModel = "anthropic/claude-3.5-sonnet";
-    logCallback(`📡 OpenRouter (${defaultModel})...`);
+    const models = [
+      "google/gemini-2.0-flash:free",
+      "meta-llama/llama-3.3-70b-instruct:free",
+      "qwen/qwen-2.5-72b-instruct:free"
+    ];
     const url = "https://openrouter.ai/api/v1/chat/completions";
-    const response = await universalFetch(url, {
-      method: 'POST',
-      headers: { 
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://newsbot.manager", // recommended by OpenRouter
-      },
-      body: {
-        model: defaultModel,
-        messages: [{ role: "user", content: prompt }]
+    let lastError: any = null;
+
+    for (const model of models) {
+      logCallback(`📡 OpenRouter (${model})...`);
+      try {
+        const response = await universalFetch(url, {
+          method: 'POST',
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "X-Title": "AI News Bot"
+          },
+          body: {
+            model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.1,
+            max_tokens: 4000
+          }
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          const errorMsg = data.error?.message || `OpenRouter error ${response.status}`;
+          throw new Error(errorMsg);
+        }
+
+        const contentRaw = data.choices?.[0]?.message?.content;
+        const content = typeof contentRaw === "string"
+          ? contentRaw
+          : Array.isArray(contentRaw)
+            ? contentRaw.map((part: any) => part?.text || "").join("")
+            : "";
+
+        if (!content.trim()) {
+          throw new Error("OpenRouter returned empty response");
+        }
+
+        return content;
+      } catch (e: any) {
+        lastError = e;
+        logCallback(`⚠️ OpenRouter model ${model} failed: ${e.message || e}`);
       }
-    });
- 
-    const data = await response.json();
-    if (!response.ok) {
-      const errorMsg = data.error?.message || `OpenRouter error ${response.status}`;
-      throw new Error(errorMsg);
     }
-    
-    const content = data.choices?.[0]?.message?.content || "";
-    if (!content.trim()) {
-      throw new Error("OpenRouter returned empty response");
-    }
-    
-    return content;
+
+    throw lastError || new Error("OpenRouter failed for all configured models");
   }
  
   private async callDeepSeek(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
