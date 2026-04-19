@@ -3,6 +3,7 @@ apply plugin: 'com.android.application'
 android {
     namespace "com.newsbot.manager"
     compileSdk rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
     defaultConfig {
         applicationId "com.newsbot.manager"
         minSdkVersion rootProject.ext.minSdkVersion

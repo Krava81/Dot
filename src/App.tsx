@@ -505,7 +505,10 @@ function AppContent() {
           if (e.message?.includes('409') || e.message?.includes('Conflict')) {
             addClientLog("⚠️ Конфликт: Standalone бот запущен в другом месте (возможно на сервере). Выключите серверного бота.");
           } else {
-            addClientLog(`⚠️ Ошибка Telegram: ${e.message}`);
+            const errExt = e.message?.includes('Failed to connect') 
+                ? " (Блокировка провайдером? Включите VPN или перейдите в Серверный режим)" 
+                : "";
+            addClientLog(`⚠️ Ошибка Telegram: ${e.message}${errExt}`);
           }
         }
         if (isPolling) await new Promise(r => setTimeout(r, 3000));
