@@ -270,9 +270,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                                 key={img} 
                                 id={img} 
                                 url={img} 
-                                isMain={props.mainImage === img} 
                                 onSelect={props.toggleImageSelection} 
-                                onSetMain={props.setMainImage} 
                                 onEnlarge={props.onEnlarge} 
                               />
                             ))}

@@ -144,7 +144,7 @@ ${text}`;
   }
  
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
-    logCallback(`📡 GitHub Models (gpt-4o-mini)...`);
+    logCallback(`📡 GitHub Models (gpt-4o)...`);
     const url = "https://models.inference.ai.azure.com/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
@@ -153,7 +153,7 @@ ${text}`;
         "Content-Type": "application/json"
       },
       body: {
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.1,
         max_tokens: 4000

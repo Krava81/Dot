@@ -58,28 +58,25 @@ import {
 } from './utils/http';
 
 // ─── Components ─────────────────────────────────────────────────────────────
-const SortableImage = ({ id, url, isMain, onSelect, onSetMain, onEnlarge }: any) => {
+const SortableImage = ({ id, url, onSelect, onEnlarge }: any) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 10 : 1, opacity: isDragging ? 0.5 : 1 };
   
   return (
-    <div ref={setNodeRef} style={style} className={`relative group aspect-square rounded-lg overflow-hidden border transition-all ${isMain ? 'border-amber-500 shadow-lg ring-2 ring-amber-500/20' : 'border-neutral-800'}`}>
+    <div ref={setNodeRef} style={style} className="relative group aspect-square rounded-lg overflow-hidden border border-neutral-800 transition-all">
       <div className="w-full h-full cursor-pointer" onClick={() => onEnlarge(url)}>
         <img src={url} alt="Post" className="w-full h-full object-cover pointer-events-none" referrerPolicy="no-referrer" />
       </div>
-      {isMain && (
-        <div className="absolute top-0 right-0 bg-amber-500 text-neutral-950 text-[6px] font-black px-1.5 py-0.5 rounded-bl-lg uppercase tracking-tighter z-20">
-          Main
-        </div>
-      )}
       <div className="absolute inset-0 bg-black/40 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 z-20 pointer-events-none">
-        <button className="p-2 md:p-1 bg-neutral-900/80 md:bg-white/20 hover:bg-neutral-800 md:hover:bg-white/30 rounded-full text-white pointer-events-auto shadow-md" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }} title="Удалить"><Trash2 size={16} className="md:w-3 md:h-3 text-red-400 md:text-white" /></button>
-        {!isMain && <button className="p-2 md:p-1 bg-amber-500/90 hover:bg-amber-600 rounded-full text-white pointer-events-auto shadow-md" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSetMain(url); }} title="Главное"><Check size={16} className="md:w-3 md:h-3" /></button>}
+        <button className="p-3 md:p-2 bg-neutral-900/80 md:bg-white/20 hover:bg-neutral-800 md:hover:bg-white/30 rounded-full text-white pointer-events-auto shadow-md" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(url); }} title="Удалить"><Trash2 size={18} className="md:w-4 md:h-4 text-red-400 md:text-white" /></button>
       </div>
       <div className="absolute top-1 left-1 p-2 touch-none z-[30]" {...attributes} {...listeners}>
         <div className="p-1.5 md:p-1 bg-black/70 rounded shadow cursor-grab active:cursor-grabbing">
           <GripVertical size={14} className="md:w-3 md:h-3 text-white" />
         </div>
+      </div>
+      <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 rounded text-[10px] text-white/50 pointer-events-none z-10">
+        Перетащите
       </div>
     </div>
   );
@@ -139,7 +136,7 @@ export default function App() {
 
 // ─── Main App ────────────────────────────────────────────────────────────────
 function AppContent() {
-  const [isStandalone, setIsStandalone] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(true);
 
   // ─── Startup Default Mode ──────────────────────────────────────────────────
   useEffect(() => {
