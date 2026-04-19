@@ -140,11 +140,18 @@ export default function App() {
 // ─── Main App ────────────────────────────────────────────────────────────────
 function AppContent() {
   const [isStandalone, setIsStandalone] = useState(false);
+  const [botRestartCounter, setBotRestartCounter] = useState(0);
 
   useEffect(() => {
     const initSettings = async () => {
-      const standalone = await Preferences.get({ key: 'setting_is_standalone' });
-      setIsStandalone(standalone.value === 'true');
+      try {
+        const standalone = await Preferences.get({ key: 'setting_is_standalone' });
+        const val = standalone.value === 'true';
+        setIsStandalone(val);
+        console.log(`[App] Initialized Standalone mode: ${val}`);
+      } catch (e) {
+        console.error("[App] Failed to load standalone setting", e);
+      }
     };
     initSettings();
   }, []);
@@ -480,40 +487,55 @@ function AppContent() {
 
   // ─── Standalone Bot Polling ───────────────────────────────────────────────
   useEffect(() => {
-    if (!isStandalone || !botToken) return;
+    if (!isStandalone || !botToken) {
+      if (isStandalone && !botToken) {
+        addClientLog("⚠️ Бот не запущен: отсутствует токен в настройках.");
+      }
+      return;
+    }
 
+    addClientLog(`🚀 Запуск Telegram Bot (Standalone)...`);
     let isPolling = true;
     const abortController = new AbortController();
 
     const poll = async () => {
       let offset = botOffset;
+      addClientLog("🔌 Подключение к Telegram API...");
+      
       while (isPolling) {
         try {
           const updates = await telegramClient?.getUpdates(offset, abortController.signal);
-          setIsBotOnline(true);
+          
+          if (!isBotOnline) {
+             setIsBotOnline(true);
+             addClientLog("✅ Бот онлайн! Ожидание сообщений...");
+          }
+
           if (!isPolling) break;
           for (const update of updates) {
             offset = update.update_id + 1;
             setBotOffset(offset);
             if (update.message && update.message.text) {
-              addClientLog(`📩 Сообщение от бота: ${update.message.text}`);
+              addClientLog(`📩 Сообщение: ${update.message.text}`);
               handleStandaloneBotMessage(update.message);
             }
           }
         } catch (e: any) {
           setIsBotOnline(false);
           if (e.name === 'AbortError') break;
-          // Telegram often throws errors due to conflict (two processes polling)
+          
           if (e.message?.includes('409') || e.message?.includes('Conflict')) {
-            addClientLog("⚠️ Конфликт: Standalone бот запущен в другом месте (возможно на сервере). Выключите серверного бота.");
+            addClientLog("🔴 ОШИБКА 409: Конфликт! Бот запущен на другом устройстве.");
           } else {
             const errExt = e.message?.includes('Failed to connect') 
-                ? " (Блокировка провайдером? Включите VPN или перейдите в Серверный режим)" 
+                ? " (Проблемы с сетью? Нужен VPN?)" 
                 : "";
             addClientLog(`⚠️ Ошибка Telegram: ${e.message}${errExt}`);
           }
+          // Exponential backoff on error
+          await new Promise(r => setTimeout(r, 5000));
         }
-        if (isPolling) await new Promise(r => setTimeout(r, 3000));
+        if (isPolling) await new Promise(r => setTimeout(r, 2000));
       }
     };
 
@@ -521,8 +543,9 @@ function AppContent() {
     return () => { 
       isPolling = false; 
       abortController.abort();
+      addClientLog("🛑 Бот остановлен.");
     };
-  }, [isStandalone, botToken]);
+  }, [isStandalone, botToken, botRestartCounter]);
 
   const handleStandaloneBotMessage = async (message: any) => {
     const text = message.text;
@@ -1279,6 +1302,16 @@ function AppContent() {
             <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${(isStandalone ? isBotOnline : status?.bot === 'active') ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/20' : (status?.bot === 'starting' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/20' : 'bg-red-500/20 text-red-400 border border-red-500/20')}`}>
               {(isStandalone ? isBotOnline : status?.bot === 'active') ? <CheckCircle2 size={12} /> : (status?.bot === 'starting' ? <RefreshCw size={12} className="animate-spin" /> : <AlertCircle size={12} />)}
               {(isStandalone ? (isBotOnline ? 'Бот Онлайн' : 'Бот Оффлайн') : (status?.bot === 'active' ? 'Бот Активен' : status?.bot === 'starting' ? 'Запуск...' : 'Бот Оффлайн'))}
+              
+              {isStandalone && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setBotRestartCounter(c => c + 1); }}
+                  className="ml-1 p-0.5 hover:bg-white/10 rounded transition-all active:scale-95"
+                  title="Перезапустить бота"
+                >
+                  <RefreshCw size={10} className={isBotOnline ? '' : 'animate-spin'} />
+                </button>
+              )}
             </span>
             <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${isWorking ? 'bg-blue-500/20 text-blue-400 border border-blue-500/20' : 'bg-neutral-800 text-neutral-500 border border-neutral-700'}`}>
               <Cpu size={12} className={isWorking ? 'animate-pulse' : ''} />

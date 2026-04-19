@@ -109,32 +109,38 @@ ${text}`;
   }
  
   private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
-    logCallback(`📡 Google Gemini (gemini-2.0-flash-exp)...`);
+    const modelId = "gemini-2.0-flash";
+    logCallback(`📡 Google Gemini (${modelId})...`);
     
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash-exp",
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 4000
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ 
+        model: modelId,
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 4000
+        }
+      });
+      
+      const result = await model.generateContent(prompt);
+      const response = result.response;
+      const text = response.text();
+      
+      if (!text || !text.trim()) {
+        throw new Error("Gemini returned empty response");
       }
-    });
-    
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
-    
-    if (!text || !text.trim()) {
-      throw new Error("Gemini returned empty response");
+      
+      return text;
+    } catch (e: any) {
+      console.error("[AI Gemini] Fatal error:", e);
+      throw e;
     }
-    
-    return text;
   }
  
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
