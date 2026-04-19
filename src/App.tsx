@@ -140,7 +140,6 @@ export default function App() {
 // ─── Main App ────────────────────────────────────────────────────────────────
 function AppContent() {
   const [isStandalone, setIsStandalone] = useState(false);
-  const [botRestartCounter, setBotRestartCounter] = useState(0);
 
   useEffect(() => {
     const initSettings = async () => {
