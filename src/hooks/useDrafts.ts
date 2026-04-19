@@ -6,6 +6,14 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
   const [drafts, setDrafts] = useState<DraftPost[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const upsertById = (items: DraftPost[], draft: DraftPost) => {
+    const exists = items.find((d: DraftPost) => d.id === draft.id);
+    if (exists) {
+      return items.map((d: DraftPost) => d.id === draft.id ? draft : d);
+    }
+    return [...items, draft];
+  };
+
   const loadDrafts = useCallback(async () => {
     setLoading(true);
     try {
@@ -32,11 +40,14 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
     try {
       if (isStandalone) {
         const currentDrafts = await storage.loadJson('drafts.json', []);
-        const exists = currentDrafts.find((d: DraftPost) => d.id === draft.id);
-        if (exists) {
-          await storage.saveJson('drafts.json', currentDrafts.map((d: DraftPost) => d.id === draft.id ? draft : d));
+        const currentScheduled = await storage.loadJson('scheduled.json', []);
+
+        if (draft.status === 'scheduled') {
+          await storage.saveJson('scheduled.json', upsertById(currentScheduled, draft));
+          await storage.saveJson('drafts.json', currentDrafts.filter((d: DraftPost) => d.id !== draft.id));
         } else {
-          await storage.saveJson('drafts.json', [...currentDrafts, draft]);
+          await storage.saveJson('drafts.json', upsertById(currentDrafts, draft));
+          await storage.saveJson('scheduled.json', currentScheduled.filter((d: DraftPost) => d.id !== draft.id));
         }
       } else {
         const cleanUrl = getCleanBaseUrl();

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, Component, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RefreshCw, CheckCircle2, AlertCircle, AlertTriangle, MessageSquare, Cpu, Send, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, Sparkles, ChevronDown, Image, Calendar, Clock, Plus, Eye, EyeOff, Copy, FolderOpen, Check, Loader2, Folder, GripVertical, Smartphone, Play, Globe, Layout, Palette, Type, Wand2, ClipboardPaste } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Cpu, Send, Hash, Key, Settings, Edit2, Save, X, Activity, Trash2, Sparkles, ChevronDown, Image, Calendar, Clock, Plus, Eye, EyeOff, Copy, FolderOpen, Check, Loader2, Folder, GripVertical, Smartphone, Play, Globe, Layout, Palette, Type, Wand2, ClipboardPaste } from 'lucide-react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -455,7 +455,9 @@ function AppContent() {
     setScheduledPosts(Array.isArray(s) ? s : []);
 
     // Load settings
-    const sToken = await storage.getSetting(isStandalone ? 'standalone_bot_token' : 'server_bot_token');
+    const sToken = isStandalone
+      ? await storage.getSecure('bot_token')
+      : await storage.getSetting('server_bot_token');
     if (sToken) updateSetting(isStandalone ? 'standalone_bot_token' : 'server_bot_token', sToken);
 
     const chatId = await storage.getSetting('chat_id');
@@ -476,202 +478,67 @@ function AppContent() {
     }
   };
 
-  const { status, loading: serverLoading, error: serverError, refetch: refetchStatus } = useServerConnection(baseUrl || '');
-
   // ─── Standalone Bot Polling ───────────────────────────────────────────────
   useEffect(() => {
-    // ✅ ВАЖНО: Standalone бот работает ТОЛЬКО если режим Standalone
-    // И нет серверного URL (иначе будет конфликт 409)
-    if (!isStandalone || !botToken || baseUrl) {
-      setIsBotOnline(false);
-      return;
-    }
-   
+    if (!isStandalone || !botToken) return;
+
     let isPolling = true;
     const abortController = new AbortController();
-    let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 3;
-   
+
     const poll = async () => {
-      // ✅ Сначала удаляем webhook чтобы избежать 409 Conflict
-      try {
-        await telegramClient?.deleteWebhook(true);
-        addClientLog("🧹 Webhook удален для long polling");
-      } catch (e: any) {
-        addClientLog(`⚠️ Не удалось удалить webhook: ${e.message}`);
-      }
-   
       let offset = botOffset;
-      
       while (isPolling) {
         try {
           const updates = await telegramClient?.getUpdates(offset, abortController.signal);
-          
-          // ✅ Сброс счетчика ошибок при успешном запросе
-          consecutiveErrors = 0;
           setIsBotOnline(true);
-          
           if (!isPolling) break;
-          
-          if (!updates || updates.length === 0) {
-            // Нет новых обновлений - это нормально
-            await new Promise(r => setTimeout(r, 1000));
-            continue;
-          }
-          
           for (const update of updates) {
             offset = update.update_id + 1;
             setBotOffset(offset);
-            
-            if (update.message?.text) {
-              addClientLog(`📩 Сообщение: ${update.message.text.substring(0, 50)}...`);
+            if (update.message && update.message.text) {
+              addClientLog(`📩 Сообщение от бота: ${update.message.text}`);
               handleStandaloneBotMessage(update.message);
             }
           }
         } catch (e: any) {
-          consecutiveErrors++;
-          
-          if (e.name === 'AbortError') {
-            addClientLog("🛑 Polling остановлен");
-            break;
-          }
-          
-          const errorMsg = e.message || String(e);
           setIsBotOnline(false);
-          
-          // ✅ Улучшенная диагностика ошибок
-          if (errorMsg.includes('409') || errorMsg.includes('TELEGRAM_CONFLICT')) {
-            addClientLog("🔴 КОНФЛИКТ 409: Другой процесс использует этот бот!");
-            addClientLog("💡 Решение: Остановите серверного бота или используйте другой токен");
-            
-            // ✅ При конфликте останавливаем polling
-            isPolling = false;
-            break;
-          } else if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
-            addClientLog("🔴 ОШИБКА 401: Неверный токен бота");
-            isPolling = false;
-            break;
-          } else if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
-            addClientLog(`⏱️ Таймаут (попытка ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`);
-          } else if (errorMsg.includes('network') || errorMsg.includes('ENOTFOUND')) {
-            addClientLog(`🌐 Проблемы с сетью (попытка ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`);
+          if (e.name === 'AbortError') break;
+          // Telegram often throws errors due to conflict (two processes polling)
+          if (e.message?.includes('409') || e.message?.includes('Conflict')) {
+            addClientLog("⚠️ Конфликт: Standalone бот запущен в другом месте (возможно на сервере). Выключите серверного бота.");
           } else {
-            addClientLog(`❌ Ошибка Telegram: ${errorMsg.substring(0, 100)}`);
-          }
-          
-          // ✅ Останавливаем polling после нескольких ошибок подряд
-          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            addClientLog("🛑 Слишком много ошибок, остановка polling");
-            isPolling = false;
-            break;
+            const errExt = e.message?.includes('Failed to connect') 
+                ? " (Блокировка провайдером? Включите VPN или перейдите в Серверный режим)" 
+                : "";
+            addClientLog(`⚠️ Ошибка Telegram: ${e.message}${errExt}`);
           }
         }
-        
-        // ✅ Пауза между запросами (увеличена для экономии батареи на мобильном)
-        if (isPolling) {
-          await new Promise(r => setTimeout(r, 2000)); // 2 секунды вместо 3
-        }
+        if (isPolling) await new Promise(r => setTimeout(r, 3000));
       }
     };
-   
+
     poll();
-    
     return () => { 
       isPolling = false; 
       abortController.abort();
     };
-  }, [isStandalone, botToken, baseUrl]); // ✅ Добавили baseUrl в зависимости
+  }, [isStandalone, botToken]);
 
   const handleStandaloneBotMessage = async (message: any) => {
     const text = message.text;
-    const chatId = message.chat.id;
-    
-    try {
-      // ✅ Команда /start
-      if (text === '/start') {
-        await telegramClient?.sendMessage(
-          chatId, 
-          "✅ <b>Бот запущен автономно!</b>\n\nПришлите текст или URL для обработки.", 
-          { parse_mode: 'HTML' }
-        );
-        addClientLog("✅ Отправлен welcome message");
-        return;
-      }
-      
-      // ✅ Команда /help
-      if (text === '/help') {
-        await telegramClient?.sendMessage(
-          chatId,
-          "📖 <b>Команды:</b>\n\n" +
-          "/start - Запустить бота\n" +
-          "/help - Показать справку\n\n" +
-          "Отправьте текст для обработки AI",
-          { parse_mode: 'HTML' }
-        );
-        return;
-      }
-      
-      // ✅ Обработка текста через AI
-      addClientLog(`🤖 Обработка через AI: ${text.substring(0, 30)}...`);
-      
-      if (!aiKeys.gemini && !aiKeys.github && !aiKeys.openrouter && !aiKeys.deepseek) {
-        await telegramClient?.sendMessage(
-          chatId,
-          "⚠️ <b>Нет API ключей</b>\n\nНастройте хотя бы один AI провайдер в настройках приложения",
-          { parse_mode: 'HTML' }
-        );
-        return;
-      }
-      
-      // ✅ Отправляем "typing..." индикатор
-      try {
-        await telegramClient?.call('sendChatAction', { 
-          chat_id: chatId, 
-          action: 'typing' 
-        });
-      } catch {}
-      
-      const processedText = await aiServiceInstance.processText(
-        text,
-        aiKeys,
-        serverStatus?.preferredProvider || 'gemini',
-        (msg: string) => addClientLog(msg)
-      );
-      
-      // ✅ Разбиваем длинный текст на части
-      if (processedText.length <= 4096) {
-        await telegramClient?.sendMessage(chatId, processedText, { parse_mode: 'HTML' });
-      } else {
-        const chunks = processedText.match(/.{1,4000}/gs) || [];
-        for (const chunk of chunks) {
-          await telegramClient?.sendMessage(chatId, chunk, { parse_mode: 'HTML' });
-          await new Promise(r => setTimeout(r, 500)); // Пауза между частями
-        }
-      }
-      
-      addClientLog(`✅ Сообщение обработано и отправлено`);
-      
-    } catch (error: any) {
-      const errorMsg = error.message || String(error);
-      addClientLog(`❌ Ошибка обработки: ${errorMsg}`);
-      
-      try {
-        await telegramClient?.sendMessage(
-          chatId,
-          `❌ <b>Ошибка обработки:</b>\n\n<code>${errorMsg.substring(0, 200)}</code>`,
-          { parse_mode: 'HTML' }
-        );
-      } catch {}
+    if (text === '/start') {
+      await telegramClient?.sendMessage(message.chat.id, "✅ Бот запущен автономно!\n\nПришлите текст для публикации.", { parse_mode: 'HTML' });
+      return;
     }
+    addClientLog(`📝 Обработка текста: ${text.substring(0, 20)}...`);
+    // Future: Add AI processing here
   };
 
+  const { status, loading: serverLoading, error: serverError, refetch: refetchStatus } = useServerConnection(isStandalone ? '' : baseUrl);
+  
   useEffect(() => {
     const updateStatus = async () => {
       if (status) {
-        if (status.botToken) {
-          updateSetting('server_bot_token', status.botToken);
-          await storage.setSetting('server_bot_token', status.botToken);
-        }
         // Fetch config status separately - don't block
         const cleanUrl = getCleanBaseUrl();
         if (cleanUrl) {
@@ -1160,7 +1027,7 @@ function AppContent() {
     try {
       if (isStandalone) {
         updateSetting('standalone_bot_token', '');
-        await storage.setSetting('standalone_bot_token', '');
+        await storage.setSecure('bot_token', '');
         setSubmitMsg({ type: 'success', text: 'Standalone токен удален.' });
       } else {
         const cleanUrl = getCleanBaseUrl();
@@ -1226,7 +1093,7 @@ function AppContent() {
       if (isStandalone) {
         await storage.setSecure('bot_token', botToken);
       } else {
-        await storage.setSetting('bot_token', botToken);
+        await storage.setSetting('server_bot_token', botToken);
       }
       
       if (cleanUrl) {
@@ -1364,23 +1231,6 @@ function AppContent() {
   }, [isConstructorOpen, debouncedText, debouncedImages]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
-  const getBotStatus = () => {
-    if (isStandalone) {
-      if (!botToken) return { label: 'Нет токена', color: 'red', icon: 'alert' };
-      if (baseUrl) return { label: 'Конфликт режимов', color: 'red', icon: 'alert' };
-      return isBotOnline 
-        ? { label: 'Standalone Онлайн', color: 'emerald', icon: 'check' }
-        : { label: 'Standalone Оффлайн', color: 'red', icon: 'alert' };
-    } else {
-      if (!baseUrl) return { label: 'Нет сервера', color: 'red', icon: 'alert' };
-      if (status?.bot === 'active') return { label: 'Сервер Активен', color: 'emerald', icon: 'check' };
-      if (status?.bot === 'starting') return { label: 'Запуск...', color: 'amber', icon: 'spin' };
-      return { label: 'Сервер Оффлайн', color: 'red', icon: 'alert' };
-    }
-  };
-   
-  const botStatus = getBotStatus();
-
   if (loading) {
     return (
       <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-6">
@@ -1426,11 +1276,9 @@ function AppContent() {
               {isStandalone ? <Smartphone size={12} /> : status?.status === 'online' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
               {isStandalone ? 'Автономно' : status?.status === 'online' ? 'Сервер Онлайн' : 'Сервер Оффлайн'}
             </span>
-            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 bg-${botStatus.color === 'emerald' ? 'emerald' : botStatus.color === 'amber' ? 'amber' : 'red'}-500/20 text-${botStatus.color === 'emerald' ? 'emerald' : botStatus.color === 'amber' ? 'amber' : 'red'}-400 border border-${botStatus.color === 'emerald' ? 'emerald' : botStatus.color === 'amber' ? 'amber' : 'red'}-500/20`}>
-              {botStatus.icon === 'check' && <CheckCircle2 size={12} />}
-              {botStatus.icon === 'spin' && <RefreshCw size={12} className="animate-spin" />}
-              {botStatus.icon === 'alert' && <AlertCircle size={12} />}
-              {botStatus.label}
+            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${(isStandalone ? isBotOnline : status?.bot === 'active') ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/20' : (status?.bot === 'starting' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/20' : 'bg-red-500/20 text-red-400 border border-red-500/20')}`}>
+              {(isStandalone ? isBotOnline : status?.bot === 'active') ? <CheckCircle2 size={12} /> : (status?.bot === 'starting' ? <RefreshCw size={12} className="animate-spin" /> : <AlertCircle size={12} />)}
+              {(isStandalone ? (isBotOnline ? 'Бот Онлайн' : 'Бот Оффлайн') : (status?.bot === 'active' ? 'Бот Активен' : status?.bot === 'starting' ? 'Запуск...' : 'Бот Оффлайн'))}
             </span>
             <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${isWorking ? 'bg-blue-500/20 text-blue-400 border border-blue-500/20' : 'bg-neutral-800 text-neutral-500 border border-neutral-700'}`}>
               <Cpu size={12} className={isWorking ? 'animate-pulse' : ''} />
@@ -1444,61 +1292,6 @@ function AppContent() {
           </div>
         </div>
       </header>
-
-      {/* ⚠️ Предупреждение о конфликте режимов */}
-      {isStandalone && baseUrl && (
-        <div className="mx-auto max-w-4xl px-4 mt-6">
-          <div className="bg-red-500/10 border-2 border-red-500/30 rounded-2xl p-6 mb-6 animate-pulse">
-            <div className="flex items-start gap-4">
-              <AlertCircle size={32} className="text-red-500 flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="text-lg font-bold text-red-500 mb-2">🔴 КОНФЛИКТ РЕЖИМОВ</h3>
-                <p className="text-sm text-neutral-300 mb-3">
-                  Одновременно включены Standalone и Server режимы. 
-                  Это вызовет <b>ошибку 409 Conflict</b> в Telegram API.
-                </p>
-                <p className="text-xs text-neutral-400 mb-4">
-                  <b>Решение:</b> Выберите один режим работы:
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <button 
-                    onClick={() => {
-                      setIsStandalone(false);
-                      updateSetting('setting_is_standalone', 'false');
-                    }}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg font-medium"
-                  >
-                    Использовать Server режим
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setBaseUrl('');
-                      setTempBaseUrl('');
-                      Preferences.remove({ key: 'tg_bot_server_url' });
-                    }}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded-lg font-medium"
-                  >
-                    Использовать Standalone режим
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Conflict Warning ── */}
-      {isStandalone && status?.bot === 'active' && (
-        <div className="mx-auto max-w-4xl px-4 mt-4">
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex items-center gap-4 text-amber-500">
-            <AlertTriangle size={24} className="shrink-0" />
-            <div className="text-sm">
-              <p className="font-bold">⚠️ Конфликт режимов</p>
-              <p className="text-xs opacity-80">Бот активен на сервере. Автономный режим переведен в режим ожидания, чтобы избежать блокировки токена (ошибка 409).</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Tabs Navigation ── */}
       <div className="sticky top-[104px] z-30 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 px-4 py-2">

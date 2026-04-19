@@ -6,9 +6,10 @@ export interface ServerStatus {
   bot: 'active' | 'starting' | 'offline';
   botError?: string;
   hasDefaultChat: boolean;
+  hasBotToken?: boolean;
+  botTokenPreview?: string | null;
   defaultChatId?: string | number;
   preferredProvider?: string;
-  botToken?: string;
 }
 
 export function useServerConnection(baseUrl: string) {
