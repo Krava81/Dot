@@ -180,7 +180,7 @@ export async function universalFetch(url: string, options: any = {}) {
       
       throw fetchErr;
     }
-  });
+  }
 }
  
 // ✅ Специальная функция для Telegram API с дополнительными retry

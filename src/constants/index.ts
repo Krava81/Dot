@@ -1,4 +1,4 @@
-export const APP_VERSION = '5.2.6';
+export const APP_VERSION = '5.2.7';
 
 export const DATA_DIR = 'news_bot_data';
 
