@@ -122,7 +122,7 @@ export class TelegramAPI {
       try {
         const response = await universalFetch(`${this.baseUrl}/${method}`, {
           method: 'POST',
-          body: JSON.stringify(body),
+          body: body,
           signal
         });
 

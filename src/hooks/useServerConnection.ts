@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CapacitorHttp } from '@capacitor/core';
+import { universalFetch } from '../services/http';
 
 export interface ServerStatus {
   status: 'online' | 'offline';
@@ -24,11 +24,10 @@ export function useServerConnection(baseUrl: string) {
     }
 
     try {
-      // Используем CapacitorHttp для нативной поддержки
-      const response = await CapacitorHttp.get({ url: `${baseUrl}/api/status` });
+      const response = await universalFetch(`${baseUrl}/api/status`);
       
-      if (response.status >= 200 && response.status < 300) {
-        setStatus(response.data as ServerStatus);
+      if (response.ok) {
+        setStatus(await response.json() as ServerStatus);
         setError(null);
       } else {
         throw new Error(`Server error: ${response.status}`);

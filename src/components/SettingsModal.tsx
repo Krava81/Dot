@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Settings, X, Smartphone, Globe, RefreshCw, Activity, Save, CheckCircle2, AlertCircle, Key } from 'lucide-react';
+import { storage } from '../services/storage';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -47,8 +48,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider flex items-center gap-2"><Smartphone size={10} /> Режим работы</label>
               <div className="flex bg-neutral-800 p-1 rounded-xl border border-neutral-700">
-                <button onClick={() => { setIsStandalone(true); localStorage.setItem('setting_is_standalone', 'true'); }} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isStandalone ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'}`}>Standalone (Phone)</button>
-                <button onClick={() => { setIsStandalone(false); localStorage.setItem('setting_is_standalone', 'false'); }} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isStandalone ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20' : 'text-neutral-500 hover:text-neutral-300'}`}>Server (Web Test)</button>
+                <button onClick={async () => { setIsStandalone(true); await storage.setSetting('is_standalone', 'true'); }} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isStandalone ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-neutral-300'}`}>Standalone (Phone)</button>
+                <button onClick={async () => { setIsStandalone(false); await storage.setSetting('is_standalone', 'false'); }} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isStandalone ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20' : 'text-neutral-500 hover:text-neutral-300'}`}>Server (Web Test)</button>
               </div>
               <p className="text-[10px] text-neutral-500 px-1">
                 {isStandalone 

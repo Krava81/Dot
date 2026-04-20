@@ -54,7 +54,7 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
         if (!cleanUrl) return;
         await universalFetch(`${cleanUrl}/api/posts/drafts`, {
           method: 'POST',
-          body: JSON.stringify(draft)
+          body: draft
         });
       }
       await loadDrafts();
