@@ -727,7 +727,7 @@ function AppContent() {
       await saveDraftHook(draft);
       if (draftStatus === 'scheduled' && !isStandalone) {
         const cleanUrl = getCleanBaseUrl();
-        if (cleanUrl) await universalFetch(`${cleanUrl}/api/posts/schedule`, { method: 'POST', body: JSON.stringify(draft) });
+        if (cleanUrl) await universalFetch(`${cleanUrl}/api/posts/schedule`, { method: 'POST', body: draft });
       }
       setSubmitMsg({ type: 'success', text: draftStatus === 'scheduled' ? 'Пост запланирован!' : 'Черновик сохранен!' });
       if (draftStatus === 'draft') setEditingDraftId(draftId);
@@ -798,7 +798,7 @@ function AppContent() {
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) throw new Error("Сервер не настроен");
-        const res = await universalFetch(`${cleanUrl}/api/posts/publish`, { method: 'POST', body: JSON.stringify(post) });
+        const res = await universalFetch(`${cleanUrl}/api/posts/publish`, { method: 'POST', body: post });
         
         const ct = res.headers.get('content-type') || '';
         if (ct.includes('text/html')) {
@@ -862,7 +862,7 @@ function AppContent() {
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) throw new Error("Сервер не настроен");
-        const res = await universalFetch(`${cleanUrl}/api/posts/publish`, { method: 'POST', body: JSON.stringify(postToPublish) });
+        const res = await universalFetch(`${cleanUrl}/api/posts/publish`, { method: 'POST', body: postToPublish });
         if (res.ok) { 
           setSubmitMsg({ type: 'success', text: 'Опубликовано!' }); 
           loadDrafts(); 
@@ -911,7 +911,7 @@ function AppContent() {
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
-        const res = await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, { method: 'POST', body: JSON.stringify({ name: templateName, buttons: postButtons }) });
+        const res = await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, { method: 'POST', body: { name: templateName, buttons: postButtons } });
         if (res.ok) { setTemplateName(''); loadButtonTemplates(); }
       }
     } catch (e) { console.error(e); }
@@ -1681,7 +1681,7 @@ function AppContent() {
                     }
                     const cleanUrl = getCleanBaseUrl();
                     if (!cleanUrl) return;
-                    try { await universalFetch(`${cleanUrl}/api/config/api-key`, { method: 'POST', body: JSON.stringify({ preferredProvider: provider }) }); refetchStatus(); } catch {}
+                    try { await universalFetch(`${cleanUrl}/api/config/api-key`, { method: 'POST', body: { preferredProvider: provider } }); refetchStatus(); } catch {}
                   }} className={`p-1 rounded ${serverStatus?.preferredProvider === provider ? 'bg-amber-500 text-white' : 'bg-neutral-700 text-neutral-400'}`}><Check size={12} /></button>
                 </div>
                 <div className="flex gap-2">
@@ -1696,14 +1696,13 @@ function AppContent() {
                     }
                     const cleanUrl = getCleanBaseUrl();
                     if (!cleanUrl) return;
-                    try { await universalFetch(`${cleanUrl}/api/config/api-key`, { method: 'POST', body: JSON.stringify({ apiKey: key, provider }) }); setSubmitMsg({ type: 'success', text: 'Сохранено' }); } catch {}
+                    try { await universalFetch(`${cleanUrl}/api/config/api-key`, { method: 'POST', body: { apiKey: key, provider } }); setSubmitMsg({ type: 'success', text: 'Сохранено' }); } catch {}
                   }} className="bg-amber-600 hover:bg-amber-500 text-white p-1.5 rounded-lg"><Save size={14} /></button>
                   <button onClick={async () => {
                     const key = aiKeys[provider];
                     if (!key) return;
                     if (isStandalone) {
                       try {
-                        const prompt = "Test connection";
                         await aiServiceInstance.processText("Hello", { [provider]: key }, provider);
                         setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
                       } catch (e: any) { setLastError(e.message); }
@@ -1711,7 +1710,7 @@ function AppContent() {
                     }
                     const cleanUrl = getCleanBaseUrl(tempBaseUrl || baseUrl);
                     if (!cleanUrl) return;
-                    try { const res = await universalFetch(`${cleanUrl}/api/test-ai`, { method: 'POST', body: JSON.stringify({ apiKey: key, provider }) }); if (res.ok) setSubmitMsg({ type: 'success', text: 'Тест успешен!' }); else { const err = await res.json(); setLastError(err.error); } } catch (e: any) { setLastError(e.message); }
+                    try { const res = await universalFetch(`${cleanUrl}/api/test-ai`, { method: 'POST', body: { apiKey: key, provider } }); if (res.ok) setSubmitMsg({ type: 'success', text: 'Тест успешен!' }); else { const err = await res.json(); setLastError(err.error); } } catch (e: any) { setLastError(e.message); }
                   }} className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg"><Activity size={14} /></button>
                 </div>
               </div>

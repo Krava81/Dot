@@ -82,7 +82,13 @@ export async function universalFetch(url: string, options: any = {}) {
   const timeout = options.timeout || 120000; 
  
   // ✅ Используем retry wrapper
-  return retryWithBackoff(async () => {
+  if (options.skipRetry) {
+    return executeFetch();
+  }
+
+  return retryWithBackoff(executeFetch);
+
+  async function executeFetch() {
     // ✅ На Android используем Capacitor HTTP напрямую для лучшей совместимости
     if (isNative()) {
       let requestData: any = undefined;
