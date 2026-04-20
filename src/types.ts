@@ -52,3 +52,58 @@ export interface ServerConfigStatus {
   apiKeys: Record<string, boolean>;
   preferredProvider: string;
 }
+
+export interface PostConstructorProps {
+  isOpen: boolean;
+  onClose: () => void;
+  isConstructorOpen: boolean;
+  setIsConstructorOpen: (val: boolean) => void;
+  parsedContent: ParsedContent | null;
+  setParsedContent: React.Dispatch<React.SetStateAction<ParsedContent | null>>;
+  aiProcessedText: string;
+  setAiProcessedText: (val: string) => void;
+  selectedImages: string[];
+  setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>;
+  selectedVideo: string | null;
+  setSelectedVideo: (val: string | null) => void;
+  mainImage: string | null;
+  setMainImage: (val: string | null) => void;
+  postButtons: PostButton[];
+  setPostButtons: React.Dispatch<React.SetStateAction<PostButton[]>>;
+  originalText: string;
+  setOriginalText: (val: string) => void;
+  isProcessingAI: boolean;
+  processAI: () => void;
+  showTemplates: boolean;
+  setShowTemplates: (val: boolean) => void;
+  buttonTemplates: ButtonTemplate[];
+  handleDeleteTemplate: (id: string) => void;
+  saveButtonTemplate: () => void;
+  templateName: string;
+  setTemplateName: (val: string) => void;
+  imagePath: string;
+  setImagePath: (val: string) => void;
+  openFolderBrowser: (path?: string) => void;
+  isBrowserLoading: boolean;
+  saveImagePath: () => void;
+  handleFolderSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  syncLocalImages: (shouldSavePath?: boolean, overridePath?: string) => void;
+  syncedImages: string[];
+  mediaPaths: string[];
+  setMediaPaths: React.Dispatch<React.SetStateAction<string[]>>;
+  videoPath: string | null;
+  setVideoPath: (val: string | null) => void;
+  isActionInProgress: boolean;
+  sensors: any;
+  handleDragEnd: (event: any) => void;
+  toggleImageSelection: (uri: string) => void;
+  scheduleDateTime: string;
+  setScheduleDateTime: (val: string) => void;
+  saveDraft: (status: 'draft' | 'scheduled') => Promise<string | undefined>;
+  handlePublish: () => void;
+  submitMsg: { type: 'success' | 'error', text: string } | null;
+  linkPresets: string[];
+  saveLinkPresets: (presets: string[]) => void;
+  SortableImage: React.FC<any>;
+  onEnlarge: (url: string) => void;
+}

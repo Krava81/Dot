@@ -31,7 +31,7 @@ import { useBotSettings } from './hooks/useBotSettings';
 import { useLinkPresets } from './hooks/useLinkPresets';
 import { SettingsModal } from './components/SettingsModal';
 import { PostConstructor } from './components/PostConstructor';
-import { PostButton, ParsedContent, DraftPost, ButtonTemplate, ServerConfigStatus } from './types';
+import { PostButton, ParsedContent, DraftPost, ButtonTemplate, ServerConfigStatus, PostConstructorProps } from './types';
 import {
   DndContext,
   closestCenter,
@@ -231,7 +231,7 @@ function AppContent() {
     []
   );
 
-  const updateSetting = async (key: string, value: string) => {
+  const updateSetting = useCallback(async (key: string, value: string) => {
     if (key === 'standalone_bot_token' || key === 'server_bot_token') {
       await updateBotSetting(key, value);
     } else if (key === 'setting_is_standalone') {
@@ -245,7 +245,7 @@ function AppContent() {
       setUseNativeHttp(isNativeOn);
       await storage.setSetting('use_native_http', value);
     }
-  };
+  }, [updateBotSetting]);
 
   const [tempBotToken, setTempBotToken] = useState('');
   const [tempBaseUrl, setTempBaseUrl] = useState(() => getInitialBaseUrl());
@@ -295,7 +295,7 @@ function AppContent() {
   const debouncedText = useDebounce(aiProcessedText, 2000);
   const debouncedImages = useDebounce(selectedImages, 1000);
 
-  const [mainImage, setMainImage] = useState<string>('');
+  const [mainImage, setMainImage] = useState<string | null>(null);
   const [postButtons, setPostButtons] = useState<PostButton[]>([]);
   const [originalText, setOriginalText] = useState('');
   const [isProcessingAI, setIsProcessingAI] = useState(false);
@@ -306,6 +306,9 @@ function AppContent() {
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [showTemplates, setShowTemplates] = useState(true);
   const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
+
+  // Initialize AiKeys early as they are used in data loading
+  const { aiKeys, updateAiKey } = useAiKeys(isStandalone);
 
   // Lists state
   const { drafts, setDrafts, loading: draftsLoading, saveDraft: saveDraftHook, deleteDraft: deleteDraftHook, reload: reloadDrafts } = useDrafts(isStandalone, getCleanBaseUrl, universalFetch);
@@ -325,7 +328,7 @@ function AppContent() {
     }
   }, [isStandalone]);
 
-  const loadAllStandaloneData = async () => {
+  const loadAllStandaloneData = useCallback(async () => {
     loadDrafts();
     loadButtonTemplates();
     loadScheduledPosts();
@@ -333,6 +336,14 @@ function AppContent() {
     loadLinkPresets();
     
     // Load local settings
+    const savedChatIdPresets = await storage.getSetting('chat_id_presets');
+    if (savedChatIdPresets) {
+      try {
+        const parsed = JSON.parse(savedChatIdPresets);
+        if (Array.isArray(parsed)) setChatIdPresets(parsed);
+      } catch {}
+    }
+    
     const sToken = isStandalone
       ? await storage.getSecure('bot_token')
       : await storage.getSetting('server_bot_token');
@@ -359,7 +370,7 @@ function AppContent() {
       setUseNativeHttpState(isNativeOn);
       setUseNativeHttp(isNativeOn);
     }
-  };
+  }, [isStandalone, loadDrafts, loadButtonTemplates, loadScheduledPosts, loadPublishedPosts, loadLinkPresets, updateSetting, updateAiKey]);
 
   // ✅ ANDROID LIFECYCLE
   useAndroidLifecycle(
@@ -384,7 +395,6 @@ function AppContent() {
   const [isPublishedOpen, setIsPublishedOpen] = useState(false);
   const [isBotCollapsed, setIsBotCollapsed] = useState(true);
   const [isAiKeysCollapsed, setIsAiKeysCollapsed] = useState(true);
-  const { aiKeys, updateAiKey } = useAiKeys(isStandalone);
 
   const { 
     imagePath, setImagePath, isActionInProgress: isImageActionInProgress, 
@@ -673,17 +683,21 @@ function AppContent() {
   }, [baseUrl, isLogsPaused, isLogsCollapsed, getCleanBaseUrl]);
 
   // ─── DnD ──────────────────────────────────────────────────────────────────
-  const sensors = useSensors(
+  const sensorsObj = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setSelectedImages(items => { const oi = items.indexOf(active.id as string); const ni = items.indexOf(over.id as string); return arrayMove(items, oi, ni); });
+      setSelectedImages(items => { 
+        const oi = items.indexOf(active.id as string); 
+        const ni = items.indexOf(over.id as string); 
+        return arrayMove(items, oi, ni); 
+      });
     }
-  };
+  }, []);
 
   // ─── Actions ──────────────────────────────────────────────────────────────
   const resetConstructor = () => {
@@ -915,12 +929,23 @@ function AppContent() {
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
   }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, savePublishedPost, deleteDraftHook]);
 
+  // ✅ LOG ONCE SCHEDULER START
+  const hasLoggedScheduler = useRef(false);
+  useEffect(() => {
+    if (isStandalone && !hasLoggedScheduler.current) {
+      addClientLog("🕒 Запуск планировщика...");
+      hasLoggedScheduler.current = true;
+    }
+  }, [isStandalone, addClientLog]);
+
   // ✅ BACKGROUND SCHEDULING WORKER
+  const schedulerIntervalRef = useRef<any>(null);
   useEffect(() => {
     if (!isStandalone) return;
     
-    addClientLog("🕒 Запуск планировщика...");
-    const interval = setInterval(() => {
+    if (schedulerIntervalRef.current) clearInterval(schedulerIntervalRef.current);
+    
+    schedulerIntervalRef.current = setInterval(() => {
       const now = Date.now();
       const toSend = scheduledPosts.filter(post => 
         post.scheduledAt && now >= post.scheduledAt && post.status === 'scheduled'
@@ -928,13 +953,25 @@ function AppContent() {
 
       if (toSend.length > 0) {
         addClientLog(`⏰ Планировщик: обнаружено ${toSend.length} постов для отправки`);
-        toSend.forEach(post => {
-          publishDraft(post.id);
-        });
+        // Process them one by one
+        const processSequentially = async () => {
+          for (const post of toSend) {
+            try {
+              await publishDraft(post.id);
+            } catch (err: any) {
+              addClientLog(`❌ Ошибка авто-публикации ${post.id}: ${err.message}`);
+            }
+            // Wait a bit between posts
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        };
+        processSequentially();
       }
-    }, 60000); // Check every minute
+    }, 30000); // Check every 30 seconds
     
-    return () => clearInterval(interval);
+    return () => {
+      if (schedulerIntervalRef.current) clearInterval(schedulerIntervalRef.current);
+    };
   }, [isStandalone, scheduledPosts, publishDraft]);
 
   const deleteDraft = async (draftId: string) => {
@@ -1298,7 +1335,10 @@ function AppContent() {
   };
 
   // ✅ Мемоизация props объектов для PostConstructor
-  const constructorProps = useMemo(() => ({
+  const handleEnlarge = useCallback((url: string) => setFullScreenImage(url), []);
+  const handleSaveButtonTemplateWrapper = useCallback(() => saveButtonTemplate(templateName, postButtons), [saveButtonTemplate, templateName, postButtons]);
+
+  const constructorProps: PostConstructorProps = useMemo(() => ({
     isOpen: isConstructorOpen,
     onClose: () => setIsConstructorOpen(false),
     isConstructorOpen,
@@ -1311,7 +1351,6 @@ function AppContent() {
     setSelectedImages,
     selectedVideo,
     setSelectedVideo,
-    syncedImages,
     mainImage,
     setMainImage,
     postButtons,
@@ -1324,7 +1363,7 @@ function AppContent() {
     setShowTemplates,
     buttonTemplates,
     handleDeleteTemplate,
-    saveButtonTemplate: () => saveButtonTemplate(templateName, postButtons),
+    saveButtonTemplate: handleSaveButtonTemplateWrapper,
     templateName,
     setTemplateName,
     imagePath,
@@ -1334,8 +1373,13 @@ function AppContent() {
     saveImagePath: handleSaveImagePath,
     handleFolderSelect,
     syncLocalImages,
+    syncedImages,
+    mediaPaths,
+    setMediaPaths,
+    videoPath,
+    setVideoPath,
     isActionInProgress,
-    sensors,
+    sensors: sensorsObj,
     handleDragEnd,
     toggleImageSelection,
     scheduleDateTime,
@@ -1346,18 +1390,15 @@ function AppContent() {
     linkPresets,
     saveLinkPresets,
     SortableImage,
-    mediaPaths,
-    videoPath,
-    deletePublishedPost,
-    onEnlarge: (url: string) => setFullScreenImage(url)
+    onEnlarge: handleEnlarge
   }), [
     isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, 
     postButtons, originalText, isProcessingAI, processAI, showTemplates, 
-    buttonTemplates, handleDeleteTemplate, saveButtonTemplate, templateName, 
+    buttonTemplates, handleDeleteTemplate, handleSaveButtonTemplateWrapper, templateName, 
     imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
-    syncLocalImages, isActionInProgress, sensors, handleDragEnd, 
+    syncLocalImages, syncedImages, setMediaPaths, setVideoPath, isActionInProgress, sensorsObj, handleDragEnd, 
     toggleImageSelection, scheduleDateTime, saveDraft, handlePublish, 
-    submitMsg, linkPresets, saveLinkPresets, SortableImage
+    submitMsg, linkPresets, saveLinkPresets, SortableImage, handleEnlarge
   ]);
 
   // ─── Render ───

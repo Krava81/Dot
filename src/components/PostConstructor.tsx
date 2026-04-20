@@ -6,7 +6,7 @@ import { SortableContext, rectSortingStrategy, arrayMove, useSortable } from '@d
 import MarkdownIt from 'markdown-it';
 import MdEditor from 'react-markdown-editor-lite';
 import 'react-markdown-editor-lite/lib/index.css';
-import { PostButton, ParsedContent, DraftPost, ButtonTemplate } from '../types';
+import { PostButton, ParsedContent, DraftPost, ButtonTemplate, PostConstructorProps } from '../types';
 
 const mdParser = new MarkdownIt({
   breaks: true,
@@ -48,56 +48,6 @@ interface SortableImageProps {
   onEnlarge: (url: string) => void;
 }
 
-interface PostConstructorProps {
-  isOpen: boolean;
-  onClose: () => void;
-  isConstructorOpen: boolean;
-  setIsConstructorOpen: (val: boolean) => void;
-  parsedContent: ParsedContent | null;
-  setParsedContent: React.Dispatch<React.SetStateAction<ParsedContent | null>>;
-  aiProcessedText: string;
-  setAiProcessedText: (val: string) => void;
-  selectedImages: string[];
-  setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>;
-  selectedVideo: string | null;
-  setSelectedVideo: (val: string | null) => void;
-  mainImage: string;
-  setMainImage: (val: string) => void;
-  postButtons: PostButton[];
-  setPostButtons: React.Dispatch<React.SetStateAction<PostButton[]>>;
-  originalText: string;
-  setOriginalText: (val: string) => void;
-  isProcessingAI: boolean;
-  processAI: () => void;
-  showTemplates: boolean;
-  setShowTemplates: (val: boolean) => void;
-  buttonTemplates: ButtonTemplate[];
-  handleDeleteTemplate: (id: string) => void;
-  saveButtonTemplate: () => void;
-  templateName: string;
-  setTemplateName: (val: string) => void;
-  imagePath: string;
-  setImagePath: (val: string) => void;
-  openFolderBrowser: (path?: string) => void;
-  isBrowserLoading: boolean;
-  saveImagePath: () => void;
-  handleFolderSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  syncLocalImages: (shouldSavePath?: boolean, overridePath?: string) => void;
-  syncedImages: string[];
-  isActionInProgress: boolean;
-  sensors: ReturnType<typeof useSensors>;
-  handleDragEnd: (event: any) => void;
-  toggleImageSelection: (img: string) => void;
-  scheduleDateTime: string;
-  setScheduleDateTime: (val: string) => void;
-  saveDraft: (type: 'draft' | 'scheduled') => void;
-  handlePublish: () => void;
-  submitMsg: { type: 'success' | 'error', text: string } | null;
-  linkPresets: string[];
-  saveLinkPresets: (newPresets: string[]) => void;
-  SortableImage: React.FC<SortableImageProps>;
-  onEnlarge: (url: string) => void;
-}
 
 export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
   const [activeTab, setActiveTab] = React.useState<'text' | 'images' | 'buttons'>('text');
@@ -298,21 +248,25 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                         <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
                           <input type="file" accept="image/*,video/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
                             if (!e.target.files) return;
-                            Array.from(e.target.files as Iterable<File>).forEach(file => {
+                            Array.from(e.target.files as Iterable<File>).forEach(async (file) => {
                               if (file.type.startsWith('video/')) {
                                 if (!props.selectedVideo) {
                                   const reader = new FileReader();
-                                  reader.onload = (ev) => props.setSelectedVideo(ev.target?.result as string);
+                                  reader.onload = async (ev) => {
+                                    const base64 = ev.target?.result as string;
+                                    props.setSelectedVideo("https://cdn-icons-png.flaticon.com/512/1179/1179069.png"); // placeholder thumb
+                                    props.setVideoPath(base64);
+                                  };
                                   reader.readAsDataURL(file);
                                 }
                                 return;
                               }
                               const img = new window.Image();
-                              img.onload = () => {
+                              img.onload = async () => {
                                 const canvas = document.createElement('canvas');
                                 let width = img.width;
                                 let height = img.height;
-                                const MAX_SIZE = 1280; // Scale down safely to avoid mobile OOM crashes
+                                const MAX_SIZE = 1280; 
                                 if (width > height && width > MAX_SIZE) {
                                   height = Math.round(height * (MAX_SIZE / width));
                                   width = MAX_SIZE;
@@ -327,6 +281,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                                 const b64 = canvas.toDataURL('image/jpeg', 0.8);
                                 props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
                                 props.setSelectedImages(prev => [...prev, b64]);
+                                props.setMediaPaths(prev => [...prev, b64]);
                                 if (!props.mainImage) props.setMainImage(b64);
                                 URL.revokeObjectURL(img.src);
                               };
