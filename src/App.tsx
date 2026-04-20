@@ -28,6 +28,7 @@ import { useScheduledPosts } from './hooks/useScheduledPosts';
 import { usePublishedPosts } from './hooks/usePublishedPosts';
 import { useAiKeys } from './hooks/useAiKeys';
 import { useBotSettings } from './hooks/useBotSettings';
+import { useLinkPresets } from './hooks/useLinkPresets';
 import { SettingsModal } from './components/SettingsModal';
 import { PostConstructor } from './components/PostConstructor';
 import { PostButton, ParsedContent, DraftPost, ButtonTemplate, ServerConfigStatus } from './types';
@@ -287,6 +288,7 @@ function AppContent() {
   const [aiProcessedText, setAiProcessedText] = useState('');
   const [htmlProcessed, setHtmlProcessed] = useState('');
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   
   const debouncedText = useDebounce(aiProcessedText, 2000);
   const debouncedImages = useDebounce(selectedImages, 1000);
@@ -307,6 +309,7 @@ function AppContent() {
   const { drafts, setDrafts, loading: draftsLoading, saveDraft: saveDraftHook, deleteDraft: deleteDraftHook, reload: reloadDrafts } = useDrafts(isStandalone, getCleanBaseUrl, universalFetch);
   const loadDrafts = reloadDrafts;
   const { buttonTemplates, setButtonTemplates, loadButtonTemplates } = useButtonTemplates(isStandalone, getCleanBaseUrl, universalFetch);
+  const { linkPresets, saveLinkPresets, loadLinkPresets } = useLinkPresets(isStandalone, getCleanBaseUrl, universalFetch);
   const { scheduledPosts, setScheduledPosts, loadScheduledPosts } = useScheduledPosts(isStandalone, getCleanBaseUrl, universalFetch);
   const { publishedPosts, setPublishedPosts, loadPublishedPosts } = usePublishedPosts(isStandalone, getCleanBaseUrl, universalFetch);
 
@@ -690,11 +693,12 @@ function AppContent() {
     setParsedContent(null);
     setAiProcessedText('');
     setSelectedImages([]);
+    setSelectedVideo(null);
     setMainImage('');
     setPostButtons([]);
   };
 
-  const abortCtrl = useRef<AbortController>();
+  const abortCtrl = useRef<AbortController | null>(null);
   const processAI = async () => {
     if (!originalText) return;
     abortCtrl.current?.abort();
@@ -739,7 +743,7 @@ function AppContent() {
     setIsActionInProgress(true);
     const draftId = editingDraftId || Date.now().toString();
     const draft: DraftPost = {
-      id: draftId, parsedContent: parsedContent || undefined, selectedImages, mainImage: mainImage || undefined,
+      id: draftId, parsedContent: parsedContent || undefined, selectedImages, selectedVideo: selectedVideo || undefined, mainImage: mainImage || undefined,
       text: currentText, buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
       status: draftStatus,
       scheduledAt: draftStatus === 'scheduled' && scheduleDateTime ? new Date(scheduleDateTime).getTime() : undefined,
@@ -779,7 +783,7 @@ function AppContent() {
     setIsActionInProgress(true);
     try {
       const post = {
-        id: editingDraftId || Date.now().toString(), text: currentText, selectedImages,
+        id: editingDraftId || Date.now().toString(), text: currentText, selectedImages, selectedVideo: selectedVideo || undefined,
         mainImage: mainImage || undefined, buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
         status: 'published', createdAt: Date.now(), updatedAt: Date.now()
       };
@@ -800,19 +804,35 @@ function AppContent() {
           }
         }
 
-        // Standalone publishing with photos
-        if (post.selectedImages.length === 0) {
+        // Standalone publishing with media
+        if (post.selectedImages.length === 0 && !selectedVideo) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-        } else if (post.selectedImages.length === 1) {
+        } else if (post.selectedImages.length === 1 && !selectedVideo) {
           await telegramClient?.sendPhoto(tempChatId, post.selectedImages[0], htmlText, extra);
+        } else if (post.selectedImages.length === 0 && selectedVideo) {
+          await telegramClient?.sendVideo(tempChatId, selectedVideo, htmlText, extra);
         } else {
-          // For media group, prepare media items with HTML captions
-          const mediaItems = post.selectedImages.map((img, i) => ({
-            type: 'photo',
-            media: img,
-            caption: i === 0 ? htmlText : undefined,
-            parse_mode: i === 0 ? 'HTML' : undefined
-          }));
+          // Mixed media group
+          const mediaItems: any[] = [];
+          
+          if (selectedVideo) {
+            mediaItems.push({
+              type: 'video',
+              media: selectedVideo,
+              caption: htmlText,
+              parse_mode: 'HTML'
+            });
+          }
+          
+          post.selectedImages.forEach((img, i) => {
+             mediaItems.push({
+               type: 'photo',
+               media: img,
+               caption: !selectedVideo && i === 0 ? htmlText : undefined,
+               parse_mode: !selectedVideo && i === 0 ? 'HTML' : undefined
+             });
+          });
+          
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
           if (post.buttons?.length) {
              await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
@@ -861,16 +881,27 @@ function AppContent() {
 
       if (isStandalone) {
         // Send using HTML
-        if (postToPublish.selectedImages?.length) {
-           if (postToPublish.selectedImages.length === 1) {
+        const hasMedia = (postToPublish.selectedImages?.length || 0) > 0 || !!selectedVideo;
+        
+        if (hasMedia) {
+           if (postToPublish.selectedImages?.length === 1 && !selectedVideo) {
              await telegramClient?.sendPhoto(tempChatId, postToPublish.selectedImages[0], htmlText, { parse_mode: 'HTML' });
+           } else if (!postToPublish.selectedImages?.length && selectedVideo) {
+             await telegramClient?.sendVideo(tempChatId, selectedVideo, htmlText, { parse_mode: 'HTML' });
            } else {
-             const mediaItems = postToPublish.selectedImages.map((img: string, i: number) => ({
-                type: 'photo',
-                media: img,
-                caption: i === 0 ? htmlText : undefined,
-                parse_mode: i === 0 ? 'HTML' : undefined
-              }));
+              const mediaItems: any[] = [];
+              if (selectedVideo) {
+                mediaItems.push({ type: 'video', media: selectedVideo, caption: htmlText, parse_mode: 'HTML' });
+              }
+              const imgs = postToPublish.selectedImages || [];
+              imgs.forEach((img: string, i: number) => {
+                 mediaItems.push({
+                    type: 'photo',
+                    media: img,
+                    caption: !selectedVideo && i === 0 ? htmlText : undefined,
+                    parse_mode: !selectedVideo && i === 0 ? 'HTML' : undefined
+                 });
+              });
               await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
            }
         } else {
@@ -1076,24 +1107,58 @@ function AppContent() {
     try {
       const images: { name: string, base64: string }[] = [];
       const localBase64: string[] = [];
+      let videoBase64: string | null = null;
   
       // 1️⃣ СНАЧАЛА читаем все файлы
       for (const file of Array.from(files) as File[]) {
+        if (file.type.startsWith('video/')) {
+           if (!videoBase64) {
+             const base64 = await new Promise<string>((resolve, reject) => {
+               const reader = new FileReader();
+               reader.onload = (ev) => resolve(ev.target?.result as string);
+               reader.onerror = (err) => reject(err);
+               reader.readAsDataURL(file);
+             });
+             videoBase64 = base64;
+             setSelectedVideo(base64);
+           }
+           continue;
+        }
+
         if (!file.type.startsWith('image/')) continue;
         
+        // Resize image to avoid OOM crashes
         const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => resolve(ev.target?.result as string);
-          reader.onerror = (err) => reject(err);
-          reader.readAsDataURL(file);
+          const img = new window.Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const MAX_SIZE = 1200; 
+            if (width > height && width > MAX_SIZE) {
+              height = Math.round(height * (MAX_SIZE / width));
+              width = MAX_SIZE;
+            } else if (height > MAX_SIZE) {
+              width = Math.round(width * (MAX_SIZE / height));
+              height = MAX_SIZE;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx?.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', 0.8));
+            URL.revokeObjectURL(img.src);
+          };
+          img.onerror = (err) => reject(err);
+          img.src = URL.createObjectURL(file);
         });
         
         images.push({ name: file.name, base64 });
         localBase64.push(base64);
       }
       
-      if (images.length === 0) {
-        setLastError('Не найдено изображений для загрузки');
+      if (images.length === 0 && !videoBase64) {
+        setLastError('Не найдено медиафайлов для загрузки');
         return;
       }
   
@@ -1345,6 +1410,8 @@ function AppContent() {
     setAiProcessedText,
     selectedImages,
     setSelectedImages,
+    selectedVideo,
+    setSelectedVideo,
     syncedImages,
     mainImage,
     setMainImage,
@@ -1377,16 +1444,18 @@ function AppContent() {
     saveDraft,
     handlePublish,
     submitMsg,
+    linkPresets,
+    saveLinkPresets,
     SortableImage,
     onEnlarge: (url: string) => setFullScreenImage(url)
   }), [
-    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, mainImage, 
+    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mainImage, 
     postButtons, originalText, isProcessingAI, processAI, showTemplates, 
     buttonTemplates, handleDeleteTemplate, saveButtonTemplate, templateName, 
     imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
     syncLocalImages, isActionInProgress, sensors, handleDragEnd, 
     toggleImageSelection, scheduleDateTime, saveDraft, handlePublish, 
-    submitMsg, SortableImage
+    submitMsg, linkPresets, saveLinkPresets, SortableImage
   ]);
 
   // ✅ DEBUG LOGS
@@ -1535,7 +1604,7 @@ function AppContent() {
                           <p className="text-[10px] text-neutral-500 mt-1 uppercase tracking-widest">{new Date(draft.createdAt).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setSelectedVideo(draft.selectedVideo || null); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
                           <button onClick={() => publishDraft(draft.id)} className="p-2 bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg transition-all"><Send size={16} /></button>
                           <button onClick={() => deleteDraft(draft.id)} className="p-2 bg-red-600/10 text-red-400 hover:bg-red-600/30 rounded-lg transition-all"><Trash2 size={16} /></button>
                         </div>
@@ -1553,7 +1622,7 @@ function AppContent() {
                           <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1 uppercase tracking-widest font-bold"><Clock size={12} />{new Date(post.scheduledAt || '').toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
                           <button onClick={() => deleteDraft(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>
@@ -1572,7 +1641,7 @@ function AppContent() {
                           <p className="text-[10px] text-emerald-400 mt-1 uppercase tracking-widest font-bold">{post.publishedAt ? new Date(post.publishedAt).toLocaleString() : 'Только что'}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
                           <button onClick={() => deletePublishedPost(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>

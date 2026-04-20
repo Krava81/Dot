@@ -8,12 +8,14 @@ export interface ParsedContent {
   title: string;
   text: string;
   images: string[];
+  video?: string | null;
 }
 
 export interface DraftPost {
   id: string;
   parsedContent?: ParsedContent;
   selectedImages: string[]; // Images selected from parsed content (max 10)
+  selectedVideo?: string | null; // Single video allowed
   mainImage?: string; // Single image for the post
   text: string; // AI processed text, editable
   isMarkdown?: boolean;

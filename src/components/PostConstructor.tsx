@@ -59,6 +59,8 @@ interface PostConstructorProps {
   setAiProcessedText: (val: string) => void;
   selectedImages: string[];
   setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>;
+  selectedVideo: string | null;
+  setSelectedVideo: (val: string | null) => void;
   mainImage: string;
   setMainImage: (val: string) => void;
   postButtons: PostButton[];
@@ -91,6 +93,8 @@ interface PostConstructorProps {
   saveDraft: (type: 'draft' | 'scheduled') => void;
   handlePublish: () => void;
   submitMsg: { type: 'success' | 'error', text: string } | null;
+  linkPresets: string[];
+  saveLinkPresets: (newPresets: string[]) => void;
   SortableImage: React.FC<SortableImageProps>;
   onEnlarge: (url: string) => void;
 }
@@ -126,7 +130,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                 <Edit2 size={14} /> Текст
               </button>
               <button onClick={() => setActiveTab('images')} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeTab === 'images' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}>
-                <Image size={14} /> Изображения ({props.selectedImages.length})
+                <Image size={14} /> Медиа ({props.selectedImages.length}{props.selectedVideo ? ' + 1🎥' : ''})
               </button>
               <button onClick={() => setActiveTab('buttons')} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeTab === 'buttons' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}>
                 <Hash size={14} /> Кнопки ({props.postButtons.length})
@@ -241,6 +245,19 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                   </div>
                   <div className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">
                     <div className="space-y-4">
+                      {/* Video Preview */}
+                      {props.selectedVideo && (
+                        <div className="bg-neutral-900/50 p-3 rounded-xl border border-blue-500/40 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
+                              🎥 Видео
+                            </label>
+                            <button onClick={() => props.setSelectedVideo(null)} className="text-red-400 hover:text-red-300 p-1"><Trash2 size={14} /></button>
+                          </div>
+                          <video src={props.selectedVideo} controls className="w-full h-32 object-cover rounded-lg bg-black" />
+                        </div>
+                      )}
+
                       <div className="bg-neutral-900/50 p-3 rounded-xl border border-neutral-800 space-y-2">
                         <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
                           <Folder size={12} className="text-blue-500" /> Путь к папке
@@ -279,9 +296,17 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                           </SortableContext>
                         </DndContext>
                         <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
-                          <input type="file" accept="image/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
+                          <input type="file" accept="image/*,video/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
                             if (!e.target.files) return;
                             Array.from(e.target.files as Iterable<File>).forEach(file => {
+                              if (file.type.startsWith('video/')) {
+                                if (!props.selectedVideo) {
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => props.setSelectedVideo(ev.target?.result as string);
+                                  reader.readAsDataURL(file);
+                                }
+                                return;
+                              }
                               const img = new window.Image();
                               img.onload = () => {
                                 const canvas = document.createElement('canvas');
@@ -354,7 +379,48 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       <div key={idx} className="flex gap-2 items-start bg-neutral-900/50 p-2 rounded-xl border border-neutral-800">
                         <div className="flex-1 space-y-1">
                           <input value={btn.text} onChange={e => { const nb = [...props.postButtons]; nb[idx].text = e.target.value; props.setPostButtons(nb); }} placeholder="Текст" className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[10px] focus:outline-none text-white" />
-                          <input value={btn.url} onChange={e => { const nb = [...props.postButtons]; nb[idx].url = e.target.value; props.setPostButtons(nb); }} placeholder="URL" className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[9px] focus:outline-none font-mono text-blue-400" />
+                          <div className="flex gap-1 relative group/url">
+                            <input value={btn.url} onChange={e => { const nb = [...props.postButtons]; nb[idx].url = e.target.value; props.setPostButtons(nb); }} placeholder="URL" className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[9px] focus:outline-none font-mono text-blue-400" />
+                            <button 
+                              onClick={() => {
+                                if (btn.url && !props.linkPresets.includes(btn.url)) {
+                                  props.saveLinkPresets([...props.linkPresets, btn.url]);
+                                }
+                              }} 
+                              className="p-1 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-500 hover:text-blue-400 group-hover/url:opacity-100 opacity-0 transition-opacity"
+                              title="В избранное"
+                            >
+                              <Plus size={10} />
+                            </button>
+                            {props.linkPresets.length > 0 && (
+                               <div className="absolute top-full left-0 right-0 z-10 bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl hidden group-focus-within/url:block max-h-[100px] overflow-y-auto mt-1">
+                                  {props.linkPresets.map((preset, pi) => (
+                                    <div key={pi} className="flex items-center justify-between p-1 hover:bg-neutral-800">
+                                      <button 
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          const nb = [...props.postButtons];
+                                          nb[idx].url = preset;
+                                          props.setPostButtons(nb);
+                                        }} 
+                                        className="flex-1 text-left text-[9px] text-neutral-400 truncate px-1"
+                                      >
+                                        {preset}
+                                      </button>
+                                      <button 
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          props.saveLinkPresets(props.linkPresets.filter((_, i) => i !== pi));
+                                        }} 
+                                        className="p-1 text-neutral-600 hover:text-red-400"
+                                      >
+                                        <X size={10} />
+                                      </button>
+                                    </div>
+                                  ))}
+                               </div>
+                            )}
+                          </div>
                         </div>
                         <button onClick={() => props.setPostButtons(props.postButtons.filter((_, i) => i !== idx))} className="p-1 text-neutral-600 hover:text-red-400"><Trash2 size={14} /></button>
                       </div>

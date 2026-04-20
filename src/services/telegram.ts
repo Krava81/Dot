@@ -187,6 +187,31 @@ export class TelegramAPI {
     });
   }
 
+  async sendVideo(chatId: string | number, video: string, caption?: string, extra: any = {}) {
+    if (this.isUploadablePhoto(video)) {
+      const formData = new FormData();
+      formData.append('chat_id', String(chatId));
+      formData.append('video', await this.toBlob(video), 'video.mp4');
+      if (caption) formData.append('caption', caption);
+      formData.append('parse_mode', 'HTML');
+
+      Object.entries(extra || {}).forEach(([key, value]) => {
+        if (value === undefined || value === null) return;
+        formData.append(key, typeof value === 'string' ? value : JSON.stringify(value));
+      });
+
+      return this.multipartCall('sendVideo', formData);
+    }
+
+    return this.call('sendVideo', {
+      chat_id: chatId,
+      video,
+      caption,
+      parse_mode: 'HTML',
+      ...extra
+    });
+  }
+
   async sendMediaGroup(chatId: string | number, media: any[]) {
     const hasLocalMedia = media.some((item: any) => typeof item?.media === 'string' && this.isUploadablePhoto(item.media));
     if (hasLocalMedia) {
@@ -195,8 +220,9 @@ export class TelegramAPI {
 
       const preparedMedia = await Promise.all(media.map(async (item: any, index: number) => {
         if (typeof item?.media === 'string' && this.isUploadablePhoto(item.media)) {
+          const extension = item.type === 'video' ? 'mp4' : 'jpg';
           const attachName = `file${index}`;
-          formData.append(attachName, await this.toBlob(item.media), `${attachName}.jpg`);
+          formData.append(attachName, await this.toBlob(item.media), `${attachName}.${extension}`);
           return { ...item, media: `attach://${attachName}` };
         }
         return item;
