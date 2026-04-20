@@ -49,11 +49,16 @@ export class TelegramAPI {
       console.warn("Filesystem read failed, falling back to fetch:", e);
     }
 
-    const response = await fetch(photo);
-    if (!response.ok) {
-      throw new Error(`Failed to read local image: ${response.status}`);
+    try {
+      const response = await fetch(photo);
+      if (!response.ok) {
+        throw new Error(`Failed to read local image: ${response.status}`);
+      }
+      return response.blob();
+    } catch (e) {
+      console.error("toBlob fetch failed:", e);
+      throw new Error(`Failed to convert image to blob: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
-    return response.blob();
   }
 
   private async multipartCall(
