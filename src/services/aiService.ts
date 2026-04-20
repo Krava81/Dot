@@ -109,65 +109,79 @@ ${text}`;
  
   private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     const models = [
-      "gemini-2.0-flash"
+      "gemini-2.0-flash",
+      "gemini-1.5-pro"
     ];
     let lastError: any = new Error("No Gemini models configured or available");
 
     for (const modelId of models) {
       logCallback(`📡 Google Gemini (${modelId})...`);
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
-        const response = await universalFetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: {
-            contents: [{ parts: [{ text: prompt }] }],
-            safetySettings: [
-              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-            ],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
-          },
-          skipRetry: true,
-          timeout: 120000
-        });
+      let attempt = 0;
+      const maxAttempts = 3;
 
-        if (!response.ok) {
-          let errorMsg = `Gemini (${modelId}) error ${response.status}`;
-          try {
-            const data = await response.json();
-            errorMsg = data.error?.message || errorMsg;
-          } catch {}
-          throw new Error(errorMsg);
-        }
+      while (attempt < maxAttempts) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
+          const response = await universalFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: {
+              contents: [{ parts: [{ text: prompt }] }],
+              safetySettings: [
+                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+              ],
+              generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+            },
+            skipRetry: true,
+            timeout: 120000
+          });
 
-        const data = await response.json();
-        
-        if (data.promptFeedback?.blockReason) {
-          throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
-        }
+          if (!response.ok) {
+            let errorMsg = `Gemini (${modelId}) error ${response.status}`;
+            try {
+              const data = await response.json();
+              errorMsg = data.error?.message || errorMsg;
+            } catch {}
+            throw new Error(errorMsg);
+          }
 
-        if (data.candidates && data.candidates.length > 0) {
-          const candidate = data.candidates[0];
+          const data = await response.json();
           
-          if (candidate.finishReason === 'SAFETY') {
-            logCallback(`⚠️ Gemini ${modelId} blocked due to safety settings`);
+          if (data.promptFeedback?.blockReason) {
+            throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
+          }
+
+          if (data.candidates && data.candidates.length > 0) {
+            const candidate = data.candidates[0];
+            
+            if (candidate.finishReason === 'SAFETY') {
+              logCallback(`⚠️ Gemini ${modelId} blocked due to safety settings`);
+              break;
+            }
+            
+            const text = candidate.content?.parts?.[0]?.text || "";
+            if (!text || !text.trim()) {
+              throw new Error("Gemini returned empty response");
+            }
+            return text;
+          } else {
+            throw new Error("Gemini returned no candidates");
+          }
+        } catch (e: any) {
+          const msg = e.message || String(e);
+          if ((msg.includes("503") || msg.includes("high demand") || msg.includes("429")) && attempt < maxAttempts - 1) {
+            attempt++;
+            logCallback(`⚠️ Gemini ${modelId} overloaded. Retrying in ${attempt * 3}s...`);
+            await new Promise(r => setTimeout(r, attempt * 3000));
             continue;
           }
-          
-          const text = candidate.content?.parts?.[0]?.text || "";
-          if (!text || !text.trim()) {
-            throw new Error("Gemini returned empty response");
-          }
-          return text;
-        } else {
-          throw new Error("Gemini returned no candidates");
+          logCallback(`⚠️ Gemini Model ${modelId} failed: ${msg}`);
+          lastError = e;
+          break;
         }
-      } catch (e: any) {
-        logCallback(`⚠️ Gemini Model ${modelId} failed: ${e.message}`);
-        lastError = e;
       }
     }
     
@@ -203,10 +217,6 @@ ${text}`;
  
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     const models = [
-      "google/gemini-2.0-flash-lite-preview-02-05:free",
-      "meta-llama/llama-3.3-70b-instruct:free",
-      "deepseek/deepseek-chat:free",
-      "anthropic/claude-3.5-sonnet",
       "google/gemini-2.0-flash-001"
     ];
     let lastError: any = new Error("No OpenRouter models configured or available");

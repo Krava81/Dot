@@ -5,7 +5,7 @@ import { Telegraf } from "telegraf";
 import axios from "axios";
 import * as dotenv from "dotenv";
 import { serverStorage } from './serverStorage';
-import { FileLogger } from './src/serverUtils';
+import { FileLogger, sanitizeHtml } from './src/serverUtils';
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { load } from "cheerio";
@@ -118,12 +118,6 @@ function readPlainFileSync(filePath: string, defaultValue = ""): string {
   return defaultValue;
 }
 
-function writeJsonFileSync(filePath: string, data: any): void {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-  } catch (err) { console.error(`Error writing ${filePath}:`, err); }
-}
-
 async function loadAllData() {
   cachedApiKeys       = await serverStorage.readJsonFile<ApiKeys>(API_KEYS_FILE, {});
   cachedPosts         = await serverStorage.readJsonFile<any[]>(POSTS_FILE, []);
@@ -206,14 +200,12 @@ let bot: Telegraf | null     = null;
 let botError: string | null  = null;
 let DEFAULT_CHAT_ID: string | number = "";
 let isInitializingBot        = false;
-let botRetryTimeout: any = null;
-let bot409Retries = 0;
-const MAX_409 = 3;
-const RETRY_DELAY_MS = 15_000;
-const BOT_HEALTHCHECK_MS = 60_000;
-const BOT_MAX_HEALTH_FAILS = 3;
-let botHealthInterval: any = null;
+let botRetryTimeout: NodeJS.Timeout | null = null;
+let botHealthInterval: NodeJS.Timeout | null = null;
 let botHealthFails = 0;
+const BOT_MAX_HEALTH_FAILS = 3;
+const BOT_HEALTHCHECK_MS = 60_000;
+let bot409Retries = 0;
 
 // Класс для управления логами
 class LogManager {
@@ -278,59 +270,6 @@ class LogManager {
 
 const logManager = new LogManager(200);
 const addLog = (msg: string) => logManager.addLog(msg);
-
-/**
- * Безопасная санитизация HTML для Telegram
- */
-const sanitizeHtml = (text: string): string => {
-  if (!text || typeof text !== 'string') return "";
-  
-  try {
-    let s = text
-      .replace(/<p>/gi, "")
-      .replace(/<\/p>/gi, "\n\n")
-      .replace(/<ul>/gi, "")
-      .replace(/<\/ul>/gi, "\n")
-      .replace(/<ol>/gi, "")
-      .replace(/<\/ol>/gi, "\n")
-      .replace(/<li>/gi, "• ")
-      .replace(/<\/li>/gi, "\n")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/?(div)>/gi, "\n")
-      .replace(/\r\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n");
-
-    const allowedTags = [
-      'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'a', 'tg-spoiler'
-    ];
-    
-    const placeholders: { tag: string; placeholder: string }[] = [];
-    const allowedTagsRegex = new RegExp(`<(/?)(${allowedTags.join('|')})(\\b[^>]*)?>`, 'gi');
-    
-    s = s.replace(allowedTagsRegex, (match) => {
-      const placeholder = `__TAG_${placeholders.length}__`;
-      placeholders.push({ tag: match, placeholder });
-      return placeholder;
-    });
-
-    s = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    placeholders.forEach(({ tag, placeholder }) => {
-      const processedTag = tag.replace(/href="([^"]*)"/gi, (match, url) => {
-        // Double check if it's already encoded? No, just ensure it's safe.
-        return `href="${url}"`;
-      });
-      s = s.replace(placeholder, processedTag);
-    });
-
-    s = s.replace(/<\/?(html|body|head|meta|title|doctype|script|style)[^>]*>/gi, "");
-
-    return s.trim().replace(/\n{3,}/g, "\n\n");
-  } catch (error) {
-    console.error('❌ HTML sanitization fatal error:', error);
-    return text.replace(/<[^>]*>/g, '').trim();
-  }
-};
 
 app.get("/api/logs/stream", (req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -476,48 +415,63 @@ ${text.substring(0, 20000)}`;
           
           const modelsToTry = [
             process.env.GEMINI_MODEL,
-            'gemini-2.0-flash'
+            'gemini-2.0-flash',
+            'gemini-1.5-pro'
           ].filter(Boolean) as string[];
           
           addLog(`📡 Gemini clones check: ${modelsToTry.join(', ')}`);
           for (const modelName of modelsToTry) {
-            try {
-              const genAI = new GoogleGenerativeAI(apiKey.trim());
-              const model = genAI.getGenerativeModel({ 
-                model: modelName,
-                safetySettings: [
-                  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-                  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                ],
-                generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
-              });
-              
-              const result = await model.generateContent(prompt);
-              const response = result.response;
-              
-              if (response.promptFeedback?.blockReason) {
-                addLog(`⚠️ Gemini ${modelName} prompt blocked: ${response.promptFeedback.blockReason}`);
-                throw new Error(`Prompt blocked: ${response.promptFeedback.blockReason}`);
-              }
-              
-              if (response.candidates && response.candidates.length > 0) {
-                const candidate = response.candidates[0];
-                if (candidate.finishReason === 'SAFETY') {
-                  addLog(`⚠️ Gemini ${modelName} blocked due to safety settings`);
+            let attempt = 0;
+            const maxAttempts = 3;
+            
+            while (attempt < maxAttempts) {
+              try {
+                const genAI = new GoogleGenerativeAI(apiKey.trim());
+                const model = genAI.getGenerativeModel({ 
+                  model: modelName,
+                  safetySettings: [
+                    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                  ],
+                  generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+                });
+                
+                const result = await model.generateContent(prompt);
+                const response = result.response;
+                
+                if (response.promptFeedback?.blockReason) {
+                  addLog(`⚠️ Gemini ${modelName} prompt blocked: ${response.promptFeedback.blockReason}`);
+                  throw new Error(`Prompt blocked: ${response.promptFeedback.blockReason}`);
+                }
+                
+                if (response.candidates && response.candidates.length > 0) {
+                  const candidate = response.candidates[0];
+                  if (candidate.finishReason === 'SAFETY') {
+                    addLog(`⚠️ Gemini ${modelName} blocked due to safety settings`);
+                    break;
+                  }
+                  aiResult = response.text();
+                } else {
+                  addLog(`⚠️ Gemini ${modelName} returned empty response`);
+                  break;
+                }
+
+                if (aiResult) break;
+              } catch (modelErr: any) {
+                const msg = modelErr.message || String(modelErr);
+                if ((msg.includes("503") || msg.includes("high demand") || msg.includes("429")) && attempt < maxAttempts - 1) {
+                  attempt++;
+                  addLog(`⚠️ Gemini ${modelName} overloaded (503/429). Retrying in ${attempt * 3}s...`);
+                  await sleep(attempt * 3000);
                   continue;
                 }
-                aiResult = response.text();
-              } else {
-                addLog(`⚠️ Gemini ${modelName} returned empty response`);
-                continue;
+                addLog(`⚠️ Gemini ${modelName} fail: ${msg}`);
+                break;
               }
-
-              if (aiResult) break;
-            } catch (modelErr: any) {
-              addLog(`⚠️ Gemini ${modelName} fail: ${modelErr.message}`);
             }
+            if (aiResult) break;
           }
         }
         // ---- OpenRouter ----
@@ -525,10 +479,6 @@ ${text.substring(0, 20000)}`;
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           const models = [
-            "google/gemini-2.0-flash-lite-preview-02-05:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-chat:free",
-            "anthropic/claude-3.5-sonnet",
             "google/gemini-2.0-flash-001"
           ];
           

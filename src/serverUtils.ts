@@ -29,7 +29,7 @@ export class FileLogger {
  * Безопасная санитизация HTML для Telegram
  * Поддерживает только разрешенные теги и корректно экранирует спецсимволы
  */
-const sanitizeHtml = (text: string): string => {
+export const sanitizeHtml = (text: string): string => {
   if (!text || typeof text !== 'string') return "";
   
   try {
@@ -299,7 +299,6 @@ const truncateText = (text: string, maxLength: number): string => {
 
 // ✅ ЭКСПОРТ
 export {
-  sanitizeHtml,
   LogManager,
   validateChatId,
   safeJsonParse,

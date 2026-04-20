@@ -221,13 +221,9 @@ function AppContent() {
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isActionInProgress, setIsActionInProgress] = useState(false);
   const [needsKey, setNeedsKey] = useState(false);
-  const [isWorking, setIsWorking] = useState(false);
-  const [fullResponse, setFullResponse] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState({ text: '', images: [] });
 
   const lastSavedRef = useRef({ text: '', images: [] as string[] });
-  const constructorMountedRef = useRef(false);
-  const [showFullResponse, setShowFullResponse] = useState(false);
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isBotOnline, setIsBotOnline] = useState(false);
@@ -1431,9 +1427,9 @@ function AppContent() {
                 </button>
               )}
             </span>
-            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${isWorking ? 'bg-blue-500/20 text-blue-400 border border-blue-500/20' : 'bg-neutral-800 text-neutral-500 border border-neutral-700'}`}>
-              <Cpu size={12} className={isWorking ? 'animate-pulse' : ''} />
-              ИИ: {isWorking ? 'Обработка' : 'Ожидание'}
+            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${isProcessingAI ? 'bg-blue-500/20 text-blue-400 border border-blue-500/20' : 'bg-neutral-800 text-neutral-500 border border-neutral-700'}`}>
+              <Cpu size={12} className={isProcessingAI ? 'animate-pulse' : ''} />
+              ИИ: {isProcessingAI ? 'Обработка' : 'Ожидание'}
             </span>
             {syncedImages.length > 0 && (
               <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/20">
