@@ -766,7 +766,8 @@ function AppContent() {
       setSubmitMsg({ type: 'success', text: draftStatus === 'scheduled' ? 'Пост запланирован!' : 'Черновик сохранен!' });
       if (draftStatus === 'draft') setEditingDraftId(draftId);
       else { setIsConstructorOpen(false); resetConstructor(); }
-      reloadDrafts();
+      loadDrafts();
+      loadScheduledPosts();
       return draftId;
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); return undefined; }
     finally { setIsActionInProgress(false); }
@@ -913,10 +914,34 @@ function AppContent() {
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
   }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, savePublishedPost, deleteDraftHook]);
+
+  // ✅ BACKGROUND SCHEDULING WORKER
+  useEffect(() => {
+    if (!isStandalone) return;
+    
+    addClientLog("🕒 Запуск планировщика...");
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const toSend = scheduledPosts.filter(post => 
+        post.scheduledAt && now >= post.scheduledAt && post.status === 'scheduled'
+      );
+
+      if (toSend.length > 0) {
+        addClientLog(`⏰ Планировщик: обнаружено ${toSend.length} постов для отправки`);
+        toSend.forEach(post => {
+          publishDraft(post.id);
+        });
+      }
+    }, 60000); // Check every minute
+    
+    return () => clearInterval(interval);
+  }, [isStandalone, scheduledPosts, publishDraft]);
+
   const deleteDraft = async (draftId: string) => {
     try {
       await deleteDraftHook(draftId);
-      if (!isStandalone) loadScheduledPosts();
+      loadDrafts();
+      loadScheduledPosts();
     } catch (e) { console.error(e); }
   };
 
@@ -1490,6 +1515,7 @@ function AppContent() {
                         </div>
                         <div className="flex gap-2">
                           <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => publishDraft(post.id)} className="p-2 bg-emerald-600/10 text-emerald-400 rounded-lg"><Send size={16} /></button>
                           <button onClick={() => deleteDraft(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>

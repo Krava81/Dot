@@ -38,6 +38,7 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
 
   const saveButtonTemplate = useCallback(async (name: string, buttons: any[]) => {
     if (!name.trim() || buttons.length === 0) return;
+    console.log(`[useButtonTemplates] Saving template: ${name}, buttons: ${buttons.length}`);
     const newTemplate = { id: Date.now().toString(), name, buttons };
     const updated = [...buttonTemplates, newTemplate];
     setButtonTemplates(updated);
@@ -45,6 +46,7 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
     try {
       if (isStandalone) {
         await storage.saveJson('templates.json', updated);
+        console.log("[useButtonTemplates] Template saved to JSON");
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;

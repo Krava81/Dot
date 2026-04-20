@@ -187,16 +187,27 @@ export class TelegramAPI {
     });
   }
 
-  async sendPhoto(chatId: string | number, photo: string, caption?: string, extra: any = {}) {
+  async sendPhoto(chatId: string | number, photo: string, captionOrExtra?: string | any, extra: any = {}) {
+    let finalCaption = '';
+    let finalExtra = extra || {};
+
+    if (typeof captionOrExtra === 'string') {
+      finalCaption = captionOrExtra;
+    } else if (captionOrExtra && typeof captionOrExtra === 'object') {
+      finalExtra = { ...finalExtra, ...captionOrExtra };
+      finalCaption = finalExtra.caption || '';
+      delete finalExtra.caption;
+    }
+
     if (this.isUploadablePhoto(photo)) {
       const formData = new FormData();
       formData.append('chat_id', String(chatId));
       formData.append('photo', await this.toBlob(photo), 'photo.jpg');
-      if (caption) formData.append('caption', caption);
-      formData.append('parse_mode', 'HTML');
+      if (finalCaption) formData.append('caption', finalCaption);
+      formData.append('parse_mode', finalExtra.parse_mode || 'HTML');
 
-      Object.entries(extra || {}).forEach(([key, value]) => {
-        if (value === undefined || value === null) return;
+      Object.entries(finalExtra).forEach(([key, value]) => {
+        if (key === 'parse_mode' || value === undefined || value === null) return;
         formData.append(key, typeof value === 'string' ? value : JSON.stringify(value));
       });
 
@@ -206,22 +217,33 @@ export class TelegramAPI {
     return this.call('sendPhoto', {
       chat_id: chatId,
       photo,
-      caption,
-      parse_mode: 'HTML',
-      ...extra
+      caption: finalCaption,
+      parse_mode: finalExtra.parse_mode || 'HTML',
+      ...finalExtra
     });
   }
 
-  async sendVideo(chatId: string | number, video: string, caption?: string, extra: any = {}) {
+  async sendVideo(chatId: string | number, video: string, captionOrExtra?: string | any, extra: any = {}) {
+    let finalCaption = '';
+    let finalExtra = extra || {};
+
+    if (typeof captionOrExtra === 'string') {
+      finalCaption = captionOrExtra;
+    } else if (captionOrExtra && typeof captionOrExtra === 'object') {
+      finalExtra = { ...finalExtra, ...captionOrExtra };
+      finalCaption = finalExtra.caption || '';
+      delete finalExtra.caption;
+    }
+
     if (this.isUploadablePhoto(video)) {
       const formData = new FormData();
       formData.append('chat_id', String(chatId));
       formData.append('video', await this.toBlob(video), 'video.mp4');
-      if (caption) formData.append('caption', caption);
-      formData.append('parse_mode', 'HTML');
+      if (finalCaption) formData.append('caption', finalCaption);
+      formData.append('parse_mode', finalExtra.parse_mode || 'HTML');
 
-      Object.entries(extra || {}).forEach(([key, value]) => {
-        if (value === undefined || value === null) return;
+      Object.entries(finalExtra).forEach(([key, value]) => {
+        if (key === 'parse_mode' || value === undefined || value === null) return;
         formData.append(key, typeof value === 'string' ? value : JSON.stringify(value));
       });
 
@@ -231,9 +253,9 @@ export class TelegramAPI {
     return this.call('sendVideo', {
       chat_id: chatId,
       video,
-      caption,
-      parse_mode: 'HTML',
-      ...extra
+      caption: finalCaption,
+      parse_mode: finalExtra.parse_mode || 'HTML',
+      ...finalExtra
     });
   }
 
