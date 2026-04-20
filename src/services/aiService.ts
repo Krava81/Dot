@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { universalFetch } from "./http";
 import { errorTracker } from "../utils/errorTracker";
 import { AIProcessingError } from "../utils/errors";
@@ -111,36 +110,60 @@ ${text}`;
   private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     const models = [
       "gemini-2.0-flash", 
-      "gemini-1.5-pro", 
+      "gemini-2.0-flash-lite",
       "gemini-1.5-flash",
-      "gemini-1.5-pro-latest",
-      "gemini-1.5-flash-latest"
+      "gemini-1.5-pro", 
     ];
-    const genAI = new GoogleGenerativeAI(apiKey);
     let lastError: any = null;
 
     for (const modelId of models) {
       logCallback(`📡 Google Gemini (${modelId})...`);
       try {
-        const model = genAI.getGenerativeModel({ 
-          model: modelId,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+        const response = await universalFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: {
+            contents: [{ parts: [{ text: prompt }] }],
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+            ],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+          },
+          skipRetry: true,
+          timeout: 120000
         });
-        
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        
-        if (!text || !text.trim()) {
-          throw new Error("Gemini returned empty response");
+
+        if (!response.ok) {
+          let errorMsg = `Gemini (${modelId}) error ${response.status}`;
+          try {
+            const data = await response.json();
+            errorMsg = data.error?.message || errorMsg;
+          } catch {}
+          throw new Error(errorMsg);
         }
+
+        const data = await response.json();
         
-        return text;
+        if (data.candidates && data.candidates.length > 0) {
+          const candidate = data.candidates[0];
+          
+          if (candidate.finishReason === 'SAFETY') {
+            logCallback(`⚠️ Gemini ${modelId} blocked due to safety settings`);
+            continue;
+          }
+          
+          const text = candidate.content?.parts?.[0]?.text || "";
+          if (!text || !text.trim()) {
+            throw new Error("Gemini returned empty response");
+          }
+          return text;
+        } else {
+          throw new Error("Gemini returned no candidates");
+        }
       } catch (e: any) {
         logCallback(`⚠️ Gemini Model ${modelId} failed: ${e.message}`);
         lastError = e;
@@ -157,7 +180,8 @@ ${text}`;
       method: 'POST',
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: { model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4000 },
-      skipRetry: true
+      skipRetry: true,
+      timeout: 120000
     });
 
     if (!response.ok) {
@@ -195,12 +219,14 @@ ${text}`;
             "Authorization": `Bearer ${apiKey}`,
             "Content-Type": "application/json",
             "HTTP-Referer": "https://newsbot.manager",
+            "X-Title": "TG Bot Manager"
           },
           body: {
             model: modelId,
             messages: [{ role: "user", content: prompt }]
           },
-          skipRetry: true
+          skipRetry: true,
+          timeout: 120000
         });
     
         if (!response.ok) {
@@ -242,7 +268,8 @@ ${text}`;
         messages: [{ role: "user", content: prompt }],
         temperature: 0.1
       },
-      skipRetry: true
+      skipRetry: true,
+      timeout: 120000
     });
  
     if (!response.ok) {

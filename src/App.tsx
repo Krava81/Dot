@@ -441,15 +441,16 @@ function AppContent() {
   }, []);
 
   // ─── Fetch Data ───────────────────────────────────────────────────────────
-  // ─── Standalone Initialization ───────────────────────────────────────────
+    // ─── Standalone Initialization ───────────────────────────────────────────
   useEffect(() => {
     if (isStandalone) {
       storage.init().then(() => {
         addClientLog("📦 Локальное хранилище инициализировано");
         loadAllStandaloneData();
+        loadButtonTemplates(); // Load templates on init
       });
     }
-  }, [isStandalone]);
+  }, [isStandalone, loadButtonTemplates]);
 
   const loadAllStandaloneData = async () => {
     const d = await storage.loadJson('drafts.json');
@@ -917,7 +918,10 @@ function AppContent() {
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
-        const res = await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, { method: 'POST', body: { name: templateName, buttons: postButtons } });
+        const res = await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, { 
+          method: 'POST', 
+          body: { name: templateName, buttons: postButtons } 
+        });
         if (res.ok) { setTemplateName(''); loadButtonTemplates(); }
       }
     } catch (e) { console.error(e); }

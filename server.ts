@@ -428,6 +428,7 @@ async function processWithAI(text: string, provider?: string, customApiKeys: any
 ${text.substring(0, 20000)}`;
 
   const lastErrors: string[] = [];
+  const timeout = 120000; // 120 seconds timeout
 
   for (let cycle = 1; cycle <= 3; cycle++) {
     if (cycle > 1) addLog(`🔄 AI retry ${cycle}/3...`);
@@ -442,7 +443,7 @@ ${text.substring(0, 20000)}`;
         if (cur === "github") {
           const apiKey = keys.github || process.env.GITHUB_TOKEN;
           if (!apiKey) { lastErrors.push("GitHub: no key"); continue; }
-          const modelName = "gpt-4o-mini";
+          const modelName = "gpt-4o";
           addLog(`📡 GitHub Models (${modelName})...`);
           
           for (let attempt = 1; attempt <= 3; attempt++) {
@@ -457,32 +458,63 @@ ${text.substring(0, 20000)}`;
                 },
                 {
                   headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-                  timeout: 60000
+                  timeout: timeout
                 }
               );
               aiResult = r.data.choices?.[0]?.message?.content || "";
-              break;
+              if (aiResult) break;
             } catch (e: any) {
-              if (e.response?.status === 429 && attempt < 3) await sleep(5000 * attempt);
-              else throw e;
+              if (e.response?.status === 429 && attempt < 3) {
+                addLog(`⚠️ GitHub Rate limit (attempt ${attempt}), retrying...`);
+                await sleep(5000 * attempt);
+              } else throw e;
             }
           }
         }
         // ---- Gemini ----
+        // ---- Gemini ----
         else if (cur === "gemini") {
           const apiKey = keys.gemini || process.env.GEMINI_API_KEY;
           if (!apiKey) { lastErrors.push("Gemini: no key"); continue; }
-          const uniqueModels = Array.from(new Set(VALID_GEMINI_MODELS.filter(Boolean)));
-          addLog(`📡 Gemini clones check: ${uniqueModels.join(', ')}`);
-          for (const modelName of uniqueModels) {
+          
+          const modelsToTry = [
+            process.env.GEMINI_MODEL,
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-lite',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
+          ].filter(Boolean) as string[];
+          
+          addLog(`📡 Gemini clones check: ${modelsToTry.join(', ')}`);
+          for (const modelName of modelsToTry) {
             try {
               const genAI = new GoogleGenerativeAI(apiKey);
               const model = genAI.getGenerativeModel({ 
-                model: modelName as string,
+                model: modelName,
+                safetySettings: [
+                  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                ],
                 generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
               });
+              
               const result = await model.generateContent(prompt);
-              aiResult = result.response.text();
+              const response = result.response;
+              
+              if (response.candidates && response.candidates.length > 0) {
+                const candidate = response.candidates[0];
+                if (candidate.finishReason === 'SAFETY') {
+                  addLog(`⚠️ Gemini ${modelName} blocked due to safety settings`);
+                  continue;
+                }
+                aiResult = response.text();
+              } else {
+                addLog(`⚠️ Gemini ${modelName} returned empty response`);
+                continue;
+              }
+
               if (aiResult) break;
             } catch (modelErr: any) {
               addLog(`⚠️ Gemini ${modelName} fail: ${modelErr.message}`);
@@ -493,15 +525,38 @@ ${text.substring(0, 20000)}`;
         else if (cur === "openrouter") {
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
-          addLog("📡 OpenRouter (gpt-4o-mini)...");
-          try {
-            const r = await axios.post(
-              "https://openrouter.ai/api/v1/chat/completions",
-              { model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }] },
-              { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
-            );
-            aiResult = r.data.choices?.[0]?.message?.content || "";
-          } catch (err: any) { throw err; }
+          const models = [
+            "anthropic/claude-3.5-sonnet",
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemini-2.0-flash-001"
+          ];
+          
+          for (const modelId of models) {
+            addLog(`📡 OpenRouter (${modelId})...`);
+            try {
+              const r = await axios.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                { 
+                  model: modelId, 
+                  messages: [{ role: "user", content: prompt }],
+                  temperature: 0.1
+                },
+                { 
+                  headers: { 
+                    "Authorization": `Bearer ${apiKey}`,
+                    "HTTP-Referer": process.env.PUBLIC_DOMAIN || "https://newsbot.manager",
+                    "X-Title": "TG Bot Manager"
+                  }, 
+                  timeout: timeout 
+                }
+              );
+              aiResult = r.data.choices?.[0]?.message?.content || "";
+              if (aiResult) break;
+            } catch (err: any) {
+              addLog(`⚠️ OpenRouter Model ${modelId} failed: ${err.message}`);
+            }
+          }
         }
         // ---- DeepSeek ----
         else if (cur === "deepseek") {
@@ -512,7 +567,7 @@ ${text.substring(0, 20000)}`;
             const r = await axios.post(
               "https://api.deepseek.com/chat/completions",
               { model: "deepseek-chat", messages: [{ role: "user", content: prompt }], temperature: 0.1 },
-              { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 60000 }
+              { headers: { Authorization: `Bearer ${apiKey}` }, timeout: timeout }
             );
             aiResult = r.data.choices?.[0]?.message?.content || "";
           } catch (err: any) { throw err; }

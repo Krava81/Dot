@@ -76,11 +76,12 @@ interface PostConstructorProps {
   setTemplateName: (val: string) => void;
   imagePath: string;
   setImagePath: (val: string) => void;
-  openFolderBrowser: (path: string) => void;
+  openFolderBrowser: (path?: string) => void;
   isBrowserLoading: boolean;
   saveImagePath: () => void;
   handleFolderSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   syncLocalImages: (shouldSavePath?: boolean, overridePath?: string) => void;
+  syncedImages: string[];
   isActionInProgress: boolean;
   sensors: ReturnType<typeof useSensors>;
   handleDragEnd: (event: any) => void;
@@ -270,7 +271,9 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                                 key={img} 
                                 id={img} 
                                 url={img} 
+                                isMain={props.mainImage === img}
                                 onSelect={props.toggleImageSelection} 
+                                onSetMain={props.setMainImage}
                                 onEnlarge={props.onEnlarge} 
                               />
                             ))}
