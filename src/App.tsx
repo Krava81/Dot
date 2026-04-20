@@ -764,10 +764,16 @@ function AppContent() {
         if (!botToken || !tempChatId) throw new Error("Токен бота или Chat ID не настроены");
         
         const extra: any = { parse_mode: 'HTML' };
-        if (post.buttons?.length) {
-          extra.reply_markup = {
-            inline_keyboard: post.buttons.map(b => [{ text: b.text, url: b.url }])
-          };
+        if (post.buttons && post.buttons.length > 0) {
+          const validButtons = post.buttons
+            .filter(b => b.text && b.text.trim() !== '' && b.url && b.url.trim() !== '' && b.url !== 'https://')
+            .map(b => [{ text: b.text, url: b.url }]);
+            
+          if (validButtons.length > 0) {
+            extra.reply_markup = {
+              inline_keyboard: validButtons
+            };
+          }
         }
 
         // Standalone publishing with photos

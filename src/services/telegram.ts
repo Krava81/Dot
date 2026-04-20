@@ -68,17 +68,38 @@ export class TelegramAPI {
     for (let i = 0; i < retries; i++) {
       const attempt = i + 1;
       try {
-        const response = await fetch(`${this.baseUrl}/${method}`, {
-          method: 'POST',
-          body: formData,
-          signal
-        });
+        const result = await new Promise<any>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${this.baseUrl}/${method}`, true);
+          
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              xhr.abort();
+              reject(new Error('AbortError'));
+            });
+          }
 
-        const data = await response.json();
-        if (!data.ok) {
-          throw new Error(data.description || `Telegram API Error: ${response.status}`);
-        }
-        return data.result;
+          xhr.onload = () => {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (!data.ok) {
+                reject(new Error(data.description || `Telegram API Error: ${xhr.status}`));
+              } else {
+                resolve(data.result);
+              }
+            } catch (e) {
+              reject(new Error(`Failed to parse response: ${xhr.status}`));
+            }
+          };
+
+          xhr.onerror = () => {
+            reject(new Error('Network error during multipart upload'));
+          };
+
+          xhr.send(formData);
+        });
+        
+        return result;
       } catch (error: any) {
         lastError = error;
         errorTracker.track(error, `Telegram.multipart.${method}.attempt${attempt}`);
