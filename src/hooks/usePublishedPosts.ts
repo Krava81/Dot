@@ -28,10 +28,48 @@ export function usePublishedPosts(isStandalone: boolean, getCleanBaseUrl: () => 
     }
   }, [isStandalone, getCleanBaseUrl, universalFetch]);
 
+  const deletePublishedPost = useCallback(async (id: string) => {
+    try {
+      setPublishedPosts(prev => prev.filter(p => p.id !== id));
+      if (isStandalone) {
+        const current = await storage.loadJson('published.json', []);
+        await storage.saveJson('published.json', current.filter((p: any) => p.id !== id));
+      } else {
+        const cleanUrl = getCleanBaseUrl();
+        if (cleanUrl) await universalFetch(`${cleanUrl}/api/posts/published/${id}`, { method: 'DELETE' });
+      }
+    } catch (e) { console.error(e); }
+  }, [isStandalone, getCleanBaseUrl, universalFetch]);
+
+  const savePublishedPost = useCallback(async (post: DraftPost) => {
+    try {
+      if (isStandalone) {
+        const current = await storage.loadJson('published.json', []);
+        const updated = [post, ...current].slice(0, 50); // limit to 50
+        await storage.saveJson('published.json', updated);
+        setPublishedPosts(updated);
+      } else {
+        // Сервер обычно сам сохраняет при публикации, но если нужно:
+        const cleanUrl = getCleanBaseUrl();
+        if (cleanUrl) {
+          await universalFetch(`${cleanUrl}/api/posts/published`, {
+            method: 'POST',
+            body: post
+          });
+        }
+      }
+      loadPublishedPosts();
+    } catch (e) {
+      console.error('Failed to save published post:', e);
+    }
+  }, [isStandalone, getCleanBaseUrl, universalFetch, loadPublishedPosts]);
+
   return {
     publishedPosts,
     setPublishedPosts,
     loading,
-    loadPublishedPosts
+    loadPublishedPosts,
+    savePublishedPost,
+    deletePublishedPost
   };
 }

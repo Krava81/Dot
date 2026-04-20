@@ -289,6 +289,8 @@ function AppContent() {
   const [htmlProcessed, setHtmlProcessed] = useState('');
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
+  const [mediaPaths, setMediaPaths] = useState<string[]>([]);
+  const [videoPath, setVideoPath] = useState<string | null>(null);
   
   const debouncedText = useDebounce(aiProcessedText, 2000);
   const debouncedImages = useDebounce(selectedImages, 1000);
@@ -308,10 +310,56 @@ function AppContent() {
   // Lists state
   const { drafts, setDrafts, loading: draftsLoading, saveDraft: saveDraftHook, deleteDraft: deleteDraftHook, reload: reloadDrafts } = useDrafts(isStandalone, getCleanBaseUrl, universalFetch);
   const loadDrafts = reloadDrafts;
-  const { buttonTemplates, setButtonTemplates, loadButtonTemplates } = useButtonTemplates(isStandalone, getCleanBaseUrl, universalFetch);
+  const { buttonTemplates, setButtonTemplates, loadButtonTemplates, saveButtonTemplate, deleteButtonTemplate } = useButtonTemplates(isStandalone, getCleanBaseUrl, universalFetch);
   const { linkPresets, saveLinkPresets, loadLinkPresets } = useLinkPresets(isStandalone, getCleanBaseUrl, universalFetch);
   const { scheduledPosts, setScheduledPosts, loadScheduledPosts } = useScheduledPosts(isStandalone, getCleanBaseUrl, universalFetch);
-  const { publishedPosts, setPublishedPosts, loadPublishedPosts } = usePublishedPosts(isStandalone, getCleanBaseUrl, universalFetch);
+  const { publishedPosts, setPublishedPosts, loadPublishedPosts, savePublishedPost, deletePublishedPost } = usePublishedPosts(isStandalone, getCleanBaseUrl, universalFetch);
+
+  // ✅ INITIALIZATION
+  useEffect(() => {
+    if (isStandalone) {
+      storage.init().then(() => {
+        console.log('[App] Storage initialized');
+        loadAllStandaloneData();
+      });
+    }
+  }, [isStandalone]);
+
+  const loadAllStandaloneData = async () => {
+    loadDrafts();
+    loadButtonTemplates();
+    loadScheduledPosts();
+    loadPublishedPosts();
+    loadLinkPresets();
+    
+    // Load local settings
+    const sToken = isStandalone
+      ? await storage.getSecure('bot_token')
+      : await storage.getSetting('server_bot_token');
+    if (sToken) updateSetting(isStandalone ? 'standalone_bot_token' : 'server_bot_token', sToken);
+
+    const chatId = await storage.getSetting('chat_id');
+    if (chatId) updateSetting('chat_id', chatId);
+
+    const githubKey = await storage.getSetting('api_key_github');
+    if (githubKey) updateAiKey('github', githubKey);
+    const openrouterKey = await storage.getSetting('api_key_openrouter');
+    if (openrouterKey) updateAiKey('openrouter', openrouterKey);
+    const deepseekKey = await storage.getSetting('api_key_deepseek');
+    if (deepseekKey) updateAiKey('deepseek', deepseekKey);
+
+    const prefProvider = await storage.getSetting('preferred_provider');
+    if (prefProvider) {
+      setServerStatus(prev => ({ ...prev, preferredProvider: prefProvider } as any));
+    }
+
+    const nativeHttp = await storage.getSetting('use_native_http');
+    if (nativeHttp !== null) {
+      const isNativeOn = nativeHttp === 'true';
+      setUseNativeHttpState(isNativeOn);
+      setUseNativeHttp(isNativeOn);
+    }
+  };
 
   // ✅ ANDROID LIFECYCLE
   useAndroidLifecycle(
@@ -486,56 +534,6 @@ function AppContent() {
     }
   }, [isStandalone, loadButtonTemplates]);
 
-  const loadAllStandaloneData = async () => {
-    const d = await storage.loadJson('drafts.json');
-    setDrafts(Array.isArray(d) ? d : []);
-    
-    let t = await storage.loadJson('templates.json', null);
-    if (t === null) {
-      t = [{
-        id: 'default_template',
-        name: 'Пример (Подписка)',
-        buttons: [{ id: 'b1', text: '🔥 Подписаться', url: 'https://t.me/' }]
-      }];
-      await storage.saveJson('templates.json', t);
-    }
-    setButtonTemplates(Array.isArray(t) ? t : []);
-    
-    const p = await storage.loadJson('published.json');
-    setPublishedPosts(Array.isArray(p) ? p : []);
-
-    const s = await storage.loadJson('scheduled.json');
-    setScheduledPosts(Array.isArray(s) ? s : []);
-
-    // Load settings
-    const sToken = isStandalone
-      ? await storage.getSecure('bot_token')
-      : await storage.getSetting('server_bot_token');
-    if (sToken) updateSetting(isStandalone ? 'standalone_bot_token' : 'server_bot_token', sToken);
-
-    const chatId = await storage.getSetting('chat_id');
-    if (chatId) updateSetting('chat_id', chatId);
-
-    const githubKey = await storage.getSetting('api_key_github');
-    if (githubKey) updateAiKey('github', githubKey);
-    const openrouterKey = await storage.getSetting('api_key_openrouter');
-    if (openrouterKey) updateAiKey('openrouter', openrouterKey);
-    const deepseekKey = await storage.getSetting('api_key_deepseek');
-    if (deepseekKey) updateAiKey('deepseek', deepseekKey);
-
-    const prefProvider = await storage.getSetting('preferred_provider');
-    if (prefProvider) {
-      setServerStatus(prev => ({ ...prev, preferredProvider: prefProvider } as any));
-    }
-
-    const nativeHttp = await storage.getSetting('use_native_http');
-    if (nativeHttp !== null) {
-      const isNativeOn = nativeHttp === 'true';
-      setUseNativeHttpState(isNativeOn);
-      setUseNativeHttp(isNativeOn);
-    }
-  };
-
   // ─── Standalone Bot Polling ───────────────────────────────────────────────
   useEffect(() => {
     if (!isStandalone || !botToken) {
@@ -694,6 +692,8 @@ function AppContent() {
     setAiProcessedText('');
     setSelectedImages([]);
     setSelectedVideo(null);
+    setMediaPaths([]);
+    setVideoPath(null);
     setMainImage('');
     setPostButtons([]);
   };
@@ -743,7 +743,12 @@ function AppContent() {
     setIsActionInProgress(true);
     const draftId = editingDraftId || Date.now().toString();
     const draft: DraftPost = {
-      id: draftId, parsedContent: parsedContent || undefined, selectedImages, selectedVideo: selectedVideo || undefined, mainImage: mainImage || undefined,
+      id: draftId, parsedContent: parsedContent || undefined, 
+      selectedImages, // thumbnails
+      selectedVideo: selectedVideo || undefined,
+      mediaPaths, // High-res images
+      videoPath: videoPath || undefined,
+      mainImage: mainImage || undefined,
       text: currentText, buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
       status: draftStatus,
       scheduledAt: draftStatus === 'scheduled' && scheduleDateTime ? new Date(scheduleDateTime).getTime() : undefined,
@@ -764,7 +769,7 @@ function AppContent() {
       return draftId;
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); return undefined; }
     finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, aiProcessedText, editingDraftId, parsedContent, selectedImages, mainImage, postButtons, scheduleDateTime, drafts, isStandalone, getCleanBaseUrl, universalFetch, saveDraftHook, reloadDrafts]);
+  }, [isActionInProgress, aiProcessedText, editingDraftId, parsedContent, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, scheduleDateTime, drafts, isStandalone, getCleanBaseUrl, universalFetch, saveDraftHook, reloadDrafts]);
 
   const handlePublish = useCallback(async () => {
     if (isActionInProgress) return;
@@ -782,8 +787,10 @@ function AppContent() {
 
     setIsActionInProgress(true);
     try {
-      const post = {
-        id: editingDraftId || Date.now().toString(), text: currentText, selectedImages, selectedVideo: selectedVideo || undefined,
+      const post: DraftPost = {
+        id: editingDraftId || Date.now().toString(), text: currentText, 
+        selectedImages, selectedVideo: selectedVideo || undefined,
+        mediaPaths, videoPath: videoPath || undefined,
         mainImage: mainImage || undefined, buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
         status: 'published', createdAt: Date.now(), updatedAt: Date.now()
       };
@@ -792,59 +799,43 @@ function AppContent() {
         if (!botToken || !tempChatId) throw new Error("Токен бота или Chat ID не настроены");
         
         const extra: any = { parse_mode: 'HTML' };
+        // ... valid buttons logic ...
         if (post.buttons && post.buttons.length > 0) {
-          const validButtons = post.buttons
-            .filter(b => b.text && b.text.trim() !== '' && b.url && b.url.trim() !== '' && b.url !== 'https://')
-            .map(b => [{ text: b.text, url: b.url }]);
-            
-          if (validButtons.length > 0) {
-            extra.reply_markup = {
-              inline_keyboard: validButtons
-            };
-          }
+          const vb = post.buttons.filter(b => b.text?.trim() && b.url?.trim() && b.url !== 'https://').map(b => [{ text: b.text, url: b.url }]);
+          if (vb.length > 0) extra.reply_markup = { inline_keyboard: vb };
         }
 
-        // Standalone publishing with media
-        if (post.selectedImages.length === 0 && !selectedVideo) {
+        // ПОДГОТОВКА МЕДИА из путей на диске
+        const highResImages = await Promise.all((post.mediaPaths || []).map(p => storage.loadMedia(p)));
+        const highResVideo = post.videoPath ? await storage.loadMedia(post.videoPath) : null;
+
+        // Standalone publishing
+        if (highResImages.length === 0 && !highResVideo) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-        } else if (post.selectedImages.length === 1 && !selectedVideo) {
-          await telegramClient?.sendPhoto(tempChatId, post.selectedImages[0], htmlText, extra);
-        } else if (post.selectedImages.length === 0 && selectedVideo) {
-          await telegramClient?.sendVideo(tempChatId, selectedVideo, htmlText, extra);
+        } else if (highResImages.length === 1 && !highResVideo) {
+          await telegramClient?.sendPhoto(tempChatId, highResImages[0], htmlText, extra);
+        } else if (highResImages.length === 0 && highResVideo) {
+          await telegramClient?.sendVideo(tempChatId, highResVideo, htmlText, extra);
         } else {
           // Mixed media group
           const mediaItems: any[] = [];
-          
-          if (selectedVideo) {
-            mediaItems.push({
-              type: 'video',
-              media: selectedVideo,
-              caption: htmlText,
-              parse_mode: 'HTML'
-            });
+          if (highResVideo) {
+            mediaItems.push({ type: 'video', media: highResVideo, caption: htmlText, parse_mode: 'HTML' });
           }
-          
-          post.selectedImages.forEach((img, i) => {
+          highResImages.forEach((img, i) => {
              mediaItems.push({
-               type: 'photo',
-               media: img,
-               caption: !selectedVideo && i === 0 ? htmlText : undefined,
-               parse_mode: !selectedVideo && i === 0 ? 'HTML' : undefined
+               type: 'photo', media: img,
+               caption: !highResVideo && i === 0 ? htmlText : undefined,
+               parse_mode: !highResVideo && i === 0 ? 'HTML' : undefined
              });
           });
-          
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
-          if (post.buttons?.length) {
-             await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
-          }
+          if (post.buttons?.length) await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
         }
         
-        const currentPublished = await storage.loadJson('published.json', []);
-        currentPublished.unshift(post);
-        await storage.saveJson('published.json', currentPublished.slice(0, 50));
-        
+        await savePublishedPost(post);
         setSubmitMsg({ type: 'success', text: 'Пост опубликован!' });
-        setIsConstructorOpen(false); resetConstructor(); loadAllStandaloneData(); setIsPublishedOpen(true);
+        setIsConstructorOpen(false); resetConstructor(); setIsPublishedOpen(true);
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) throw new Error("Сервер не настроен");
@@ -944,42 +935,6 @@ function AppContent() {
     } catch (e) { console.error(e); }
   };
 
-  const deletePublishedPost = async (id: string) => {
-    try {
-      if (isStandalone) {
-        const currentPublished = await storage.loadJson('published.json', []);
-        await storage.saveJson('published.json', currentPublished.filter((p: any) => p.id !== id));
-        loadAllStandaloneData();
-      } else {
-        const cleanUrl = getCleanBaseUrl();
-        if (!cleanUrl) return;
-        await universalFetch(`${cleanUrl}/api/posts/published/${id}`, { method: 'DELETE' });
-        loadPublishedPosts();
-      }
-    } catch (e) { console.error(e); }
-  };
-
-  const saveButtonTemplate = async () => {
-    if (!templateName || postButtons.length === 0) return;
-    try {
-      if (isStandalone) {
-        const currentTemplates = await storage.loadJson('templates.json', []);
-        currentTemplates.push({ id: Date.now().toString(), name: templateName, buttons: postButtons });
-        await storage.saveJson('templates.json', currentTemplates);
-        setTemplateName('');
-        const t = await storage.loadJson('templates.json', []);
-        setButtonTemplates(Array.isArray(t) ? t : []);
-      } else {
-        const cleanUrl = getCleanBaseUrl();
-        if (!cleanUrl) return;
-        const res = await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, { 
-          method: 'POST', 
-          body: { name: templateName, buttons: postButtons } 
-        });
-        if (res.ok) { setTemplateName(''); loadButtonTemplates(); }
-      }
-    } catch (e) { console.error(e); }
-  };
 
   const runDiagnostics = async () => {
     setIsDiagnosticsRunning(true);
@@ -1101,127 +1056,61 @@ function AppContent() {
   const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    
     setIsActionInProgress(true);
-    
+    setSubmitMsg({ type: 'success', text: `Файлов: ${files.length}. Обработка...` });
     try {
-      const images: { name: string, base64: string }[] = [];
-      const localBase64: string[] = [];
-      let videoBase64: string | null = null;
-  
-      // 1️⃣ СНАЧАЛА читаем все файлы
+      const newThumbnails: string[] = [];
+      const newPaths: string[] = [];
+      let newVideoThumb: string | null = null;
+      let newVideoPath: string | null = null;
       for (const file of Array.from(files) as File[]) {
+        const fileId = `${Date.now()}_${Math.round(Math.random() * 1000)}`;
+        const ext = file.name.split('.').pop() || 'tmp';
+        const diskName = `${fileId}.${ext}`;
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve(ev.target?.result as string);
+          reader.readAsDataURL(file);
+        });
         if (file.type.startsWith('video/')) {
-           if (!videoBase64) {
-             const base64 = await new Promise<string>((resolve, reject) => {
-               const reader = new FileReader();
-               reader.onload = (ev) => resolve(ev.target?.result as string);
-               reader.onerror = (err) => reject(err);
-               reader.readAsDataURL(file);
-             });
-             videoBase64 = base64;
-             setSelectedVideo(base64);
-           }
+           if (newVideoPath) continue; 
+           if (isStandalone) newVideoPath = await storage.saveMedia(`video_${diskName}`, base64);
+           newVideoThumb = "https://cdn-icons-png.flaticon.com/512/1179/1179069.png";
            continue;
         }
-
         if (!file.type.startsWith('image/')) continue;
-        
-        // Resize image to avoid OOM crashes
-        const base64 = await new Promise<string>((resolve, reject) => {
+        if (isStandalone) {
+          const savedPath = await storage.saveMedia(`img_${diskName}`, base64);
+          newPaths.push(savedPath);
+        }
+        const thumbBase64 = await new Promise<string>((resolve) => {
           const img = new window.Image();
           img.onload = () => {
             const canvas = document.createElement('canvas');
-            let width = img.width;
-            let height = img.height;
-            const MAX_SIZE = 1200; 
-            if (width > height && width > MAX_SIZE) {
-              height = Math.round(height * (MAX_SIZE / width));
-              width = MAX_SIZE;
-            } else if (height > MAX_SIZE) {
-              width = Math.round(width * (MAX_SIZE / height));
-              height = MAX_SIZE;
-            }
-            canvas.width = width;
-            canvas.height = height;
+            const SIZE = 200;
+            const scroll = Math.min(img.width, img.height);
+            canvas.width = SIZE;
+            canvas.height = SIZE;
             const ctx = canvas.getContext('2d');
-            ctx?.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.8));
-            URL.revokeObjectURL(img.src);
+            const x = (img.width - scroll) / 2;
+            const y = (img.height - scroll) / 2;
+            ctx?.drawImage(img, x, y, scroll, scroll, 0, 0, SIZE, SIZE);
+            resolve(canvas.toDataURL('image/jpeg', 0.5));
           };
-          img.onerror = (err) => reject(err);
-          img.src = URL.createObjectURL(file);
+          img.src = base64;
         });
-        
-        images.push({ name: file.name, base64 });
-        localBase64.push(base64);
+        newThumbnails.push(thumbBase64);
       }
-      
-      if (images.length === 0 && !videoBase64) {
-        setLastError('Не найдено медиафайлов для загрузки');
-        return;
-      }
-  
-      // 2️⃣ Добавляем в UI НЕМЕДЛЕННО (работает без сервера)
-      setParsedContent(prev => {
-        const ex = prev?.images || [];
-        const combined = [...new Set([...ex, ...localBase64])];
-        return prev ? { ...prev, images: combined } : { 
-          title: '', 
-          text: '', 
-          images: combined 
-        };
-      });
-      
-      setSelectedImages(prev => {
-        const combined = [...new Set([...prev, ...localBase64])];
-        return combined.slice(-50);
-      });
-  
-      // 3️⃣ Сохраняем локально (для standalone)
-      if (isStandalone) {
-        await storage.saveJson('uploaded_images.json', {
-          images: localBase64,
-          timestamp: Date.now()
-        });
-        
-        setSubmitMsg({ 
-          type: 'success', 
-          text: `Загружено: ${images.length} фото (локально)` 
-        });
-        return;
-      }
-  
-      // 4️⃣ Отправляем на сервер ТОЛЬКО если не standalone
-      const cleanUrl = getCleanBaseUrl();
-      if (cleanUrl) {
-        try {
-          const res = await universalFetch(`${cleanUrl}/api/upload-images`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: { images, path: imagePath }
-          });
-          
-          if (res.ok) {
-            setSubmitMsg({ 
-              type: 'success', 
-              text: `Загружено: ${images.length} фото (синхронизировано)` 
-            });
-            await syncLocalImages();
-          }
-        } catch (err: any) {
-          console.warn('Server sync failed:', err);
-          setSubmitMsg({ 
-            type: 'success', 
-            text: `Загружено: ${images.length} фото (только локально)` 
-          });
-        }
-      }
-      
+      setSelectedImages(prev => [...prev, ...newThumbnails].slice(-10));
+      setMediaPaths(prev => [...prev, ...newPaths].slice(-10));
+      if (newVideoThumb) setSelectedVideo(newVideoThumb);
+      if (newVideoPath) setVideoPath(newVideoPath);
+      setSubmitMsg({ type: 'success', text: 'Медиа сохранено' });
     } catch (e: any) {
       setLastError(`Ошибка загрузки: ${e.message}`);
     } finally {
       setIsActionInProgress(false);
+      e.target.value = '';
     }
   };
 
@@ -1425,7 +1314,7 @@ function AppContent() {
     setShowTemplates,
     buttonTemplates,
     handleDeleteTemplate,
-    saveButtonTemplate,
+    saveButtonTemplate: () => saveButtonTemplate(templateName, postButtons),
     templateName,
     setTemplateName,
     imagePath,
@@ -1447,9 +1336,12 @@ function AppContent() {
     linkPresets,
     saveLinkPresets,
     SortableImage,
+    mediaPaths,
+    videoPath,
+    deletePublishedPost,
     onEnlarge: (url: string) => setFullScreenImage(url)
   }), [
-    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mainImage, 
+    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, 
     postButtons, originalText, isProcessingAI, processAI, showTemplates, 
     buttonTemplates, handleDeleteTemplate, saveButtonTemplate, templateName, 
     imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
@@ -1458,16 +1350,7 @@ function AppContent() {
     submitMsg, linkPresets, saveLinkPresets, SortableImage
   ]);
 
-  // ✅ DEBUG LOGS
-  useEffect(() => {
-    console.log(`[App] State changed:`, { 
-      isConstructorOpen, 
-      debouncedTextLength: debouncedText?.length || 0,
-      imagesCount: debouncedImages?.length || 0 
-    });
-  }, [isConstructorOpen, debouncedText, debouncedImages]);
-
-  // ─── Render ───────────────────────────────────────────────────────────────
+  // ─── Render ───
   if (loading) {
     return (
       <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-6">
@@ -1495,7 +1378,6 @@ function AppContent() {
               </div>
               <div>
                 <h1 className="font-bold text-lg leading-tight">TG Bot Manager <span className="text-[10px] text-blue-500 font-mono">v{APP_VERSION}</span></h1>
-                <p className="text-[10px] text-neutral-500 uppercase tracking-widest">Android Control Panel</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1604,7 +1486,7 @@ function AppContent() {
                           <p className="text-[10px] text-neutral-500 mt-1 uppercase tracking-widest">{new Date(draft.createdAt).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setSelectedVideo(draft.selectedVideo || null); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setSelectedVideo(draft.selectedVideo || null); setMediaPaths(draft.mediaPaths || []); setVideoPath(draft.videoPath || null); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
                           <button onClick={() => publishDraft(draft.id)} className="p-2 bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg transition-all"><Send size={16} /></button>
                           <button onClick={() => deleteDraft(draft.id)} className="p-2 bg-red-600/10 text-red-400 hover:bg-red-600/30 rounded-lg transition-all"><Trash2 size={16} /></button>
                         </div>
@@ -1622,7 +1504,7 @@ function AppContent() {
                           <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1 uppercase tracking-widest font-bold"><Clock size={12} />{new Date(post.scheduledAt || '').toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
                           <button onClick={() => deleteDraft(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>
@@ -1641,7 +1523,7 @@ function AppContent() {
                           <p className="text-[10px] text-emerald-400 mt-1 uppercase tracking-widest font-bold">{post.publishedAt ? new Date(post.publishedAt).toLocaleString() : 'Только что'}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
                           <button onClick={() => deletePublishedPost(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>

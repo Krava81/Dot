@@ -9,14 +9,18 @@ export interface ParsedContent {
   text: string;
   images: string[];
   video?: string | null;
+  thumbnails?: string[]; // Small base64 thumbnails for UI
+  mediaFiles?: { name: string, path: string, type: 'image' | 'video' }[];
 }
 
 export interface DraftPost {
   id: string;
   parsedContent?: ParsedContent;
-  selectedImages: string[]; // Images selected from parsed content (max 10)
-  selectedVideo?: string | null; // Single video allowed
-  mainImage?: string; // Single image for the post
+  selectedImages: string[]; // These will be thumbnails/icons
+  selectedVideo?: string | null;
+  mediaPaths?: string[]; // Actual paths on disk
+  videoPath?: string | null;
+  mainImage?: string; // Thumbnail/icon
   text: string; // AI processed text, editable
   isMarkdown?: boolean;
   buttons: PostButton[];

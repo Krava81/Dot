@@ -30,14 +30,64 @@ export const storage = {
    */
   async saveJson(filename: string, data: any) {
     if (isNative) {
-      await Filesystem.writeFile({
-        path: `${DATA_DIR}/${filename}`,
-        data: JSON.stringify(data, null, 2),
-        directory: Directory.Documents,
-        encoding: Encoding.UTF8,
-      });
+      try {
+        await this.init(); // Ensure dir exists
+        await Filesystem.writeFile({
+          path: `${DATA_DIR}/${filename}`,
+          data: JSON.stringify(data, null, 2),
+          directory: Directory.Documents,
+          encoding: Encoding.UTF8,
+        });
+      } catch (e) {
+        console.error(`[Storage] Failed to save JSON ${filename}:`, e);
+      }
     } else {
       localStorage.setItem(`standalone_${filename}`, JSON.stringify(data));
+    }
+  },
+
+  /**
+   * Сохранить медиа-файл.
+   */
+  async saveMedia(filename: string, base64Data: string): Promise<string> {
+    if (!isNative) return base64Data; // В вебе возвращаем саму строку
+    try {
+      await this.init();
+      const mediaDir = `${DATA_DIR}/media`;
+      try {
+        await Filesystem.mkdir({ path: mediaDir, directory: Directory.Documents, recursive: true });
+      } catch {}
+      
+      const path = `${mediaDir}/${filename}`;
+      // Удаляем префикс base64 если он есть
+      const cleanData = base64Data.includes('base64,') ? base64Data.split('base64,')[1] : base64Data;
+      
+      await Filesystem.writeFile({
+        path,
+        data: cleanData,
+        directory: Directory.Documents
+      });
+      return path;
+    } catch (e) {
+      console.error(`[Storage] Failed to save media:`, e);
+      return base64Data;
+    }
+  },
+
+  /**
+   * Загрузить медиа-файл как base64.
+   */
+  async loadMedia(path: string): Promise<string> {
+    if (!isNative || !path.includes('/')) return path;
+    try {
+      const result = await Filesystem.readFile({
+        path,
+        directory: Directory.Documents
+      });
+      return `data:image/jpeg;base64,${result.data}`;
+    } catch (e) {
+      console.error(`[Storage] Failed to load media:`, e);
+      return path;
     }
   },
 
