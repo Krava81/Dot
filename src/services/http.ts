@@ -93,7 +93,11 @@ export async function universalFetch(url: string, options: any = {}) {
     if (isNative()) {
       let requestData: any = undefined;
       if (options.method && options.method.toUpperCase() !== 'GET' && options.body) {
-        requestData = options.body;
+        if (typeof options.body === 'object' && !(options.body instanceof FormData) && !(options.body instanceof Blob)) {
+          requestData = JSON.stringify(options.body);
+        } else {
+          requestData = options.body;
+        }
       }
       
       try {
@@ -113,12 +117,14 @@ export async function universalFetch(url: string, options: any = {}) {
           ok: response.status >= 200 && response.status < 300,
           status: response.status,
           json: async () => {
-            const data = typeof response.data === 'string' 
-              ? JSON.parse(response.data) 
-              : response.data;
-            return data;
+            if (!response.data) return {};
+            if (typeof response.data === 'string') {
+               try { return JSON.parse(response.data); } catch { return {}; }
+            }
+            return response.data;
           },
           text: async () => {
+            if (!response.data) return "";
             const text = typeof response.data === 'string' 
               ? response.data 
               : JSON.stringify(response.data);
