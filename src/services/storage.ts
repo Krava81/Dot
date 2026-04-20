@@ -84,7 +84,16 @@ export const storage = {
         path,
         directory: Directory.Documents
       });
-      return `data:image/jpeg;base64,${result.data}`;
+      
+      // Определяем mime type по расширению
+      const ext = path.split('.').pop()?.toLowerCase();
+      let mime = 'image/jpeg';
+      if (ext === 'png') mime = 'image/png';
+      else if (ext === 'gif') mime = 'image/gif';
+      else if (ext === 'mp4') mime = 'video/mp4';
+      else if (ext === 'mov') mime = 'video/quicktime';
+      
+      return `data:${mime};base64,${result.data}`;
     } catch (e) {
       console.error(`[Storage] Failed to load media:`, e);
       return path;

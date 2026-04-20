@@ -757,6 +757,7 @@ function AppContent() {
     };
 
     try {
+      addClientLog(`💾 Сохранение черновика: ${draftStatus}`);
       await saveDraftHook(draft);
       if (draftStatus === 'scheduled' && !isStandalone) {
         const cleanUrl = getCleanBaseUrl();
@@ -779,13 +780,14 @@ function AppContent() {
     const htmlText = htmlProcessed || mdToTelegramHtml(currentText);
 
     // Character limit check
-    const limit = selectedImages.length > 0 ? 1024 : 4096;
+    const limit = (selectedImages.length > 0 || !!selectedVideo) ? 1024 : 4096;
     if (htmlText.length > limit) {
       setLastError(`Лимит символов после обработки: ${htmlText.length} / ${limit}`);
       return;
     }
 
     setIsActionInProgress(true);
+    addClientLog(`🚀 Публикация поста: ${currentText.substring(0, 30)}...`);
     try {
       const post: DraftPost = {
         id: editingDraftId || Date.now().toString(), text: currentText, 
@@ -799,13 +801,13 @@ function AppContent() {
         if (!botToken || !tempChatId) throw new Error("Токен бота или Chat ID не настроены");
         
         const extra: any = { parse_mode: 'HTML' };
-        // ... valid buttons logic ...
         if (post.buttons && post.buttons.length > 0) {
           const vb = post.buttons.filter(b => b.text?.trim() && b.url?.trim() && b.url !== 'https://').map(b => [{ text: b.text, url: b.url }]);
           if (vb.length > 0) extra.reply_markup = { inline_keyboard: vb };
         }
 
         // ПОДГОТОВКА МЕДИА из путей на диске
+        addClientLog(`🎞️ Загрузка медиа: ${post.mediaPaths?.length || 0} фото, ${post.videoPath ? '1 видео' : 'нет видео'}`);
         const highResImages = await Promise.all((post.mediaPaths || []).map(p => storage.loadMedia(p)));
         const highResVideo = post.videoPath ? await storage.loadMedia(post.videoPath) : null;
 
@@ -817,7 +819,6 @@ function AppContent() {
         } else if (highResImages.length === 0 && highResVideo) {
           await telegramClient?.sendVideo(tempChatId, highResVideo, htmlText, extra);
         } else {
-          // Mixed media group
           const mediaItems: any[] = [];
           if (highResVideo) {
             mediaItems.push({ type: 'video', media: highResVideo, caption: htmlText, parse_mode: 'HTML' });
@@ -841,21 +842,13 @@ function AppContent() {
         if (!cleanUrl) throw new Error("Сервер не настроен");
         const res = await universalFetch(`${cleanUrl}/api/posts/publish`, { method: 'POST', body: post });
         
-        const ct = res.headers.get('content-type') || '';
-        if (ct.includes('text/html')) {
-          const htmlText = await res.text().catch(() => '');
-          if (htmlText.includes('security cookie') || htmlText.includes('Action required') || htmlText.includes('AI Studio')) {
-            throw new Error("Доступ заблокирован. Используйте URL Cloud Run для мобильного приложения.");
-          }
-        }
-
         if (res.ok) {
           setSubmitMsg({ type: 'success', text: 'Пост опубликован!' });
           setIsConstructorOpen(false); resetConstructor(); loadDrafts(); loadPublishedPosts(); setIsPublishedOpen(true);
         } else { const err = await res.json(); setLastError(`Ошибка: ${err.error}`); }
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, aiProcessedText, editingDraftId, selectedImages, mainImage, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData]);
+  }, [isActionInProgress, aiProcessedText, htmlProcessed, editingDraftId, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData, savePublishedPost]);
 
   const publishDraft = useCallback(async (draftId: string) => {
     if (isActionInProgress) return;
@@ -865,51 +858,49 @@ function AppContent() {
       if (!draft) throw new Error("Черновик не найден");
 
       let textToPublish = draft.text;
-      // Convert Markdown to HTML for Telegram
       const htmlText = mdToTelegramHtml(textToPublish);
-
       const postToPublish = { ...draft, text: textToPublish };
 
       if (isStandalone) {
-        // Send using HTML
-        const hasMedia = (postToPublish.selectedImages?.length || 0) > 0 || !!selectedVideo;
-        
-        if (hasMedia) {
-           if (postToPublish.selectedImages?.length === 1 && !selectedVideo) {
-             await telegramClient?.sendPhoto(tempChatId, postToPublish.selectedImages[0], htmlText, { parse_mode: 'HTML' });
-           } else if (!postToPublish.selectedImages?.length && selectedVideo) {
-             await telegramClient?.sendVideo(tempChatId, selectedVideo, htmlText, { parse_mode: 'HTML' });
-           } else {
-              const mediaItems: any[] = [];
-              if (selectedVideo) {
-                mediaItems.push({ type: 'video', media: selectedVideo, caption: htmlText, parse_mode: 'HTML' });
-              }
-              const imgs = postToPublish.selectedImages || [];
-              imgs.forEach((img: string, i: number) => {
-                 mediaItems.push({
-                    type: 'photo',
-                    media: img,
-                    caption: !selectedVideo && i === 0 ? htmlText : undefined,
-                    parse_mode: !selectedVideo && i === 0 ? 'HTML' : undefined
-                 });
-              });
-              await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
-           }
-        } else {
-           await telegramClient?.sendMessage(tempChatId, htmlText, { parse_mode: 'HTML' });
+        if (!tempChatId) throw new Error("Chat ID не настроен");
+        const extra: any = { parse_mode: 'HTML' };
+        if (postToPublish.buttons && postToPublish.buttons.length > 0) {
+          const vb = postToPublish.buttons.filter(b => b.text?.trim() && b.url?.trim() && b.url !== 'https://').map(b => [{ text: b.text, url: b.url }]);
+          if (vb.length > 0) extra.reply_markup = { inline_keyboard: vb };
         }
-        // Move from drafts/scheduled to published
-        const currentPublished = await storage.loadJson('published.json', []);
-        await storage.saveJson('published.json', [...currentPublished, { ...postToPublish, status: 'published', publishedAt: Date.now() }]);
-        
-        const currentDrafts = await storage.loadJson('drafts.json', []);
-        await storage.saveJson('drafts.json', currentDrafts.filter((d: any) => d.id !== draftId));
-        
-        const currentScheduled = await storage.loadJson('scheduled.json', []);
-        await storage.saveJson('scheduled.json', currentScheduled.filter((d: any) => d.id !== draftId));
+
+        // LOAD HIGH RES MEDIA
+        const highResImages = await Promise.all((postToPublish.mediaPaths || []).map(p => storage.loadMedia(p)));
+        const highResVideo = postToPublish.videoPath ? await storage.loadMedia(postToPublish.videoPath) : null;
+
+        if (highResImages.length === 0 && !highResVideo) {
+          await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+        } else if (highResImages.length === 1 && !highResVideo) {
+          await telegramClient?.sendPhoto(tempChatId, highResImages[0], htmlText, extra);
+        } else if (highResImages.length === 0 && highResVideo) {
+          await telegramClient?.sendVideo(tempChatId, highResVideo, htmlText, extra);
+        } else {
+          const mediaItems: any[] = [];
+          if (highResVideo) {
+            mediaItems.push({ type: 'video', media: highResVideo, caption: htmlText, parse_mode: 'HTML' });
+          }
+          highResImages.forEach((img, i) => {
+            mediaItems.push({
+              type: 'photo', media: img,
+              caption: !highResVideo && i === 0 ? htmlText : undefined,
+              parse_mode: !highResVideo && i === 0 ? 'HTML' : undefined
+            });
+          });
+          await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
+          if (postToPublish.buttons?.length) await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
+        }
+
+        // Move to published
+        await savePublishedPost({ ...postToPublish, status: 'published', updatedAt: Date.now() });
+        await deleteDraftHook(draftId);
         
         loadAllStandaloneData();
-        setSubmitMsg({ type: 'success', text: 'Опубликовано автономно!' });
+        setSubmitMsg({ type: 'success', text: 'Опубликовано!' });
         setIsPublishedOpen(true);
       } else {
         const cleanUrl = getCleanBaseUrl();
@@ -917,17 +908,11 @@ function AppContent() {
         const res = await universalFetch(`${cleanUrl}/api/posts/publish`, { method: 'POST', body: postToPublish });
         if (res.ok) { 
           setSubmitMsg({ type: 'success', text: 'Опубликовано!' }); 
-          loadDrafts(); 
-          loadPublishedPosts(); 
-          setIsPublishedOpen(true); 
-        } else { 
-          const err = await res.json(); 
-          setLastError(`Ошибка: ${err.error}`); 
-        }
+          loadDrafts(); loadPublishedPosts(); setIsPublishedOpen(true); 
+        } else { const err = await res.json(); setLastError(`Ошибка: ${err.error}`); }
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramMarkdown, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts]);
-
+  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, savePublishedPost, deleteDraftHook]);
   const deleteDraft = async (draftId: string) => {
     try {
       await deleteDraftHook(draftId);

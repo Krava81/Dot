@@ -15,6 +15,7 @@ export class TelegramAPI {
   private isUploadablePhoto(photo: string) {
     return typeof photo === 'string' && (
       photo.startsWith('data:image') ||
+      photo.startsWith('data:video') ||
       photo.startsWith('blob:') ||
       photo.startsWith('content://') ||
       photo.startsWith('file://') ||
@@ -24,7 +25,7 @@ export class TelegramAPI {
   }
 
   private async toBlob(photo: string): Promise<Blob> {
-    if (photo.startsWith('data:image')) {
+    if (photo.startsWith('data:')) {
       const response = await fetch(photo);
       return response.blob();
     }
@@ -42,7 +43,9 @@ export class TelegramAPI {
         }
         
         const fileContent = await Filesystem.readFile({ path: cleanPath });
-        const base64Response = await fetch(`data:image/jpeg;base64,${fileContent.data}`);
+        const ext = cleanPath.split('.').pop()?.toLowerCase();
+        const mime = ext === 'mp4' ? 'video/mp4' : 'image/jpeg';
+        const base64Response = await fetch(`data:${mime};base64,${fileContent.data}`);
         return base64Response.blob();
       }
     } catch (e) {
@@ -52,12 +55,12 @@ export class TelegramAPI {
     try {
       const response = await fetch(photo);
       if (!response.ok) {
-        throw new Error(`Failed to read local image: ${response.status}`);
+        throw new Error(`Failed to read local media: ${response.status}`);
       }
       return response.blob();
     } catch (e) {
       console.error("toBlob fetch failed:", e);
-      throw new Error(`Failed to convert image to blob: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      throw new Error(`Failed to convert media to blob: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
   }
 
