@@ -387,7 +387,8 @@ function AppContent() {
       if (shouldSavePath && pathToUse) {
         await universalFetch(`${cleanUrl}/api/config/image-path`, { 
           method: 'POST', 
-          body: JSON.stringify({ path: pathToUse }) 
+          headers: { 'Content-Type': 'application/json' },
+          body: { path: pathToUse } 
         }).catch(() => {});
       }
   
@@ -432,7 +433,7 @@ function AppContent() {
     await syncLocalImages(true);
   }, [syncLocalImages]);
 
-  const processedTextRef = useRef<HTMLTextAreaElement>(null);
+
 
   // ─── Logs ─────────────────────────────────────────────────────────────────
   const addClientLog = useCallback((msg: string) => {
@@ -709,7 +710,7 @@ function AppContent() {
   };
 
   const saveDraft = useCallback(async (draftStatus: 'draft' | 'scheduled'): Promise<string | undefined> => {
-    const currentText = processedTextRef.current ? processedTextRef.current.value : aiProcessedText;
+    const currentText = aiProcessedText;
     if (!currentText || isActionInProgress) { if (!currentText) setLastError('Введите текст поста'); return; }
     if (draftStatus === 'scheduled' && !scheduleDateTime) { setLastError('Выберите дату публикации'); return; }
 
@@ -741,7 +742,7 @@ function AppContent() {
 
   const handlePublish = useCallback(async () => {
     if (isActionInProgress) return;
-    let currentText = processedTextRef.current ? processedTextRef.current.value : aiProcessedText;
+    let currentText = aiProcessedText;
     if (!currentText) { setLastError('Введите текст поста'); return; }
 
     const htmlText = mdToTelegramHtml(currentText);
@@ -1110,7 +1111,8 @@ function AppContent() {
         try {
           const res = await universalFetch(`${cleanUrl}/api/upload-images`, {
             method: 'POST',
-            body: JSON.stringify({ images, path: imagePath })
+            headers: { 'Content-Type': 'application/json' },
+            body: { images, path: imagePath }
           });
           
           if (res.ok) {
@@ -1140,7 +1142,7 @@ function AppContent() {
     const cleanUrl = getCleanBaseUrl();
     if (!cleanUrl) return;
     try {
-      await universalFetch(`${cleanUrl}/api/config/chat-id-presets`, { method: 'POST', body: JSON.stringify({ presets: newPresets }) });
+      await universalFetch(`${cleanUrl}/api/config/chat-id-presets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { presets: newPresets } });
       setChatIdPresets(newPresets);
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); }
   };
@@ -1156,7 +1158,7 @@ function AppContent() {
     if (!cleanUrl) return;
     setIsSavingToken(true);
     try {
-      const res = await universalFetch(`${cleanUrl}/api/config/chat-id`, { method: 'POST', body: JSON.stringify({ chatId: tempChatId }) });
+      const res = await universalFetch(`${cleanUrl}/api/config/chat-id`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { chatId: tempChatId } });
       if (res.ok) { setSubmitMsg({ type: 'success', text: 'ID сохранен!' }); safeLocalStorage.setItem('tg_bot_chat_id', tempChatId); refetchStatus(); }
       else { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Ошибка'); }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsSavingToken(false); }
@@ -1174,7 +1176,7 @@ function AppContent() {
         const res = await universalFetch(`${cleanUrl}/api/config/clear-token`, { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
+          body: {}
         });
         if (res.ok) { 
           updateSetting('server_bot_token', '');
@@ -1195,7 +1197,7 @@ function AppContent() {
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
-        const res = await universalFetch(`${cleanUrl}/api/test-telegram`, { method: 'POST', body: JSON.stringify({ token: botToken, chatId: tempChatId }) });
+        const res = await universalFetch(`${cleanUrl}/api/test-telegram`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { token: botToken, chatId: tempChatId } });
         
         const ct = res.headers.get('content-type') || '';
         if (ct.includes('text/html')) {
@@ -1243,7 +1245,7 @@ function AppContent() {
         const res = await universalFetch(`${cleanUrl}/api/config/token`, { 
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: botToken }) 
+          body: { token: botToken } 
         });
         
         const ct = res.headers.get('content-type') || '';
@@ -1349,7 +1351,6 @@ function AppContent() {
     handlePublish,
     submitMsg,
     SortableImage,
-    processedTextRef,
     onEnlarge: (url: string) => setFullScreenImage(url)
   }), [
     isConstructorOpen, parsedContent, aiProcessedText, selectedImages, mainImage, 
@@ -1358,7 +1359,7 @@ function AppContent() {
     imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
     syncLocalImages, isActionInProgress, sensors, handleDragEnd, 
     toggleImageSelection, scheduleDateTime, saveDraft, handlePublish, 
-    submitMsg, SortableImage, processedTextRef
+    submitMsg, SortableImage
   ]);
 
   // ✅ DEBUG LOGS
@@ -1656,7 +1657,7 @@ function AppContent() {
                   const res = await universalFetch(`${cleanUrl}/api/config/token`, { 
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: botToken }) 
+                    body: { token: botToken } 
                   });
                   if (res.ok) { setSubmitMsg({ type: 'success', text: 'Серверный бот запущен!' }); refetchStatus(); }
                   else { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Ошибка'); }

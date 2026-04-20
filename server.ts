@@ -346,10 +346,7 @@ app.get("/api/logs/stream", (req: Request, res: Response) => {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const VALID_GEMINI_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-8b',
-  'gemini-1.5-pro',
+  'gemini-2.0-flash'
 ] as const;
 
 function isValidModel(model: string): boolean {
@@ -457,7 +454,7 @@ ${text.substring(0, 20000)}`;
                   max_tokens: 4000
                 },
                 {
-                  headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+                  headers: { "Authorization": `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
                   timeout: timeout
                 }
               );
@@ -479,16 +476,13 @@ ${text.substring(0, 20000)}`;
           
           const modelsToTry = [
             process.env.GEMINI_MODEL,
-            'gemini-2.0-flash',
-            'gemini-2.0-flash-lite',
-            'gemini-1.5-flash',
-            'gemini-1.5-pro'
+            'gemini-2.0-flash'
           ].filter(Boolean) as string[];
           
           addLog(`📡 Gemini clones check: ${modelsToTry.join(', ')}`);
           for (const modelName of modelsToTry) {
             try {
-              const genAI = new GoogleGenerativeAI(apiKey);
+              const genAI = new GoogleGenerativeAI(apiKey.trim());
               const model = genAI.getGenerativeModel({ 
                 model: modelName,
                 safetySettings: [
@@ -502,6 +496,11 @@ ${text.substring(0, 20000)}`;
               
               const result = await model.generateContent(prompt);
               const response = result.response;
+              
+              if (response.promptFeedback?.blockReason) {
+                addLog(`⚠️ Gemini ${modelName} prompt blocked: ${response.promptFeedback.blockReason}`);
+                throw new Error(`Prompt blocked: ${response.promptFeedback.blockReason}`);
+              }
               
               if (response.candidates && response.candidates.length > 0) {
                 const candidate = response.candidates[0];
@@ -526,9 +525,10 @@ ${text.substring(0, 20000)}`;
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           const models = [
-            "anthropic/claude-3.5-sonnet",
-            "google/gemini-2.0-flash-exp:free",
+            "google/gemini-2.0-flash-lite-preview-02-05:free",
             "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-chat:free",
+            "anthropic/claude-3.5-sonnet",
             "google/gemini-2.0-flash-001"
           ];
           
@@ -544,7 +544,7 @@ ${text.substring(0, 20000)}`;
                 },
                 { 
                   headers: { 
-                    "Authorization": `Bearer ${apiKey}`,
+                    "Authorization": `Bearer ${apiKey.trim()}`,
                     "HTTP-Referer": process.env.PUBLIC_DOMAIN || "https://newsbot.manager",
                     "X-Title": "TG Bot Manager"
                   }, 
@@ -567,7 +567,7 @@ ${text.substring(0, 20000)}`;
             const r = await axios.post(
               "https://api.deepseek.com/chat/completions",
               { model: "deepseek-chat", messages: [{ role: "user", content: prompt }], temperature: 0.1 },
-              { headers: { Authorization: `Bearer ${apiKey}` }, timeout: timeout }
+              { headers: { Authorization: `Bearer ${apiKey.trim()}` }, timeout: timeout }
             );
             aiResult = r.data.choices?.[0]?.message?.content || "";
           } catch (err: any) { throw err; }
@@ -585,6 +585,15 @@ ${text.substring(0, 20000)}`;
         const msg = e.response?.data?.error?.message || e.message;
         addLog(`❌ AI Provider ${cur} error: ${msg}`);
         lastErrors.push(`${cur}: ${msg}`);
+        
+        const delayRaw = extractRetryDelaySeconds(msg);
+        if (delayRaw) {
+          addLog(`⏳ Provider ${cur} requested cooldown of ${delayRaw}s. Waiting...`);
+          await sleep(delayRaw * 1000);
+        } else if (e.response?.status === 429 || msg.includes('429')) {
+          addLog(`⏳ Provider ${cur} rate limited. Cooldown 5s...`);
+          await sleep(5000);
+        }
       }
     }
   }
@@ -1381,7 +1390,7 @@ app.post("/api/test-telegram", async (req: Request, res: Response) => {
 // ---- Server Start ----
 async function startServer() {
   try {
-    loadAllData();
+    await loadAllData();
     DEFAULT_CHAT_ID = getPersistentChatId();
     addLog(`🆔 Chat ID: ${DEFAULT_CHAT_ID || "None"}`);
 
@@ -1420,7 +1429,7 @@ async function startServer() {
         if (post.status === 'scheduled' && post.scheduledAt && post.scheduledAt <= now) {
           try {
             addLog(`📅 Публикация запланированного поста: ${post.id}`);
-            await publishPostToTelegram(post, ""); // Scheduled posts might not have a host easily available, but we can try defaulting or using a known host if stored.
+            await publishPostToTelegram(post, process.env.PUBLIC_DOMAIN || 'http://localhost:3000');
             
             // Обновляем статус на 'published'
             post.status = 'published';

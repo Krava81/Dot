@@ -109,17 +109,14 @@ ${text}`;
  
   private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     const models = [
-      "gemini-2.0-flash", 
-      "gemini-2.0-flash-lite",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro", 
+      "gemini-2.0-flash"
     ];
-    let lastError: any = null;
+    let lastError: any = new Error("No Gemini models configured or available");
 
     for (const modelId of models) {
       logCallback(`📡 Google Gemini (${modelId})...`);
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
         const response = await universalFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -148,6 +145,10 @@ ${text}`;
 
         const data = await response.json();
         
+        if (data.promptFeedback?.blockReason) {
+          throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
+        }
+
         if (data.candidates && data.candidates.length > 0) {
           const candidate = data.candidates[0];
           
@@ -178,7 +179,7 @@ ${text}`;
     const url = "https://models.inference.ai.azure.com/chat/completions";
     const response = await universalFetch(url, {
       method: 'POST',
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: { "Authorization": `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
       body: { model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4000 },
       skipRetry: true,
       timeout: 120000
@@ -202,12 +203,13 @@ ${text}`;
  
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void): Promise<string> {
     const models = [
-      "anthropic/claude-3.5-sonnet",
-      "google/gemini-2.0-flash-exp:free",
+      "google/gemini-2.0-flash-lite-preview-02-05:free",
       "meta-llama/llama-3.3-70b-instruct:free",
+      "deepseek/deepseek-chat:free",
+      "anthropic/claude-3.5-sonnet",
       "google/gemini-2.0-flash-001"
     ];
-    let lastError: any = null;
+    let lastError: any = new Error("No OpenRouter models configured or available");
     const url = "https://openrouter.ai/api/v1/chat/completions";
 
     for (const modelId of models) {
@@ -216,7 +218,7 @@ ${text}`;
         const response = await universalFetch(url, {
           method: 'POST',
           headers: { 
-            "Authorization": `Bearer ${apiKey}`,
+            "Authorization": `Bearer ${apiKey.trim()}`,
             "Content-Type": "application/json",
             "HTTP-Referer": "https://newsbot.manager",
             "X-Title": "TG Bot Manager"
@@ -260,7 +262,7 @@ ${text}`;
     const response = await universalFetch(url, {
       method: 'POST',
       headers: { 
-        "Authorization": `Bearer ${apiKey}`,
+        "Authorization": `Bearer ${apiKey.trim()}`,
         "Content-Type": "application/json"
       },
       body: {

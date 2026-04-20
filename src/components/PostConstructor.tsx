@@ -92,7 +92,6 @@ interface PostConstructorProps {
   handlePublish: () => void;
   submitMsg: { type: 'success' | 'error', text: string } | null;
   SortableImage: React.FC<SortableImageProps>;
-  processedTextRef: React.RefObject<HTMLTextAreaElement | null>;
   onEnlarge: (url: string) => void;
 }
 
@@ -283,14 +282,30 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                           <input type="file" accept="image/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
                             if (!e.target.files) return;
                             Array.from(e.target.files as Iterable<File>).forEach(file => {
-                              const reader = new FileReader();
-                              reader.onload = ev => {
-                                const b64 = ev.target?.result as string;
+                              const img = new window.Image();
+                              img.onload = () => {
+                                const canvas = document.createElement('canvas');
+                                let width = img.width;
+                                let height = img.height;
+                                const MAX_SIZE = 1280; // Scale down safely to avoid mobile OOM crashes
+                                if (width > height && width > MAX_SIZE) {
+                                  height = Math.round(height * (MAX_SIZE / width));
+                                  width = MAX_SIZE;
+                                } else if (height > MAX_SIZE) {
+                                  width = Math.round(width * (MAX_SIZE / height));
+                                  height = MAX_SIZE;
+                                }
+                                canvas.width = width;
+                                canvas.height = height;
+                                const ctx = canvas.getContext('2d');
+                                ctx?.drawImage(img, 0, 0, width, height);
+                                const b64 = canvas.toDataURL('image/jpeg', 0.8);
                                 props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
                                 props.setSelectedImages(prev => [...prev, b64]);
                                 if (!props.mainImage) props.setMainImage(b64);
+                                URL.revokeObjectURL(img.src);
                               };
-                              reader.readAsDataURL(file);
+                              img.src = URL.createObjectURL(file);
                             });
                           }} />
                           <Plus size={16} /><span className="text-[8px] font-bold uppercase">Файл</span>
@@ -332,7 +347,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                 <div className={`bg-neutral-800/30 rounded-2xl border border-neutral-800 overflow-hidden flex flex-col ${activeTab !== 'buttons' ? 'hidden xl:flex' : ''}`}>
                   <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800 bg-neutral-800/50">
                     <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Кнопки ({props.postButtons.length})</label>
-                    <button onClick={() => props.setPostButtons([...props.postButtons, { id: Date.now().toString(), text: 'Кнопка', url: 'https://' }])} className="text-blue-400 hover:text-blue-300"><Plus size={16} /></button>
+                    <button onClick={() => props.setPostButtons([...props.postButtons, { id: Date.now().toString(), text: 'Кнопка', url: '' }])} className="text-blue-400 hover:text-blue-300"><Plus size={16} /></button>
                   </div>
                   <div className="p-4 space-y-3 max-h-[300px] overflow-y-auto">
                     {props.postButtons.map((btn, idx) => (
