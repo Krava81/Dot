@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { storage } from '../services/storage';
 
 export function useAiKeys(isStandalone: boolean) {
-  const [aiKeys, setAiKeys] = useState<Record<string, string>>({ gemini: '', github: '', openrouter: '', deepseek: '' });
+    const [aiKeys, setAiKeys] = useState<Record<string, string>>({ github: '', openrouter: '', deepseek: '' });
   const [error, setError] = useState<string | null>(null);
 
   const loadAiKeys = useCallback(async () => {
@@ -16,14 +16,12 @@ export function useAiKeys(isStandalone: boolean) {
           storage.getSetting('api_key_deepseek')
         ]);
         setAiKeys({
-          gemini: gemini || '',
           github: github || '',
           openrouter: openrouter || '',
           deepseek: deepseek || ''
         });
       } else {
         setAiKeys({
-          gemini: localStorage.getItem('server_api_key_gemini') || '',
           github: localStorage.getItem('server_api_key_github') || '',
           openrouter: localStorage.getItem('server_api_key_openrouter') || '',
           deepseek: localStorage.getItem('server_api_key_deepseek') || ''

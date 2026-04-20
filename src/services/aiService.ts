@@ -23,12 +23,12 @@ export class AIService {
   async processText(
     text: string,
     keys: Record<string, string>,
-    preferredProvider: string = 'gemini',
+    preferredProvider: string = 'github',
     logCallback: (msg: string) => void = () => {},
     signal?: AbortSignal
   ): Promise<{ success: true; result: string; provider: string } | { success: false; error: string; provider: string }> {
-    const providers = ["gemini", "github", "openrouter", "deepseek"];
-    const effective = preferredProvider || "gemini";
+    const providers = ["github", "openrouter", "deepseek"];
+    const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "github";
     const ordered = [effective, ...providers.filter(p => p !== effective)];
     let lastError = "Все AI провайдеры не сработали";
     let lastProvider = "unknown";
@@ -86,8 +86,6 @@ export class AIService {
 ${text}`;
 
     switch (provider) {
-      case 'gemini':
-        return this.callGemini(apiKey, prompt, logCallback, signal);
       case 'github':
         return this.callGitHub(apiKey, prompt, logCallback, signal);
       case 'openrouter':
@@ -97,73 +95,6 @@ ${text}`;
       default:
         throw new Error(`Unknown provider: ${provider}`);
     }
-  }
-
-  private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
-    const models = ["gemini-2.0-flash", "gemini-1.5-pro"];
-    let lastError: any = new Error("No Gemini models configured or available");
-
-    for (const modelId of models) {
-      logCallback(`📡 Google Gemini (${modelId})...`);
-      let attempt = 0;
-      const maxAttempts = 3;
-
-      while (attempt < maxAttempts) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
-          const response = await universalFetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: {
-              contents: [{ parts: [{ text: prompt }] }],
-              safetySettings: [
-                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-              ],
-              generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
-            },
-            skipRetry: true,
-            timeout: 120000,
-            signal
-          });
-
-          if (!response.ok) {
-            let errorMsg = `Gemini (${modelId}) error ${response.status}`;
-            try {
-              const data = await response.json();
-              errorMsg = data.error?.message || errorMsg;
-            } catch {}
-            throw new Error(errorMsg);
-          }
-
-          const data = await response.json();
-          if (data.promptFeedback?.blockReason) throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
-          if (data.candidates && data.candidates.length > 0) {
-            const candidate = data.candidates[0];
-            if (candidate.finishReason === 'SAFETY') break;
-            const text = candidate.content?.parts?.[0]?.text || "";
-            if (!text || !text.trim()) throw new Error("Gemini returned empty response");
-            return text;
-          }
-          throw new Error("Gemini returned no candidates");
-        } catch (e: any) {
-          if (e.name === 'AbortError') throw e;
-          const msg = e.message || String(e);
-          if ((msg.includes("503") || msg.includes("high demand") || msg.includes("429")) && attempt < maxAttempts - 1) {
-            attempt++;
-            logCallback(`⚠️ Gemini ${modelId} overloaded. Retrying in ${attempt * 3}s...`);
-            await new Promise(r => setTimeout(r, attempt * 3000));
-            continue;
-          }
-          logCallback(`⚠️ Gemini Model ${modelId} failed: ${msg}`);
-          lastError = e;
-          break;
-        }
-      }
-    }
-    throw lastError;
   }
 
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {

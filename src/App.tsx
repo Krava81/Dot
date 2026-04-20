@@ -513,8 +513,6 @@ function AppContent() {
     const chatId = await storage.getSetting('chat_id');
     if (chatId) updateSetting('chat_id', chatId);
 
-    const geminiKey = await storage.getSetting('api_key_gemini');
-    if (geminiKey) updateAiKey('gemini', geminiKey);
     const githubKey = await storage.getSetting('api_key_github');
     if (githubKey) updateAiKey('github', githubKey);
     const openrouterKey = await storage.getSetting('api_key_openrouter');
@@ -1163,6 +1161,11 @@ function AppContent() {
   };
 
   const saveChatIdPresets = async (newPresets: string[]) => {
+    if (isStandalone) {
+      await storage.setSetting('chat_id_presets', JSON.stringify(newPresets));
+      setChatIdPresets(newPresets);
+      return;
+    }
     const cleanUrl = getCleanBaseUrl();
     if (!cleanUrl) return;
     try {
@@ -1703,7 +1706,7 @@ function AppContent() {
         {/* AI Keys */}
         <CollapsibleSection title="API Ключи ИИ" icon={Key} isOpen={!isAiKeysCollapsed} onToggle={() => setIsAiKeysCollapsed(!isAiKeysCollapsed)}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4">
-            {['gemini', 'github', 'openrouter', 'deepseek'].map(provider => (
+            {['github', 'openrouter', 'deepseek'].map(provider => (
               <div key={provider} className={`bg-neutral-800/30 border rounded-xl p-3 space-y-2 ${serverStatus?.preferredProvider === provider ? 'border-amber-500/50' : 'border-neutral-800'}`}>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-white capitalize">{provider}</label>
@@ -1754,20 +1757,7 @@ function AppContent() {
         </CollapsibleSection>
 
         {/* Logs */}
-        <CollapsibleSection title="Логи сервера" icon={Activity} isOpen={!isLogsCollapsed} onToggle={() => setIsLogsCollapsed(!isLogsCollapsed)}>
-          <div className="space-y-3 pt-4">
-            <div className="flex items-center justify-end gap-2">
-              <button onClick={() => setIsLogsFullscreen(true)} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg border border-neutral-700"><Eye size={14} /></button>
-              <button onClick={() => setIsLogsPaused(!isLogsPaused)} className={`px-3 py-1 rounded-lg text-[10px] font-bold border ${isLogsPaused ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/50' : 'bg-neutral-800 text-neutral-400 border-neutral-700'}`}>{isLogsPaused ? 'ПАУЗА ВКЛ' : 'ПАУЗА'}</button>
-              <button onClick={() => setLogs([])} className="text-[10px] text-neutral-500 hover:text-neutral-300">Очистить</button>
-            </div>
-            <div className="bg-black/50 rounded-xl p-3 h-48 overflow-y-auto font-mono text-[10px] space-y-0.5 border border-neutral-800">
-              {logs.length === 0 ? <p className="text-neutral-700 italic">Ожидание логов...</p> : logs.map((log, i) => (
-                <div key={i} className={`py-0.5 ${log.includes('❌') ? 'text-red-400' : log.includes('⚠️') ? 'text-amber-400' : log.includes('✅') ? 'text-emerald-400' : 'text-neutral-400'}`}>{log}</div>
-              ))}
-            </div>
-          </div>
-        </CollapsibleSection>
+        {/* Upper logs removed as requested */}
 
       </div>
 
