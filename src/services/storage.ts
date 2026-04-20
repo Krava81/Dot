@@ -17,11 +17,12 @@ export const storage = {
     try {
       await Filesystem.mkdir({
         path: DATA_DIR,
-        directory: Directory.Documents,
+        directory: Directory.Data,
         recursive: true,
       });
+      console.log(`[Storage] Directory ${DATA_DIR} initialized in Directory.Data`);
     } catch (e) {
-      // Папка уже может существовать
+      // Already exists or other error
     }
   },
 
@@ -31,18 +32,21 @@ export const storage = {
   async saveJson(filename: string, data: any) {
     if (isNative) {
       try {
-        await this.init(); // Ensure dir exists
+        await this.init(); 
+        const path = `${DATA_DIR}/${filename}`;
         await Filesystem.writeFile({
-          path: `${DATA_DIR}/${filename}`,
+          path,
           data: JSON.stringify(data, null, 2),
-          directory: Directory.Documents,
+          directory: Directory.Data,
           encoding: Encoding.UTF8,
         });
+        console.log(`[Storage] Saved JSON to ${path}`);
       } catch (e) {
         console.error(`[Storage] Failed to save JSON ${filename}:`, e);
       }
     } else {
       localStorage.setItem(`standalone_${filename}`, JSON.stringify(data));
+      console.log(`[Storage] Saved JSON ${filename} to localStorage`);
     }
   },
 
@@ -50,23 +54,23 @@ export const storage = {
    * Сохранить медиа-файл.
    */
   async saveMedia(filename: string, base64Data: string): Promise<string> {
-    if (!isNative) return base64Data; // В вебе возвращаем саму строку
+    if (!isNative) return base64Data;
     try {
       await this.init();
       const mediaDir = `${DATA_DIR}/media`;
       try {
-        await Filesystem.mkdir({ path: mediaDir, directory: Directory.Documents, recursive: true });
+        await Filesystem.mkdir({ path: mediaDir, directory: Directory.Data, recursive: true });
       } catch {}
       
       const path = `${mediaDir}/${filename}`;
-      // Удаляем префикс base64 если он есть
       const cleanData = base64Data.includes('base64,') ? base64Data.split('base64,')[1] : base64Data;
       
       await Filesystem.writeFile({
         path,
         data: cleanData,
-        directory: Directory.Documents
+        directory: Directory.Data
       });
+      console.log(`[Storage] Saved media to ${path}`);
       return path;
     } catch (e) {
       console.error(`[Storage] Failed to save media:`, e);
@@ -82,10 +86,9 @@ export const storage = {
     try {
       const result = await Filesystem.readFile({
         path,
-        directory: Directory.Documents
+        directory: Directory.Data
       });
       
-      // Определяем mime type по расширению
       const ext = path.split('.').pop()?.toLowerCase();
       let mime = 'image/jpeg';
       if (ext === 'png') mime = 'image/png';
@@ -93,9 +96,11 @@ export const storage = {
       else if (ext === 'mp4') mime = 'video/mp4';
       else if (ext === 'mov') mime = 'video/quicktime';
       
+      const dataLength = (typeof result.data === 'string') ? result.data.length : 0;
+      console.log(`[Storage] Loaded media from ${path}, size: ${dataLength}`);
       return `data:${mime};base64,${result.data}`;
     } catch (e) {
-      console.error(`[Storage] Failed to load media:`, e);
+      console.error(`[Storage] Failed to load media ${path}:`, e);
       return path;
     }
   },
@@ -106,14 +111,17 @@ export const storage = {
   async loadJson(filename: string, defaultValue: any = []) {
     try {
       if (isNative) {
+        const path = `${DATA_DIR}/${filename}`;
         const result = await Filesystem.readFile({
-          path: `${DATA_DIR}/${filename}`,
-          directory: Directory.Documents,
+          path,
+          directory: Directory.Data,
           encoding: Encoding.UTF8,
         });
+        console.log(`[Storage] Loaded JSON from ${path}`);
         return JSON.parse(result.data as string);
       } else {
         const data = localStorage.getItem(`standalone_${filename}`);
+        console.log(`[Storage] Loaded JSON ${filename} from localStorage`);
         return data ? JSON.parse(data) : defaultValue;
       }
     } catch (e) {

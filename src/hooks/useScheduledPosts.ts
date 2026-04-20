@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { DraftPost } from '../types';
 
@@ -10,7 +10,9 @@ export function useScheduledPosts(isStandalone: boolean, getCleanBaseUrl: () => 
     setLoading(true);
     try {
       if (isStandalone) {
+        console.log("[useScheduledPosts] Loading (standalone)...");
         const s = await storage.loadJson('scheduled.json', []);
+        console.log(`[useScheduledPosts] Loaded ${s?.length} scheduled posts`);
         setScheduledPosts(Array.isArray(s) ? s : []);
       } else {
         const cleanUrl = getCleanBaseUrl();
@@ -27,6 +29,10 @@ export function useScheduledPosts(isStandalone: boolean, getCleanBaseUrl: () => 
       setLoading(false);
     }
   }, [isStandalone, getCleanBaseUrl, universalFetch]);
+
+  useEffect(() => {
+    loadScheduledPosts();
+  }, [loadScheduledPosts]);
 
   return {
     scheduledPosts,

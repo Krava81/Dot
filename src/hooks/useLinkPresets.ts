@@ -7,8 +7,10 @@ export function useLinkPresets(isStandalone: boolean, getCleanBaseUrl: () => str
   const loadLinkPresets = useCallback(async () => {
     try {
       if (isStandalone) {
-        const p = await storage.getSetting('link_presets');
-        if (p) setLinkPresets(JSON.parse(p));
+        console.log("[useLinkPresets] Loading presets (standalone)...");
+        const data = await storage.loadJson('link_presets.json', []);
+        console.log(`[useLinkPresets] Loaded ${data.length} presets`);
+        setLinkPresets(Array.isArray(data) ? data : []);
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;
@@ -24,10 +26,11 @@ export function useLinkPresets(isStandalone: boolean, getCleanBaseUrl: () => str
   }, [isStandalone, getCleanBaseUrl, universalFetch]);
 
   const saveLinkPresets = useCallback(async (newPresets: string[]) => {
-    setLinkPresets(newPresets);
     try {
+      console.log(`[useLinkPresets] Saving ${newPresets.length} presets (standalone: ${isStandalone})`);
+      setLinkPresets(newPresets);
       if (isStandalone) {
-        await storage.setSetting('link_presets', JSON.stringify(newPresets));
+        await storage.saveJson('link_presets.json', newPresets);
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (!cleanUrl) return;

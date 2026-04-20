@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { DraftPost } from '../types';
 
@@ -10,7 +10,9 @@ export function usePublishedPosts(isStandalone: boolean, getCleanBaseUrl: () => 
     setLoading(true);
     try {
       if (isStandalone) {
+        console.log("[usePublishedPosts] Loading (standalone)...");
         const p = await storage.loadJson('published.json', []);
+        console.log(`[usePublishedPosts] Loaded ${p?.length} posts`);
         setPublishedPosts(Array.isArray(p) ? p : []);
       } else {
         const cleanUrl = getCleanBaseUrl();
@@ -28,8 +30,13 @@ export function usePublishedPosts(isStandalone: boolean, getCleanBaseUrl: () => 
     }
   }, [isStandalone, getCleanBaseUrl, universalFetch]);
 
+  useEffect(() => {
+    loadPublishedPosts();
+  }, [loadPublishedPosts]);
+
   const deletePublishedPost = useCallback(async (id: string) => {
     try {
+      console.log(`[usePublishedPosts] Deleting: ${id}`);
       setPublishedPosts(prev => prev.filter(p => p.id !== id));
       if (isStandalone) {
         const current = await storage.loadJson('published.json', []);
@@ -43,13 +50,13 @@ export function usePublishedPosts(isStandalone: boolean, getCleanBaseUrl: () => 
 
   const savePublishedPost = useCallback(async (post: DraftPost) => {
     try {
+      console.log(`[usePublishedPosts] Saving post: ${post.id} (standalone: ${isStandalone})`);
       if (isStandalone) {
         const current = await storage.loadJson('published.json', []);
         const updated = [post, ...current].slice(0, 50); // limit to 50
         await storage.saveJson('published.json', updated);
         setPublishedPosts(updated);
       } else {
-        // Сервер обычно сам сохраняет при публикации, но если нужно:
         const cleanUrl = getCleanBaseUrl();
         if (cleanUrl) {
           await universalFetch(`${cleanUrl}/api/posts/published`, {

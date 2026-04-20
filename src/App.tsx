@@ -815,9 +815,9 @@ function AppContent() {
         if (highResImages.length === 0 && !highResVideo) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
         } else if (highResImages.length === 1 && !highResVideo) {
-          await telegramClient?.sendPhoto(tempChatId, highResImages[0], htmlText, extra);
+          await telegramClient?.sendPhoto(tempChatId, highResImages[0], { ...extra, caption: htmlText });
         } else if (highResImages.length === 0 && highResVideo) {
-          await telegramClient?.sendVideo(tempChatId, highResVideo, htmlText, extra);
+          await telegramClient?.sendVideo(tempChatId, highResVideo, { ...extra, caption: htmlText });
         } else {
           const mediaItems: any[] = [];
           if (highResVideo) {
@@ -876,9 +876,9 @@ function AppContent() {
         if (highResImages.length === 0 && !highResVideo) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
         } else if (highResImages.length === 1 && !highResVideo) {
-          await telegramClient?.sendPhoto(tempChatId, highResImages[0], htmlText, extra);
+          await telegramClient?.sendPhoto(tempChatId, highResImages[0], { ...extra, caption: htmlText });
         } else if (highResImages.length === 0 && highResVideo) {
-          await telegramClient?.sendVideo(tempChatId, highResVideo, htmlText, extra);
+          await telegramClient?.sendVideo(tempChatId, highResVideo, { ...extra, caption: htmlText });
         } else {
           const mediaItems: any[] = [];
           if (highResVideo) {

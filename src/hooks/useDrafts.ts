@@ -18,7 +18,9 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
     setLoading(true);
     try {
       if (isStandalone) {
+        console.log("[useDrafts] Loading drafts (standalone)...");
         const data = await storage.loadJson('drafts.json', []);
+        console.log(`[useDrafts] Loaded ${data.length} drafts`);
         setDrafts(data);
       } else {
         const cleanUrl = getCleanBaseUrl();
@@ -38,6 +40,7 @@ export function useDrafts(isStandalone: boolean, getCleanBaseUrl: () => string |
 
   const saveDraft = useCallback(async (draft: DraftPost) => {
     try {
+      console.log(`[useDrafts] Saving draft: ${draft.id} (standalone: ${isStandalone}, status: ${draft.status})`);
       if (isStandalone) {
         const currentDrafts = await storage.loadJson('drafts.json', []);
         const currentScheduled = await storage.loadJson('scheduled.json', []);

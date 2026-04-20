@@ -1,6 +1,7 @@
 import { errorTracker } from '../utils/errorTracker';
 import { universalFetch } from './http';
-import { Filesystem } from '@capacitor/filesystem';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { DATA_DIR } from '../constants';
 
 export class TelegramAPI {
   private token: string;
@@ -26,11 +27,17 @@ export class TelegramAPI {
 
   private async toBlob(photo: string): Promise<Blob> {
     if (photo.startsWith('data:')) {
-      const response = await fetch(photo);
-      return response.blob();
+      try {
+        const response = await fetch(photo);
+        return await response.blob();
+      } catch (e) {
+        console.error("[TelegramAPI] Failed to fetch blob from data URL", e);
+        throw e;
+      }
     }
     
     try {
+      // Handle native paths from gallery/filesystem providers
       if (photo.includes('/_capacitor_file_/') || photo.includes('capacitor://') || photo.startsWith('file://')) {
         let cleanPath = photo;
         if (photo.includes('/_capacitor_file_/')) {
@@ -42,25 +49,40 @@ export class TelegramAPI {
           cleanPath = photo.replace('file://', '');
         }
         
+        console.log(`[TelegramAPI] toBlob identifying native path: ${cleanPath}`);
         const fileContent = await Filesystem.readFile({ path: cleanPath });
         const ext = cleanPath.split('.').pop()?.toLowerCase();
         const mime = ext === 'mp4' ? 'video/mp4' : 'image/jpeg';
         const base64Response = await fetch(`data:${mime};base64,${fileContent.data}`);
-        return base64Response.blob();
+        return await base64Response.blob();
+      }
+
+      // Handle relative paths from our storage (news_bot_data/...)
+      if (photo.startsWith(DATA_DIR)) {
+        console.log(`[TelegramAPI] toBlob loading storage path: ${photo}`);
+        const fileContent = await Filesystem.readFile({ 
+          path: photo,
+          directory: Directory.Data
+        });
+        const ext = photo.split('.').pop()?.toLowerCase();
+        const mime = ext === 'mp4' ? 'video/mp4' : 'image/jpeg';
+        const base64Response = await fetch(`data:${mime};base64,${fileContent.data}`);
+        return await base64Response.blob();
       }
     } catch (e) {
-      console.warn("Filesystem read failed, falling back to fetch:", e);
+      console.warn("[TelegramAPI] Filesystem read in toBlob failed, trying fetch:", e);
     }
 
     try {
+      console.log(`[TelegramAPI] toBlob fetch fallback for: ${photo.substring(0, 50)}...`);
       const response = await fetch(photo);
       if (!response.ok) {
-        throw new Error(`Failed to read local media: ${response.status}`);
+        throw new Error(`HTTP status ${response.status}`);
       }
-      return response.blob();
-    } catch (e) {
-      console.error("toBlob fetch failed:", e);
-      throw new Error(`Failed to convert media to blob: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      return await response.blob();
+    } catch (e: any) {
+      console.error("[TelegramAPI] toBlob critical failure:", e);
+      throw new Error(`Failed to convert media to blob: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
