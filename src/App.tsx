@@ -60,10 +60,7 @@ import {
 } from './utils/http';
 
 // ─── Components ─────────────────────────────────────────────────────────────
-const SortableImage = ({ id, url, onSelect, onEnlarge, isMain, onSetMain }: any) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 10 : 1, opacity: isDragging ? 0.5 : 1 };
-
+const SortableImage = ({ id, url, onSelect, onEnlarge }: any) => {
   const handleClick = useCallback(() => {
     try {
       onEnlarge?.(url);
@@ -83,7 +80,7 @@ const SortableImage = ({ id, url, onSelect, onEnlarge, isMain, onSetMain }: any)
   }, [onSelect, url]);
 
   return (
-    <div ref={setNodeRef} style={style} className="relative group aspect-square rounded-lg overflow-hidden border border-neutral-800 transition-all">
+    <div className="relative group aspect-square rounded-lg overflow-hidden border border-neutral-800 transition-all">
       <div className="w-full h-full cursor-pointer" onClick={handleClick}>
         <img
           src={url}
@@ -91,17 +88,8 @@ const SortableImage = ({ id, url, onSelect, onEnlarge, isMain, onSetMain }: any)
           className="w-full h-full object-cover pointer-events-none"
           referrerPolicy="no-referrer"
           loading="lazy"
-          onError={(e) => {
-            console.error('[SortableImage] Image load error:', url);
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
         />
       </div>
-      {isMain && (
-        <div className="absolute bottom-1 left-1 px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded shadow">
-          Основное
-        </div>
-      )}
       <button 
         className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-500/80 rounded-full text-white cursor-pointer shadow-md pointer-events-auto" 
         onClick={handleDelete}
@@ -109,20 +97,6 @@ const SortableImage = ({ id, url, onSelect, onEnlarge, isMain, onSetMain }: any)
       >
         <X size={14} />
       </button>
-      {!isMain && (
-        <button 
-          className="absolute bottom-1 right-1 p-1 bg-black/60 hover:bg-blue-500 rounded text-white cursor-pointer shadow-md opacity-0 group-hover:opacity-100 transition-opacity" 
-          onClick={(e) => { e.stopPropagation(); onSetMain?.(url); }}
-          title="Сделать основным"
-        >
-          <Sparkles size={14} />
-        </button>
-      )}
-      <div className="absolute top-1 left-1 p-1 touch-none pointer-events-auto z-[30]" {...attributes} {...listeners}>
-        <div className="p-1 bg-black/60 rounded shadow cursor-grab active:cursor-grabbing">
-          <GripVertical size={12} className="text-white" />
-        </div>
-      </div>
     </div>
   );
 };
@@ -613,7 +587,7 @@ function AppContent() {
     const answer = await aiServiceInstance.processText(
       originalText,
       aiKeys,
-      serverStatus?.preferredProvider ?? 'gemini',
+      serverStatus?.preferredProvider ?? 'github',
       (msg) => addClientLog(msg),
       abortCtrl.current.signal
     );
@@ -1583,7 +1557,7 @@ function AppContent() {
                     const cleanUrl = getCleanBaseUrl(tempBaseUrl || baseUrl);
                     if (!cleanUrl) return;
                     try { 
-                      const res = await universalFetch(`${cleanUrl}/api/test-ai`, { 
+                      const res = await universalFetch(`${cleanUrl}/api/test-key`, { 
                         method: 'POST', 
                         headers: { 'Content-Type': 'application/json' },
                         body: { apiKey: key, provider } 

@@ -9,8 +9,7 @@ export function useAiKeys(isStandalone: boolean) {
     try {
       setError(null);
       if (isStandalone) {
-        const [gemini, github, openrouter, openrouter2, deepseek] = await Promise.all([
-          storage.getSetting('api_key_gemini'),
+        const [github, openrouter, openrouter2, deepseek] = await Promise.all([
           storage.getSetting('api_key_github'),
           storage.getSetting('api_key_openrouter'),
           storage.getSetting('api_key_openrouter2'),

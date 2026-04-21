@@ -10,7 +10,6 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import { load } from "cheerio";
 import { marked } from 'marked';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 
@@ -26,9 +25,6 @@ function validateEnv() {
   const missing = required.filter(key => !process.env[key]);
   if (missing.length > 0) {
     throw new Error(`Missing required env vars: ${missing.join(', ')}`);
-  }
-  if (!process.env.GEMINI_API_KEY) {
-    console.warn('⚠️ WARNING: GEMINI_API_KEY is missing. AI features might not work.');
   }
 }
 
@@ -90,7 +86,7 @@ let cachedImagePath               = "";
 let cachedChatIdPresets: string[] = ["", "", ""];
 
 interface ApiKeys {
-  gemini?: string; grok?: string; openrouter?: string; openrouter2?: string;
+  grok?: string; openrouter?: string; openrouter2?: string;
   deepseek?: string; preferredProvider?: string;
 }
 
@@ -260,14 +256,6 @@ app.get("/api/logs/stream", (req: Request, res: Response) => {
 });
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const VALID_GEMINI_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro'
-] as const;
-
-// Используем первую модель как дефолтную, если ENV не задан
-const DEFAULT_GEMINI_MODEL = VALID_GEMINI_MODELS[0];
 
 function extractRetryDelaySeconds(message: string): number | null {
   if (!message) return null;
@@ -314,9 +302,9 @@ function startBotHealthMonitor(token: string, botInstance: Telegraf) {
 
 // ---- AI Processing ----
 async function processWithAI(text: string, provider?: string, customApiKeys: any = {}): Promise<string> {
-  const providers = ["gemini", "github", "deepseek", "openrouter", "openrouter2"];
+  const providers = ["github", "deepseek", "openrouter", "openrouter2"];
   const saved     = getPersistentApiKeys();
-  const effective = provider || saved.preferredProvider || "gemini";
+  const effective = provider || saved.preferredProvider || "github";
   const ordered   = [effective, ...providers.filter(p => p !== effective)];
   const keys      = { ...saved, ...customApiKeys };
   const disabledProviders = new Set<string>();
@@ -379,76 +367,6 @@ ${text.substring(0, 20000)}`;
                 await sleep(5000 * attempt);
               } else throw e;
             }
-          }
-        }
-        // ---- Gemini ----
-        // ---- Gemini ----
-        else if (cur === "gemini") {
-          const apiKey = keys.gemini || process.env.GEMINI_API_KEY;
-          if (!apiKey) { lastErrors.push("Gemini: no key"); continue; }
-          
-          const modelsToTry = [
-            process.env.GEMINI_MODEL,
-            ...VALID_GEMINI_MODELS
-          ].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i) as string[];
-          
-          addLog(`📡 Gemini processing with models: ${modelsToTry.join(', ')}`);
-          for (const modelName of modelsToTry) {
-            let attempt = 0;
-            const maxAttempts = 2;
-            
-            while (attempt < maxAttempts) {
-              try {
-                const genAI = new GoogleGenerativeAI(apiKey.trim());
-                const model = genAI.getGenerativeModel({ 
-                  model: modelName,
-                  safetySettings: [
-                    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-                    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                  ],
-                  generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
-                });
-                
-                const result = await model.generateContent(prompt);
-                const response = result.response;
-                
-                if (response.promptFeedback?.blockReason) {
-                  const reason = response.promptFeedback.blockReason;
-                  addLog(`⚠️ Gemini ${modelName} prompt blocked: ${reason}`);
-                  throw new Error(`Prompt blocked: ${reason}`);
-                }
-                
-                if (response.candidates && response.candidates.length > 0) {
-                  const candidate = response.candidates[0];
-                  if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'RECITATION') {
-                    addLog(`⚠️ Gemini ${modelName} blocked: ${candidate.finishReason}`);
-                    break; 
-                  }
-                  aiResult = response.text();
-                } else {
-                  addLog(`⚠️ Gemini ${modelName} returned no candidates`);
-                  break;
-                }
-
-                if (aiResult) break;
-              } catch (modelErr: any) {
-                const msg = modelErr.message || String(modelErr);
-                const retryDelay = extractRetryDelaySeconds(msg);
-                
-                if ((msg.includes("503") || msg.includes("high demand") || msg.includes("429") || retryDelay) && attempt < maxAttempts - 1) {
-                  attempt++;
-                  const waitSec = retryDelay || (attempt * 5);
-                  addLog(`⚠️ Gemini ${modelName} rate limit (${msg}). Waiting ${waitSec}s...`);
-                  await sleep(waitSec * 1000);
-                  continue;
-                }
-                addLog(`⚠️ Gemini ${modelName} fail: ${msg}`);
-                break;
-              }
-            }
-            if (aiResult) break;
           }
         }
         // ---- OpenRouter ----
@@ -1261,42 +1179,43 @@ app.delete("/api/posts/templates/reactions/:id", mutationRateLimiter, (req: Requ
 
 // Test
 app.post("/api/test-key", aiRateLimiter, async (req: Request, res: Response) => {
-  const { apiKey } = req.body;
+  const { apiKey, provider } = req.body;
   if (!apiKey) return res.status(400).json({ error: "API key required" });
+  
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const uniqueModels = Array.from(new Set(VALID_GEMINI_MODELS.filter(Boolean)));
-
-    for (const modelName of uniqueModels) {
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelName as string,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ]
-        });
-        const r = await Promise.race([
-          model.generateContent("Hello"),
-          new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Timeout")), 30000)),
-        ]) as any;
-        const text = r.response.text();
-        if (text) return res.json({ success: true, model: modelName });
-      } catch (e: any) {
-        const msg = e?.message || String(e);
-        if (msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED")) {
-          const retrySeconds = extractRetryDelaySeconds(msg);
-          const retryHint = retrySeconds ? ` Retry in ~${retrySeconds}s.` : "";
-          return res.status(429).json({ error: `Gemini quota exceeded.${retryHint}` });
-        }
-        if (msg.includes("404") || msg.includes("not found")) continue;
-      }
+    let url = "";
+    let body: any = {};
+    let headers: any = { "Content-Type": "application/json" };
+    
+    if (provider === "github") {
+      url = "https://models.inference.ai.azure.com/chat/completions";
+      headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+      body = { model: "gpt-4o", messages: [{ role: "user", content: "Hello" }], max_tokens: 10 };
+    } else if (provider === "openrouter" || provider === "openrouter2") {
+      url = "https://openrouter.ai/api/v1/chat/completions";
+      headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+      body = { 
+        model: provider === "openrouter" ? "nvidia/nemotron-3-super-120b-a12b:free" : "openai/gpt-oss-120b:free", 
+        messages: [{ role: "user", content: "Hello" }],
+        max_tokens: 10
+      };
+    } else if (provider === "deepseek") {
+      url = "https://api.deepseek.com/chat/completions";
+      headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+      body = { model: "deepseek-chat", messages: [{ role: "user", content: "Hello" }], max_tokens: 10 };
+    } else {
+      return res.status(400).json({ error: "Unsupported provider for testing" });
     }
 
-    res.status(400).json({ error: "No available Gemini model for this API key" });
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+    const r = await axios.post(url, body, { headers, timeout: 15000 });
+    if (r.data.choices?.[0]?.message?.content || r.data.choices?.[0]?.text) {
+      return res.json({ success: true, provider });
+    }
+    res.status(400).json({ error: "Empty response from provider" });
+  } catch (e: any) {
+    const msg = e.response?.data?.error?.message || e.message;
+    res.status(400).json({ error: msg });
+  }
 });
 
 app.post("/api/test-ai", aiRateLimiter, async (req: Request, res: Response) => {

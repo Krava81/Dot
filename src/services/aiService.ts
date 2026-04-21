@@ -27,8 +27,8 @@ export class AIService {
     logCallback: (msg: string) => void = () => {},
     signal?: AbortSignal
   ): Promise<{ success: true; result: string; provider: string } | { success: false; error: string; provider: string }> {
-    const providers = ["gemini", "github", "openrouter", "deepseek"];
-    const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "gemini";
+    const providers = ["github", "openrouter", "openrouter2", "deepseek"];
+    const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "github";
     const ordered = [effective, ...providers.filter(p => p !== effective)];
     let lastError: string | null = null;
     let lastProvider = "unknown";
@@ -86,21 +86,15 @@ export class AIService {
 ${text}`;
 
     switch (provider) {
-      case 'gemini':
-        return this.callGemini(apiKey, prompt, logCallback, signal);
       case 'github':
         return this.callGitHub(apiKey, prompt, logCallback, signal);
       case 'openrouter':
         return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
-          models: ["nvidia/nemotron-3-super-120b-a12b:free", "google/gemini-2.0-flash-001", "google/gemini-flash-1.5", "anthropic/claude-3-haiku", "openai/gpt-3.5-turbo"]
+          models: ["nvidia/nemotron-3-super-120b-a12b:free", "google/gemini-2.0-flash-001", "google/gemini-flash-1.5"]
         });
       case 'openrouter2':
         return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
-          models: [
-            "openai/gpt-oss-120b:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "google/gemini-2.0-flash-001"
-          ]
+          models: ["openai/gpt-oss-120b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemini-2.0-flash-001"]
         });
       case 'deepseek':
         return this.callDeepSeek(apiKey, prompt, logCallback, signal);
@@ -226,45 +220,6 @@ ${text}`;
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
     if (!content.trim()) throw new Error("DeepSeek returned empty response");
-    
-    return content;
-  }
-
-  private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
-    const modelId = "gemini-2.0-flash";
-    logCallback(`📡 Gemini (${modelId})...`);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
-
-    const response = await universalFetch(url, {
-      method: 'POST',
-      headers: { "Content-Type": "application/json" },
-      body: {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
-      },
-      skipRetry: true,
-      timeout: 60000,
-      signal
-    });
-
-    const data = await response.json();
-    
-    if (data.promptFeedback?.blockReason) {
-      throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
-    }
-    
-    if (!data.candidates?.length) {
-      if (data.error?.message) throw new Error(data.error.message);
-      throw new Error("Gemini returned no candidates");
-    }
-
-    const candidate = data.candidates[0];
-    if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'RECITATION') {
-       throw new Error(`Gemini blocked: ${candidate.finishReason}`);
-    }
-
-    const content = candidate.content?.parts?.[0]?.text || "";
-    if (!content.trim()) throw new Error("Gemini returned empty response");
     
     return content;
   }

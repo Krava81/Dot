@@ -147,11 +147,15 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                     <div className="flex items-center gap-2">
                       <button onClick={async () => { 
                         try {
-                          const { value } = await Clipboard.read();
-                          if (value) props.setOriginalText(value);
+                          if (isNative) {
+                            const { value } = await Clipboard.read();
+                            if (value) props.setOriginalText(value);
+                          } else {
+                            const text = await navigator.clipboard.readText();
+                            if (text) props.setOriginalText(text);
+                          }
                         } catch (e) {
-                          // Fallback to navigator
-                          navigator.clipboard.readText().then(text => props.setOriginalText(text)).catch(() => {});
+                          console.error('Clipboard error:', e);
                         }
                       }} className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1"><ClipboardPaste size={12} /> Вставить</button>
                       <button onClick={() => props.setOriginalText('')} className="text-[10px] font-bold text-red-500 hover:text-red-400 uppercase flex items-center gap-1"><Trash2 size={12} /> Очистить</button>
@@ -224,23 +228,32 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                         </div>
                       )}
 
-                      <div className="grid grid-cols-4 gap-2">
-                        <DndContext sensors={props.sensors} collisionDetection={closestCenter} onDragEnd={props.handleDragEnd}>
-                          <SortableContext items={props.selectedImages} strategy={rectSortingStrategy}>
-                            {props.selectedImages.map(img => (
-                              <props.SortableImage 
-                                key={img} 
-                                id={img} 
-                                url={img} 
-                                isMain={props.mainImage === img}
-                                onSelect={props.toggleImageSelection} 
-                                onSetMain={props.setMainImage}
-                                onEnlarge={props.onEnlarge} 
-                              />
-                            ))}
-                          </SortableContext>
-                        </DndContext>
-                        <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
+                    <div className="grid grid-cols-4 gap-2">
+                      {props.selectedImages.map(img => (
+                        <div key={img} className="relative group aspect-square rounded-lg overflow-hidden border border-neutral-800 transition-all">
+                          <div className="w-full h-full cursor-pointer" onClick={() => props.onEnlarge(img)}>
+                            <img
+                              src={img}
+                              alt="Post"
+                              className="w-full h-full object-cover pointer-events-none"
+                              referrerPolicy="no-referrer"
+                              loading="lazy"
+                            />
+                          </div>
+                          <button 
+                            className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-500/80 rounded-full text-white cursor-pointer shadow-md pointer-events-auto" 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              props.toggleImageSelection(img);
+                            }}
+                            title="Удалить"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
                           <input type="file" accept="image/*,video/*" multiple className="hidden" id="image-upload-modal" onChange={async e => {
                             if (!e.target.files) return;
                             const files = Array.from(e.target.files as Iterable<File>);
