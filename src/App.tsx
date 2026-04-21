@@ -571,12 +571,14 @@ function AppContent() {
           }
 
           if (!isPolling) break;
-          for (const update of updates) {
-            offset = update.update_id + 1;
-            setBotOffset(offset);
-            if (update.message && update.message.text) {
-              addClientLog(`📩 Сообщение: ${update.message.text}`);
-              handleStandaloneBotMessage(update.message);
+          if (updates && updates.length > 0) {
+            for (const update of updates) {
+              offset = update.update_id + 1;
+              setBotOffset(offset);
+              if (update.message && update.message.text) {
+                addClientLog(`📩 Сообщение: ${update.message.text}`);
+                handleStandaloneBotMessage(update.message);
+              }
             }
           }
         } catch (e: any) {

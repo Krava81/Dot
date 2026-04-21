@@ -10,7 +10,7 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
     setLoading(true);
     try {
       if (isStandalone) {
-        let t = await storage.loadJson('templates.json', null);
+        let t = await storage.loadJson<ButtonTemplate[] | null>('templates.json', null);
         if (t === null) {
           t = [{
             id: 'default_template',
