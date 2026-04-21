@@ -456,20 +456,25 @@ ${text.substring(0, 20000)}`;
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           const models = [
+            "nvidia/nemotron-3-super-120b-a12b:free",
             "google/gemini-2.0-flash-001",
-            "google/gemini-flash-1.5",
-            "google/gemini-2.0-flash-exp:free"
+            "google/gemini-flash-1.5"
           ];
           
           for (const modelId of models) {
             addLog(`📡 OpenRouter trying: ${modelId}...`);
+            const requestBody: any = { 
+              model: modelId, 
+              messages: [{ role: "user", content: prompt }]
+            };
+            if (modelId.includes('nemotron') || modelId.includes('gpt-oss')) {
+              requestBody.reasoning = { enabled: true };
+            }
+
             try {
               const r = await axios.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                { 
-                  model: modelId, 
-                  messages: [{ role: "user", content: prompt }]
-                },
+                requestBody,
                 { 
                   headers: { 
                     "Authorization": `Bearer ${apiKey.trim()}`,
@@ -492,18 +497,24 @@ ${text.substring(0, 20000)}`;
           if (!apiKey) { lastErrors.push("OpenRouter 2: no key"); continue; }
           const models = [
             "openai/gpt-oss-120b:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
             "google/gemini-2.0-flash-001"
           ];
           
           for (const modelId of models) {
             addLog(`📡 OpenRouter 2 trying: ${modelId}...`);
+            const requestBody: any = { 
+              model: modelId, 
+              messages: [{ role: "user", content: prompt }]
+            };
+            if (modelId.includes('nemotron') || modelId.includes('gpt-oss')) {
+              requestBody.reasoning = { enabled: true };
+            }
+
             try {
               const r = await axios.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                { 
-                  model: modelId, 
-                  messages: [{ role: "user", content: prompt }]
-                },
+                requestBody,
                 { 
                   headers: { 
                     "Authorization": `Bearer ${apiKey.trim()}`,

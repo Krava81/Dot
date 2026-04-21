@@ -96,7 +96,11 @@ ${text}`;
         });
       case 'openrouter2':
         return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
-          models: ["openai/gpt-oss-120b:free"]
+          models: [
+            "openai/gpt-oss-120b:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "google/gemini-2.0-flash-001"
+          ]
         });
       case 'deepseek':
         return this.callDeepSeek(apiKey, prompt, logCallback, signal);
