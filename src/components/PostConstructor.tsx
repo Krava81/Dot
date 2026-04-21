@@ -139,7 +139,10 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                 <div className="bg-blue-500/5 p-4 rounded-2xl border border-blue-500/10 space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-blue-400 flex items-center gap-2 uppercase tracking-wider"><Sparkles size={14} /> ИИ Обработка</h3>
-                    <button onClick={() => { navigator.clipboard.readText().then(text => props.setOriginalText(text)).catch(() => {}); }} className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1"><ClipboardPaste size={12} /> Вставить</button>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => { navigator.clipboard.readText().then(text => props.setOriginalText(text)).catch(() => {}); }} className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1"><ClipboardPaste size={12} /> Вставить</button>
+                      <button onClick={() => props.setOriginalText('')} className="text-[10px] font-bold text-red-500 hover:text-red-400 uppercase flex items-center gap-1"><Trash2 size={12} /> Очистить</button>
+                    </div>
                   </div>
                   <textarea className="w-full bg-neutral-800/50 border border-neutral-700 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 placeholder:text-neutral-600 text-white min-h-[80px]" placeholder="Вставьте текст для обработки..." value={props.originalText} onChange={e => props.setOriginalText(e.target.value)} />
                   <button onClick={props.processAI} disabled={props.isProcessingAI || !props.originalText} className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all text-sm shadow-lg shadow-blue-600/20 active:scale-95">
@@ -162,11 +165,11 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       {props.aiProcessedText.length} / 4096
                     </span>
                   </div>
-                  <div className="h-[400px]">
+                  <div className="h-[400px] relative">
                     <MdEditor
                       ref={(node: any) => (window as any).mdEditor = node}
                       value={props.aiProcessedText}
-                      style={{ height: '100%', border: 'none' }}
+                      style={{ height: '100%', border: 'none', backgroundColor: '#ffffff' }}
                       renderHTML={renderPreview}
                       onChange={handleEditorChange}
                       config={{

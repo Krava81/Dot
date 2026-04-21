@@ -91,7 +91,13 @@ ${text}`;
       case 'github':
         return this.callGitHub(apiKey, prompt, logCallback, signal);
       case 'openrouter':
-        return this.callOpenRouter(apiKey, prompt, logCallback, signal);
+        return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
+          models: ["nvidia/nemotron-3-super-120b-a12b:free", "google/gemini-2.0-flash-001", "google/gemini-flash-1.5", "anthropic/claude-3-haiku", "openai/gpt-3.5-turbo"]
+        });
+      case 'openrouter2':
+        return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
+          models: ["openai/gpt-oss-120b:free"]
+        });
       case 'deepseek':
         return this.callDeepSeek(apiKey, prompt, logCallback, signal);
       default:
@@ -127,8 +133,8 @@ ${text}`;
     return content;
   }
 
-  private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
-    const models = [
+  private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal, options?: { models?: string[] }): Promise<string> {
+    const models = options?.models || [
       "nvidia/nemotron-3-super-120b-a12b:free", 
       "google/gemini-2.0-flash-001", 
       "google/gemini-flash-1.5", 
@@ -149,7 +155,7 @@ ${text}`;
         };
 
         // Enable reasoning for specific models as requested
-        if (modelId.includes('nemotron')) {
+        if (modelId.includes('nemotron') || modelId.includes('gpt-oss')) {
           requestBody.reasoning = { enabled: true };
         }
 

@@ -362,6 +362,8 @@ function AppContent() {
     if (githubKey) updateAiKey('github', githubKey);
     const openrouterKey = await storage.getSetting('api_key_openrouter');
     if (openrouterKey) updateAiKey('openrouter', openrouterKey);
+    const openrouter2Key = await storage.getSetting('api_key_openrouter2');
+    if (openrouter2Key) updateAiKey('openrouter2', openrouter2Key);
     const deepseekKey = await storage.getSetting('api_key_deepseek');
     if (deepseekKey) updateAiKey('deepseek', deepseekKey);
 
@@ -1503,10 +1505,10 @@ function AppContent() {
         {/* AI Keys */}
         <CollapsibleSection title="API Ключи ИИ" icon={Key} isOpen={!isAiKeysCollapsed} onToggle={() => setIsAiKeysCollapsed(!isAiKeysCollapsed)}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4">
-            {['github', 'openrouter', 'deepseek'].map(provider => (
+            {['github', 'openrouter', 'openrouter2', 'deepseek'].map(provider => (
               <div key={provider} className={`bg-neutral-800/30 border rounded-xl p-3 space-y-2 ${serverStatus?.preferredProvider === provider ? 'border-amber-500/50' : 'border-neutral-800'}`}>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-white capitalize">{provider}</label>
+                  <label className="text-xs font-medium text-white capitalize">{provider === 'openrouter2' ? 'OpenRouter 2' : provider}</label>
                   <button onClick={async () => {
                     if (isStandalone) {
                       await storage.setSetting('preferred_provider', provider);
@@ -1536,10 +1538,12 @@ function AppContent() {
                   <button onClick={async () => {
                     const key = aiKeys[provider];
                     if (!key) return;
+                    setSubmitMsg({ type: 'success', text: 'Тест запущен...' });
                     if (isStandalone) {
                       try {
-                        await aiServiceInstance.processText("Hello", { [provider]: key }, provider);
-                        setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
+                        const result = await aiServiceInstance.processText("Hello", { [provider]: key }, provider);
+                        if(result.success) setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
+                        else setLastError(result.error);
                       } catch (e: any) { setLastError(e.message); }
                       return;
                     }
