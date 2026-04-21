@@ -20,7 +20,6 @@ export interface DraftPost {
   selectedVideo?: string | null;
   mediaPaths?: string[]; // Actual paths on disk
   videoPath?: string | null;
-  mainImage?: string; // Thumbnail/icon
   text: string; // AI processed text, editable
   isMarkdown?: boolean;
   buttons: PostButton[];
@@ -66,8 +65,6 @@ export interface PostConstructorProps {
   setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>;
   selectedVideo: string | null;
   setSelectedVideo: (val: string | null) => void;
-  mainImage: string | null;
-  setMainImage: (val: string | null) => void;
   postButtons: PostButton[];
   setPostButtons: React.Dispatch<React.SetStateAction<PostButton[]>>;
   originalText: string;

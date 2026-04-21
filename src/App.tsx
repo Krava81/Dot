@@ -275,7 +275,6 @@ function AppContent() {
   const debouncedText = useDebounce(aiProcessedText, 2000);
   const debouncedImages = useDebounce(selectedImages, 1000);
 
-  const [mainImage, setMainImage] = useState<string | null>(null);
   const [postButtons, setPostButtons] = useState<PostButton[]>([]);
   const [originalText, setOriginalText] = useState('');
   const [isProcessingAI, setIsProcessingAI] = useState(false);
@@ -571,7 +570,6 @@ function AppContent() {
     setSelectedVideo(null);
     setMediaPaths([]);
     setVideoPath(null);
-    setMainImage('');
     setPostButtons([]);
   };
 
@@ -588,6 +586,7 @@ function AppContent() {
       originalText,
       aiKeys,
       serverStatus?.preferredProvider ?? 'github',
+      isStandalone,
       (msg) => addClientLog(msg),
       abortCtrl.current.signal
     );
@@ -610,19 +609,16 @@ function AppContent() {
       if (idx !== -1) {
         setMediaPaths(mp => {
           const newMp = [...mp];
-          // ensure we only remove if lengths match or are compatible.
-          // since it's a parallel array, just remove by index
           if (idx < newMp.length) {
             newMp.splice(idx, 1);
           } else {
-             // fallback filter if they somehow desynced
              return mp.filter(p => p !== imageUrl);
           }
           return newMp;
         });
         return prev.filter((_, i) => i !== idx);
       }
-      if (prev.length >= 9) { setLastError('Максимум 9 изображений'); return prev; }
+      if (prev.length >= 10) { setLastError('Максимум 10 изображений'); return prev; }
       setMediaPaths(mp => [...mp, imageUrl]);
       return [...prev, imageUrl];
     });
@@ -641,7 +637,6 @@ function AppContent() {
       selectedVideo: selectedVideo || undefined,
       mediaPaths, // High-res images
       videoPath: videoPath || undefined,
-      mainImage: mainImage || undefined,
       text: currentText, buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
       status: draftStatus,
       scheduledAt: draftStatus === 'scheduled' && scheduleDateTime ? new Date(scheduleDateTime).getTime() : undefined,
@@ -664,7 +659,7 @@ function AppContent() {
       return draftId;
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); return undefined; }
     finally { setIsSubmitActionInProgress(false); }
-  }, [isSubmitActionInProgress, aiProcessedText, editingDraftId, parsedContent, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, scheduleDateTime, drafts, isStandalone, getCleanBaseUrl, universalFetch, saveDraftHook, reloadDrafts]);
+  }, [isSubmitActionInProgress, aiProcessedText, editingDraftId, parsedContent, selectedImages, selectedVideo, mediaPaths, videoPath, postButtons, scheduleDateTime, drafts, isStandalone, getCleanBaseUrl, universalFetch, saveDraftHook, reloadDrafts]);
 
   const handlePublish = useCallback(async () => {
     if (isSubmitActionInProgress) return;
@@ -673,10 +668,9 @@ function AppContent() {
 
     const htmlText = htmlProcessed || mdToTelegramHtml(currentText);
 
-    // Character limit check
-    const limit = (selectedImages.length > 0 || !!selectedVideo) ? 1024 : 4096;
-    if (htmlText.length > 4096) {
-      setLastError(`Лимит символов (4096) превышен: ${htmlText.length}`);
+    // Limit display/check threshold is now 4000
+    if (htmlText.length > 4000) {
+      setLastError(`Лимит символов (4000) превышен: ${htmlText.length}`);
       return;
     }
 
@@ -687,7 +681,7 @@ function AppContent() {
         id: editingDraftId || Date.now().toString(), text: currentText, 
         selectedImages, selectedVideo: selectedVideo || undefined,
         mediaPaths, videoPath: videoPath || undefined,
-        mainImage: mainImage || undefined, buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
+        buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
         status: 'published', createdAt: Date.now(), updatedAt: Date.now()
       };
 
@@ -700,69 +694,24 @@ function AppContent() {
           if (vb.length > 0) extra.reply_markup = { inline_keyboard: vb };
         }
 
-        // ПОДГОТОВКА МЕДИА из путей на диске
         addClientLog(`🎞️ Подготовка медиа: ${post.mediaPaths?.length || 0} фото, ${post.videoPath ? '1 видео' : 'нет видео'}`);
-        
-        // Split Logic: First message has 1 photo + text.
-        // We prioritize mainImage if chosen.
-        let photos = [...(post.mediaPaths || [])];
+        const photos = [...(post.mediaPaths || [])];
         const video = post.videoPath;
         
-        // Find index of mainImage in mediaPaths and move it to front
-        if (post.mainImage) {
-          const mainIdx = photos.indexOf(post.mainImage);
-          if (mainIdx > -1) {
-            photos.splice(mainIdx, 1);
-            photos.unshift(post.mainImage);
-          }
+        // 1. Text with buttons first
+        await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+        
+        // 2. Video (separately, no buttons)
+        const mediaExtra: any = { parse_mode: 'HTML' };
+        if (video) {
+          await telegramClient?.sendVideo(tempChatId, video, mediaExtra);
+          await new Promise(r => setTimeout(r, 1000));
         }
 
-        // Standalone publishing
-        if (photos.length === 0 && !video) {
-          await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-        } else if (photos.length === 1 && !video) {
-          if (htmlText.length > 1024) {
-            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
-            await telegramClient?.sendPhoto(tempChatId, photos[0], extra);
-            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-          } else {
-            await telegramClient?.sendPhoto(tempChatId, photos[0], { ...extra, caption: htmlText });
-          }
-        } else if (photos.length === 0 && video) {
-          if (htmlText.length > 1024) {
-            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
-            await telegramClient?.sendVideo(tempChatId, video, extra);
-            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-          } else {
-            await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
-          }
-        } else if (photos.length > 1 && !video) {
-          // Разделяем отправку на текст+фото(1) и альбом(остальные)
-          const mainImg = photos[0];
-          const restImgs = photos.slice(1);
-          
-          if (htmlText.length > 1024) {
-            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
-            await telegramClient?.sendPhoto(tempChatId, mainImg, extra);
-            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-          } else {
-            await telegramClient?.sendPhoto(tempChatId, mainImg, { ...extra, caption: htmlText });
-          }
-          
-          if (restImgs.length > 0) {
-            const mediaItems = restImgs.map(img => ({ type: 'photo', media: img }));
-            await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
-          }
-        } else if (video && photos.length > 0) {
-          // И видео, и фото: Видео всегда первым с текстом
-          if (htmlText.length > 1024) {
-            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
-            await telegramClient?.sendVideo(tempChatId, video, extra);
-            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-          } else {
-            await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
-          }
-          
+        // 3. Images (group or single, separately, no buttons)
+        if (photos.length === 1) {
+          await telegramClient?.sendPhoto(tempChatId, photos[0], mediaExtra);
+        } else if (photos.length > 1) {
           const mediaItems = photos.map(img => ({ type: 'photo', media: img }));
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
         }
@@ -781,7 +730,7 @@ function AppContent() {
         } else { const err = await res.json(); setLastError(`Ошибка: ${err.error}`); }
       }
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsSubmitActionInProgress(false); }
-  }, [isSubmitActionInProgress, aiProcessedText, htmlProcessed, editingDraftId, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData, savePublishedPost]);
+  }, [isSubmitActionInProgress, aiProcessedText, htmlProcessed, editingDraftId, selectedImages, selectedVideo, mediaPaths, videoPath, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData, savePublishedPost]);
 
   const publishDraft = useCallback(async (draftId: string) => {
     if (isSubmitActionInProgress) return;
@@ -802,36 +751,21 @@ function AppContent() {
           if (vb.length > 0) extra.reply_markup = { inline_keyboard: vb };
         }
 
-        // LOAD HIGH RES MEDIA
         let photos = [...(postToPublish.mediaPaths || [])];
         const video = postToPublish.videoPath;
 
-        if (postToPublish.mainImage) {
-          const midx = photos.indexOf(postToPublish.mainImage);
-          if (midx > -1) {
-            photos.splice(midx, 1);
-            photos.unshift(postToPublish.mainImage);
-          }
+        // Standalone publishing: TEXT FIRST, then MEDIA
+        await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+        
+        const mediaExtra: any = { parse_mode: 'HTML' };
+        if (video) {
+          await telegramClient?.sendVideo(tempChatId, video, mediaExtra);
+          await new Promise(r => setTimeout(r, 1000));
         }
 
-        if (photos.length === 0 && !video) {
-          await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-        } else if (photos.length === 1 && !video) {
-          await telegramClient?.sendPhoto(tempChatId, photos[0], { ...extra, caption: htmlText });
-        } else if (photos.length === 0 && video) {
-          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
-        } else if (photos.length > 1 && !video) {
-          // Разделяем
-          const mainImg = photos[0];
-          const restImgs = photos.slice(1);
-          
-          await telegramClient?.sendPhoto(tempChatId, mainImg, { ...extra, caption: htmlText });
-          if (restImgs.length > 0) {
-            const mediaItems = restImgs.map(img => ({ type: 'photo', media: img }));
-            await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
-          }
-        } else if (video && photos.length > 0) {
-          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+        if (photos.length === 1) {
+          await telegramClient?.sendPhoto(tempChatId, photos[0], mediaExtra);
+        } else if (photos.length > 1) {
           const mediaItems = photos.map(img => ({ type: 'photo', media: img }));
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
         }
@@ -1159,8 +1093,6 @@ function AppContent() {
     setSelectedImages,
     selectedVideo,
     setSelectedVideo,
-    mainImage,
-    setMainImage,
     postButtons,
     setPostButtons,
     originalText,
@@ -1192,7 +1124,7 @@ function AppContent() {
     SortableImage,
     onEnlarge: handleEnlarge
   }), [
-    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, 
+    isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mediaPaths, videoPath, 
     postButtons, originalText, isProcessingAI, processAI, showTemplates, 
     buttonTemplates, handleDeleteTemplate, handleSaveButtonTemplateWrapper, templateName, 
     setMediaPaths, setVideoPath, isSubmitActionInProgress, sensorsObj, handleDragEnd, 
@@ -1331,7 +1263,7 @@ function AppContent() {
                           <p className="text-[10px] text-neutral-500 mt-1 uppercase tracking-widest">{new Date(draft.createdAt).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setSelectedVideo(draft.selectedVideo || null); setMediaPaths(draft.mediaPaths || []); setVideoPath(draft.videoPath || null); setMainImage(draft.mainImage || ''); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(draft.id); setParsedContent(draft.parsedContent || null); setAiProcessedText(draft.text || ''); setSelectedImages(draft.selectedImages || []); setSelectedVideo(draft.selectedVideo || null); setMediaPaths(draft.mediaPaths || []); setVideoPath(draft.videoPath || null); setPostButtons(draft.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit2 size={16} /></button>
                           <button onClick={() => publishDraft(draft.id)} className="p-2 bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg transition-all"><Send size={16} /></button>
                           <button onClick={() => deleteDraft(draft.id)} className="p-2 bg-red-600/10 text-red-400 hover:bg-red-600/30 rounded-lg transition-all"><Trash2 size={16} /></button>
                         </div>
@@ -1349,7 +1281,7 @@ function AppContent() {
                           <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1 uppercase tracking-widest font-bold"><Clock size={12} />{new Date(post.scheduledAt || '').toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(post.id); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
                           <button onClick={() => publishDraft(post.id)} className="p-2 bg-emerald-600/10 text-emerald-400 rounded-lg"><Send size={16} /></button>
                           <button onClick={() => deleteDraft(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
@@ -1369,7 +1301,7 @@ function AppContent() {
                           <p className="text-[10px] text-emerald-400 mt-1 uppercase tracking-widest font-bold">{post.publishedAt ? new Date(post.publishedAt).toLocaleString() : 'Только что'}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setMainImage(post.mainImage || ''); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
+                          <button onClick={() => { setEditingDraftId(null); setAiProcessedText(post.text || ''); setSelectedImages(post.selectedImages || []); setSelectedVideo(post.selectedVideo || null); setMediaPaths(post.mediaPaths || []); setVideoPath(post.videoPath || null); setPostButtons(post.buttons || []); setIsConstructorOpen(true); }} className="p-2 bg-blue-600/10 text-blue-400 rounded-lg"><Edit2 size={16} /></button>
                           <button onClick={() => deletePublishedPost(post.id)} className="p-2 bg-red-600/10 text-red-400 rounded-lg"><Trash2 size={16} /></button>
                         </div>
                       </div>

@@ -24,10 +24,17 @@ export class AIService {
     text: string,
     keys: Record<string, string>,
     preferredProvider: string = 'github',
+    isStandalone: boolean = false,
     logCallback: (msg: string) => void = () => {},
     signal?: AbortSignal
   ): Promise<{ success: true; result: string; provider: string } | { success: false; error: string; provider: string }> {
-    const providers = ["github", "openrouter", "openrouter2", "deepseek"];
+    let providers = ["github", "openrouter", "openrouter2", "deepseek"];
+    
+    // Only OpenRouter 2 should function on mobile (standalone)
+    if (isStandalone) {
+      providers = providers.filter(p => p !== 'openrouter');
+    }
+
     const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "github";
     const ordered = [effective, ...providers.filter(p => p !== effective)];
     let lastError: string | null = null;

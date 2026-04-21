@@ -374,6 +374,7 @@ ${text.substring(0, 20000)}`;
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           const models = [
+            "openai/gpt-oss-120b:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
             "google/gemini-2.0-flash-001",
             "google/gemini-flash-1.5"
@@ -726,7 +727,7 @@ async function publishPostToTelegram(post: any, host: string = "") {
     const htmlText = marked.parse(spoilerPreprocessed) as string;
     const cleanText = sanitizeHtml(htmlText);
     
-    if (!cleanText && !post.mainImage && !post.selectedImages?.length) {
+    if (!cleanText && !post.selectedImages?.length) {
       throw new Error("Message text is empty and no images provided");
     }
 
@@ -755,71 +756,26 @@ async function publishPostToTelegram(post: any, host: string = "") {
       }
     };
 
-    const mainImage = post.mainImage || post.selectedImages?.[0];
     const allImages = (post.selectedImages || []).filter((img: string, i: number, self: string[]) => self.indexOf(img) === i);
 
-    if (mainImage) {
-      const remainingImages = allImages.filter((img: string) => img !== mainImage);
-      
-      if (cleanText.length <= 1000) {
-        const msg = await activeBot.telegram.sendPhoto(chatId, media(mainImage), {
-          caption: cleanText,
-          parse_mode: "HTML",
-          ...extra
-        });
-        await applyReactions(msg.message_id);
-      } else {
-        let finalMsgText = cleanText;
-        let imageUrl = mainImage;
-        let invisibleLinkUsed = false;
-        if (mainImage.includes('/api/images/file/')) {
-          const effectiveHost = host || process.env.PUBLIC_DOMAIN || 'localhost:3000';
-          imageUrl = `https://${effectiveHost}${mainImage}`;
-        }
-        
-        if (imageUrl.startsWith('http')) {
-          finalMsgText = `<a href="${imageUrl}">&#8205;</a>` + cleanText;
-          invisibleLinkUsed = true;
-        }
-        
-        const msgText = finalMsgText.length > 4096 ? balanceHtml(finalMsgText.slice(0, 4090) + "…") : balanceHtml(finalMsgText);
-        
-        try {
-          const msg = await activeBot.telegram.sendMessage(chatId, msgText, {
-            parse_mode: "HTML",
-            ...extra
-          });
-          await applyReactions(msg.message_id);
-        } catch (error: any) {
-          if (invisibleLinkUsed && (error.message?.includes('WEBPAGE') || error.message?.includes('failed to get HTTP'))) {
-            const msg1 = await activeBot.telegram.sendPhoto(chatId, media(mainImage));
-            const textOnly = cleanText.length > 4096 ? balanceHtml(cleanText.slice(0, 4090) + "…") : balanceHtml(cleanText);
-            const msg2 = await activeBot.telegram.sendMessage(chatId, textOnly, {
-              parse_mode: "HTML",
-              reply_parameters: { message_id: msg1.message_id },
-              ...extra
-            });
-            await applyReactions(msg2.message_id);
-          } else { throw error; }
-        }
-      }
+    // Order: 1. Text with buttons first
+    const msgText = cleanText.length > 4096 ? balanceHtml(cleanText.slice(0, 4090) + "…") : balanceHtml(cleanText);
+    const msg = await activeBot.telegram.sendMessage(chatId, msgText, { 
+      parse_mode: "HTML", 
+      ...extra 
+    });
+    await applyReactions(msg.message_id);
 
-      if (remainingImages.length > 0) {
-        await sleep(2000);
-        for (let i = 0; i < remainingImages.length; i += 10) {
-          const chunk = remainingImages.slice(i, i + 10);
-          await activeBot.telegram.sendMediaGroup(chatId, chunk.map((img: string) => ({
-            type: "photo" as const, media: media(img)
-          })));
-          await sleep(2000);
-        }
-      }
-    } else {
-      const msgText = cleanText.length > 4096 ? balanceHtml(cleanText.slice(0, 4090) + "…") : balanceHtml(cleanText);
-      const msg = await activeBot.telegram.sendMessage(chatId, msgText,
-        { parse_mode: "HTML", ...extra }
-      );
-      await applyReactions(msg.message_id);
+    // 2. Video (separately, no buttons)
+    const video = post.videoPath;
+    if (video) {
+        await activeBot.telegram.sendVideo(chatId, media(video), { parse_mode: "HTML" });
+        await sleep(1000);
+    }
+
+    // 3. Images (separately, no buttons)
+    if (allImages.length > 0) {
+        await sendImages(allImages);
     }
 
     addLog("✅ Published");

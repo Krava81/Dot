@@ -173,20 +173,13 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                   <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800 bg-neutral-800/50">
                     <div className="flex items-center gap-3">
                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Редактор поста</label>
-                      {(props.selectedImages.length > 0 || props.selectedVideo) && props.aiProcessedText.length > 1024 && (
-                        <div className="flex items-center gap-1 text-[10px] text-amber-500 font-bold bg-amber-500/10 px-2 py-0.5 rounded animate-pulse">
-                          <Info size={10} /> Лимит 1024 для медиа
-                        </div>
-                      )}
                     </div>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                      props.aiProcessedText.length > 4096 
-                      ? 'bg-red-500 text-white' 
-                      : (props.selectedImages.length > 0 || props.selectedVideo) && props.aiProcessedText.length > 1024
-                        ? 'bg-amber-600 text-white'
-                        : 'bg-neutral-700 text-neutral-400'
+                      props.aiProcessedText.length > 4000 
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-neutral-700 text-neutral-400'
                     }`}>
-                      {props.aiProcessedText.length} / { (props.selectedImages.length > 0 || props.selectedVideo) ? 1024 : 4096 }
+                      {props.aiProcessedText.length} / 4000
                     </span>
                   </div>
                   <div className="h-[400px] relative">
@@ -315,7 +308,6 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
 
                                   props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
                                   props.setSelectedImages(prev => [...prev, b64]);
-                                  if (!props.mainImage) props.setMainImage(b64);
                                   URL.revokeObjectURL(img.src);
                                   resolve();
                                 };
