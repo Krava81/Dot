@@ -705,6 +705,12 @@ function AppContent() {
       setSelectedImages(items => { 
         const oi = items.indexOf(active.id as string); 
         const ni = items.indexOf(over.id as string); 
+        setMediaPaths(paths => {
+           if (paths.length === items.length) {
+              return arrayMove(paths, oi, ni);
+           }
+           return paths;
+        });
         return arrayMove(items, oi, ni); 
       });
     }

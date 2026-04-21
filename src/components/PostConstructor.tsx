@@ -18,7 +18,19 @@ class SpoilerPlugin extends PluginComponent {
   handleClick = () => {
     const mdEditor = this.editor;
     if (mdEditor) {
-      mdEditor.insertText('||ТЕКСТ||');
+      if (typeof (mdEditor as any).wrapText === 'function') {
+        (mdEditor as any).wrapText('||', '||');
+      } else if (mdEditor.getSelection) {
+        const selection = mdEditor.getSelection();
+        if (selection && selection.text) {
+          // If insertText takes 3 args: text, replace, focus
+          (mdEditor as any).insertText(`||${selection.text}||`, true);
+        } else {
+          mdEditor.insertText('||ТЕКСТ||');
+        }
+      } else {
+        mdEditor.insertText('||ТЕКСТ||');
+      }
     }
   };
 
@@ -228,23 +240,27 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                           </SortableContext>
                         </DndContext>
                         <label htmlFor="image-upload-modal" className="aspect-square rounded-xl border-2 border-dashed border-neutral-800 hover:border-blue-500/50 hover:bg-blue-500/5 flex flex-col items-center justify-center gap-1 text-neutral-600 hover:text-blue-400 cursor-pointer transition-all">
-                          <input type="file" accept="image/*,video/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
+                          <input type="file" accept="image/*,video/*" multiple className="hidden" id="image-upload-modal" onChange={async e => {
                             if (!e.target.files) return;
-                            Array.from(e.target.files as Iterable<File>).forEach(async (file) => {
+                            const files = Array.from(e.target.files as Iterable<File>);
+                            for (const file of files) {
                               const fileId = `${Date.now()}_${Math.round(Math.random() * 1000)}`;
                               const ext = file.name.split('.').pop() || 'tmp';
                               const diskName = `${fileId}.${ext}`;
                               
                               if (file.type.startsWith('video/')) {
                                 if (!props.selectedVideo) {
+                                  // Video Thumbnail: memory efficient approach using object URL
+                                  const videoUrl = URL.createObjectURL(file);
+                                  const thumb = await generateVideoThumbnail(videoUrl);
+                                  props.setSelectedVideo(thumb || "https://cdn-icons-png.flaticon.com/512/1179/1179069.png");
+                                  URL.revokeObjectURL(videoUrl);
+                                  
                                   const base64 = await new Promise<string>((resolve) => {
                                     const reader = new FileReader();
                                     reader.onload = (ev) => resolve(ev.target?.result as string);
                                     reader.readAsDataURL(file);
                                   });
-                                  
-                                  const thumb = await generateVideoThumbnail(base64);
-                                  props.setSelectedVideo(thumb || "https://cdn-icons-png.flaticon.com/512/1179/1179069.png");
                                   
                                   if (isNative) {
                                     const savedPath = await storage.saveMedia(`video_${diskName}`, base64);
@@ -253,42 +269,46 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                                     props.setVideoPath(base64);
                                   }
                                 }
-                                return;
+                                continue;
                               }
                               
-                              const img = new window.Image();
-                              img.onload = async () => {
-                                const canvas = document.createElement('canvas');
-                                let width = img.width;
-                                let height = img.height;
-                                const MAX_SIZE = 1280; 
-                                if (width > height && width > MAX_SIZE) {
-                                  height = Math.round(height * (MAX_SIZE / width));
-                                  width = MAX_SIZE;
-                                } else if (height > MAX_SIZE) {
-                                  width = Math.round(width * (MAX_SIZE / height));
-                                  height = MAX_SIZE;
-                                }
-                                canvas.width = width;
-                                canvas.height = height;
-                                const ctx = canvas.getContext('2d');
-                                ctx?.drawImage(img, 0, 0, width, height);
-                                const b64 = canvas.toDataURL('image/jpeg', 0.8);
-                                
-                                if (isNative) {
-                                  const savedPath = await storage.saveMedia(`img_${diskName}`, b64);
-                                  props.setMediaPaths(prev => [...prev, savedPath]);
-                                } else {
-                                  props.setMediaPaths(prev => [...prev, b64]);
-                                }
+                              await new Promise<void>((resolve) => {
+                                const img = new window.Image();
+                                img.onload = async () => {
+                                  const canvas = document.createElement('canvas');
+                                  let width = img.width;
+                                  let height = img.height;
+                                  const MAX_SIZE = 1280; 
+                                  if (width > height && width > MAX_SIZE) {
+                                    height = Math.round(height * (MAX_SIZE / width));
+                                    width = MAX_SIZE;
+                                  } else if (height > MAX_SIZE) {
+                                    width = Math.round(width * (MAX_SIZE / height));
+                                    height = MAX_SIZE;
+                                  }
+                                  canvas.width = width;
+                                  canvas.height = height;
+                                  const ctx = canvas.getContext('2d');
+                                  ctx?.drawImage(img, 0, 0, width, height);
+                                  const b64 = canvas.toDataURL('image/jpeg', 0.8);
+                                  
+                                  if (isNative) {
+                                    const savedPath = await storage.saveMedia(`img_${diskName}`, b64);
+                                    props.setMediaPaths(prev => [...prev, savedPath]);
+                                  } else {
+                                    props.setMediaPaths(prev => [...prev, b64]);
+                                  }
 
-                                props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
-                                props.setSelectedImages(prev => [...prev, b64]);
-                                if (!props.mainImage) props.setMainImage(b64);
-                                URL.revokeObjectURL(img.src);
-                              };
-                              img.src = URL.createObjectURL(file);
-                            });
+                                  props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
+                                  props.setSelectedImages(prev => [...prev, b64]);
+                                  if (!props.mainImage) props.setMainImage(b64);
+                                  URL.revokeObjectURL(img.src);
+                                  resolve();
+                                };
+                                img.onerror = () => resolve();
+                                img.src = URL.createObjectURL(file);
+                              });
+                            }
                           }} />
                           <Plus size={16} /><span className="text-[8px] font-bold uppercase">Файл</span>
                         </label>

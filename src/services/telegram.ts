@@ -1,22 +1,9 @@
+import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { errorTracker } from '../utils/errorTracker';
 import { DATA_DIR } from '../constants';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Конвертирует base64 строку в Blob БЕЗ создания огромного data: URL.
- * Это предотвращает двойное выделение памяти (base64 + decode) и крэш WebView.
- */
-function base64ToBlob(base64: string, mimeType: string): Blob {
-  const raw = base64.includes(',') ? base64.split(',')[1] : base64;
-  const binary = atob(raw);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mimeType });
-}
 
 function getMimeByExt(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() || '';
@@ -63,91 +50,72 @@ export class TelegramAPI {
   // ── toBlob ───────────────────────────────────────────────────────────────────
   /**
    * Конвертирует любой источник изображения/видео в Blob для отправки в Telegram.
-   *
-   * Порядок попыток для каждого типа пути выбран так, чтобы минимизировать
-   * использование памяти:
-   *   1. capacitor:// — fetch() напрямую (WebView может обслуживать эти URL)
-   *   2. file:// / абсолютный путь — Filesystem.readFile → base64ToBlob
-   *   3. news_bot_data/... — Filesystem.readFile с Directory.Data → base64ToBlob
-   *   4. data: URL — atob → base64ToBlob (без промежуточного fetch)
-   *   5. http(s):// — обычный fetch
+   * ОПТИМИЗИРОВАНО ДЛЯ ПАМЯТИ: 
+   * 1. Ищем пути файлов, конвертируем в Capacitor URL и стримим через fetch.
+   * 2. Избегаем Filesystem.readFile и atob() для больших файлов.
    */
   private async toBlob(photo: string): Promise<Blob> {
-    // 1. data: URL (base64 уже в памяти — конвертируем напрямую)
-    if (photo.startsWith('data:')) {
-      const mime = photo.split(';')[0].split(':')[1] ?? 'image/jpeg';
-      return base64ToBlob(photo, mime);
-    }
-
-    // 2. capacitor:// или /_capacitor_file_/ — Capacitor WebView Server
-    if (photo.includes('capacitor://') || photo.includes('/_capacitor_file_/')) {
-      // Нормализуем URL: убеждаемся, что он выглядит как capacitor://...
-      let capacitorUrl = photo;
-      if (!photo.startsWith('capacitor://') && photo.includes('/_capacitor_file_/')) {
-        // Например: https://localhost/_capacitor_file_/storage/...
-        const idx = photo.indexOf('/_capacitor_file_/');
-        capacitorUrl = 'capacitor://localhost/_capacitor_file_' + photo.slice(idx + '/_capacitor_file_'.length);
-      }
-
-      try {
-        console.log(`[toBlob] Fetching via WebView server: ${capacitorUrl.substring(0, 80)}`);
-        const res = await fetch(capacitorUrl);
-        if (res.ok) return res.blob();
-        console.warn(`[toBlob] WebView fetch failed: ${res.status}`);
-      } catch (err) {
-        console.warn('[toBlob] WebView fetch error, trying Filesystem:', err);
-      }
-
-      // Запасной вариант: читаем через Filesystem по абсолютному пути
-      try {
-        let absPath = '';
-        if (photo.includes('/_capacitor_file_/')) {
-          absPath = '/' + photo.split('/_capacitor_file_/')[1];
-        }
-        if (absPath) {
-          const fileContent = await Filesystem.readFile({ path: absPath });
-          return base64ToBlob(fileContent.data as string, getMimeByExt(absPath));
-        }
-      } catch (err) {
-        console.error('[toBlob] Filesystem fallback failed:', err);
-      }
-    }
-
-    // 3. file:// URL
-    if (photo.startsWith('file://')) {
-      const absPath = photo.replace('file://', '');
-      try {
-        const fileContent = await Filesystem.readFile({ path: absPath });
-        return base64ToBlob(fileContent.data as string, getMimeByExt(absPath));
-      } catch (err) {
-        console.warn('[toBlob] file:// Filesystem read failed, trying fetch:', err);
+    try {
+      // 1. data: URL / blob:
+      if (photo.startsWith('data:') || photo.startsWith('blob:')) {
         const res = await fetch(photo);
-        return res.blob();
+        return await res.blob();
       }
-    }
 
-    // 4. content:// (Android content provider)
-    if (photo.startsWith('content://')) {
-      const res = await fetch(photo);
-      if (!res.ok) throw new Error(`content:// fetch failed: ${res.status}`);
-      return res.blob();
-    }
+      let fetchUrl = photo;
 
-    // 5. Относительный путь из нашего хранилища (news_bot_data/media/...)
-    if (photo.startsWith(DATA_DIR) || photo.startsWith('news_bot_data')) {
-      try {
-        const fileContent = await Filesystem.readFile({ path: photo, directory: Directory.Data });
-        return base64ToBlob(fileContent.data as string, getMimeByExt(photo));
-      } catch (err) {
-        console.error('[toBlob] Storage read failed:', err);
-        throw new Error(`Cannot read storage file: ${photo}`);
+      // 2. Local relative path -> convert to absolute URI
+      if (photo.startsWith(DATA_DIR) || photo.startsWith('news_bot_data')) {
+        const { uri } = await Filesystem.getUri({ path: photo, directory: Directory.Data });
+        fetchUrl = uri;
       }
+
+      // 3. Absolute local path -> convert to Capacitor HTTP bridge URL
+      if (fetchUrl.startsWith('file://') && Capacitor.isNativePlatform()) {
+        fetchUrl = Capacitor.convertFileSrc(fetchUrl);
+      } else if (fetchUrl.includes('/_capacitor_file_/')) {
+        if (!fetchUrl.startsWith('http') && !fetchUrl.startsWith('capacitor://')) {
+           const idx = fetchUrl.indexOf('/_capacitor_file_/');
+           fetchUrl = 'http://localhost' + fetchUrl.slice(idx);
+        }
+      }
+
+      // 4. Try native streaming fetch via WebView 
+      // This is memory-safe because it doesn't load the file as a JS string
+      console.log(`[toBlob] Attempting fetch stream: ${fetchUrl.substring(0, 100)}...`);
+      const res = await fetch(fetchUrl);
+      if (res.ok) {
+        return await res.blob();
+      }
+      
+      console.warn(`[toBlob] Stream fetch failed with status ${res.status}. Falling back to JS memory read...`);
+    } catch (e) {
+      console.warn(`[toBlob] Stream fetch threw an error:`, e);
     }
 
-    // 6. http(s):// — обычный fetch
-    const res = await fetch(photo);
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching media`);
-    return res.blob();
+    // 5. FALLBACK: Read file as string into JS memory (high crash risk on Android, but necessary as last resort)
+    try {
+      let readPath = photo;
+      let dir: Directory | undefined = undefined;
+      
+      if (photo.startsWith(DATA_DIR) || photo.startsWith('news_bot_data')) {
+        readPath = photo;
+        dir = Directory.Data;
+      } else if (photo.startsWith('file://')) {
+        readPath = photo.replace('file://', '');
+      } else if (photo.includes('/_capacitor_file_/')) {
+        readPath = '/' + photo.split('/_capacitor_file_/')[1];
+      }
+      
+      const fileContent = await Filesystem.readFile({ path: readPath, directory: dir });
+      // Use fetch to parse huge string in native C++ layer rather than atob() in JS layer
+      const mime = getMimeByExt(readPath);
+      const res = await fetch(`data:${mime};base64,${fileContent.data}`);
+      return await res.blob();
+    } catch (e: any) {
+       console.error('[toBlob] FALLBACK failed completely:', e);
+       throw new Error(`Media read failed: ${e.message}`);
+    }
   }
 
   // ── multipartCall ────────────────────────────────────────────────────────────
