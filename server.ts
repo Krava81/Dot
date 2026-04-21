@@ -94,30 +94,6 @@ interface ApiKeys {
   deepseek?: string; preferredProvider?: string;
 }
 
-function readJsonFileSync<T>(filePath: string, defaultValue: T): T {
-  try {
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    }
-  } catch (e) {
-    console.error(`Error reading ${filePath}:`, e);
-  }
-  return defaultValue;
-}
-
-function readPlainFileSync(filePath: string, defaultValue = ""): string {
-  try {
-    if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, "utf-8").trim();
-      if (raw.startsWith('"') && raw.endsWith('"')) {
-        try { return JSON.parse(raw); } catch {}
-      }
-      return raw;
-    }
-  } catch {}
-  return defaultValue;
-}
-
 async function loadAllData() {
   cachedApiKeys       = await serverStorage.readJsonFile<ApiKeys>(API_KEYS_FILE, {});
   cachedPosts         = await serverStorage.readJsonFile<any[]>(POSTS_FILE, []);
@@ -285,12 +261,10 @@ app.get("/api/logs/stream", (req: Request, res: Response) => {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const VALID_GEMINI_MODELS = [
-  'gemini-2.0-flash'
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro'
 ] as const;
-
-function isValidModel(model: string): boolean {
-  return VALID_GEMINI_MODELS.includes(model as any);
-}
 
 // Используем первую модель как дефолтную, если ENV не задан
 const DEFAULT_GEMINI_MODEL = VALID_GEMINI_MODELS[0];
@@ -415,14 +389,13 @@ ${text.substring(0, 20000)}`;
           
           const modelsToTry = [
             process.env.GEMINI_MODEL,
-            'gemini-2.0-flash',
-            'gemini-1.5-pro'
-          ].filter(Boolean) as string[];
+            ...VALID_GEMINI_MODELS
+          ].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i) as string[];
           
-          addLog(`📡 Gemini clones check: ${modelsToTry.join(', ')}`);
+          addLog(`📡 Gemini processing with models: ${modelsToTry.join(', ')}`);
           for (const modelName of modelsToTry) {
             let attempt = 0;
-            const maxAttempts = 3;
+            const maxAttempts = 2;
             
             while (attempt < maxAttempts) {
               try {
@@ -442,29 +415,33 @@ ${text.substring(0, 20000)}`;
                 const response = result.response;
                 
                 if (response.promptFeedback?.blockReason) {
-                  addLog(`⚠️ Gemini ${modelName} prompt blocked: ${response.promptFeedback.blockReason}`);
-                  throw new Error(`Prompt blocked: ${response.promptFeedback.blockReason}`);
+                  const reason = response.promptFeedback.blockReason;
+                  addLog(`⚠️ Gemini ${modelName} prompt blocked: ${reason}`);
+                  throw new Error(`Prompt blocked: ${reason}`);
                 }
                 
                 if (response.candidates && response.candidates.length > 0) {
                   const candidate = response.candidates[0];
-                  if (candidate.finishReason === 'SAFETY') {
-                    addLog(`⚠️ Gemini ${modelName} blocked due to safety settings`);
-                    break;
+                  if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'RECITATION') {
+                    addLog(`⚠️ Gemini ${modelName} blocked: ${candidate.finishReason}`);
+                    break; 
                   }
                   aiResult = response.text();
                 } else {
-                  addLog(`⚠️ Gemini ${modelName} returned empty response`);
+                  addLog(`⚠️ Gemini ${modelName} returned no candidates`);
                   break;
                 }
 
                 if (aiResult) break;
               } catch (modelErr: any) {
                 const msg = modelErr.message || String(modelErr);
-                if ((msg.includes("503") || msg.includes("high demand") || msg.includes("429")) && attempt < maxAttempts - 1) {
+                const retryDelay = extractRetryDelaySeconds(msg);
+                
+                if ((msg.includes("503") || msg.includes("high demand") || msg.includes("429") || retryDelay) && attempt < maxAttempts - 1) {
                   attempt++;
-                  addLog(`⚠️ Gemini ${modelName} overloaded (503/429). Retrying in ${attempt * 3}s...`);
-                  await sleep(attempt * 3000);
+                  const waitSec = retryDelay || (attempt * 5);
+                  addLog(`⚠️ Gemini ${modelName} rate limit (${msg}). Waiting ${waitSec}s...`);
+                  await sleep(waitSec * 1000);
                   continue;
                 }
                 addLog(`⚠️ Gemini ${modelName} fail: ${msg}`);

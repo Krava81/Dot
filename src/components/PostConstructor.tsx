@@ -7,6 +7,11 @@ import MarkdownIt from 'markdown-it';
 import MdEditor from 'react-markdown-editor-lite';
 import 'react-markdown-editor-lite/lib/index.css';
 import { PostButton, ParsedContent, DraftPost, ButtonTemplate, PostConstructorProps } from '../types';
+import { generateVideoThumbnail } from '../utils/media';
+import { storage } from '../services/storage';
+import { Capacitor } from '@capacitor/core';
+
+const isNative = Capacitor.isNativePlatform();
 
 const mdParser = new MarkdownIt({
   breaks: true,
@@ -249,18 +254,31 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                           <input type="file" accept="image/*,video/*" multiple className="hidden" id="image-upload-modal" onChange={e => {
                             if (!e.target.files) return;
                             Array.from(e.target.files as Iterable<File>).forEach(async (file) => {
+                              const fileId = `${Date.now()}_${Math.round(Math.random() * 1000)}`;
+                              const ext = file.name.split('.').pop() || 'tmp';
+                              const diskName = `${fileId}.${ext}`;
+                              
                               if (file.type.startsWith('video/')) {
                                 if (!props.selectedVideo) {
-                                  const reader = new FileReader();
-                                  reader.onload = async (ev) => {
-                                    const base64 = ev.target?.result as string;
-                                    props.setSelectedVideo("https://cdn-icons-png.flaticon.com/512/1179/1179069.png"); // placeholder thumb
+                                  const base64 = await new Promise<string>((resolve) => {
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => resolve(ev.target?.result as string);
+                                    reader.readAsDataURL(file);
+                                  });
+                                  
+                                  const thumb = await generateVideoThumbnail(base64);
+                                  props.setSelectedVideo(thumb || "https://cdn-icons-png.flaticon.com/512/1179/1179069.png");
+                                  
+                                  if (isNative) {
+                                    const savedPath = await storage.saveMedia(`video_${diskName}`, base64);
+                                    props.setVideoPath(savedPath);
+                                  } else {
                                     props.setVideoPath(base64);
-                                  };
-                                  reader.readAsDataURL(file);
+                                  }
                                 }
                                 return;
                               }
+                              
                               const img = new window.Image();
                               img.onload = async () => {
                                 const canvas = document.createElement('canvas');
@@ -279,9 +297,16 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                                 const ctx = canvas.getContext('2d');
                                 ctx?.drawImage(img, 0, 0, width, height);
                                 const b64 = canvas.toDataURL('image/jpeg', 0.8);
+                                
+                                if (isNative) {
+                                  const savedPath = await storage.saveMedia(`img_${diskName}`, b64);
+                                  props.setMediaPaths(prev => [...prev, savedPath]);
+                                } else {
+                                  props.setMediaPaths(prev => [...prev, b64]);
+                                }
+
                                 props.setParsedContent(prev => prev ? { ...prev, images: [...prev.images, b64] } : { title: '', text: '', images: [b64] });
                                 props.setSelectedImages(prev => [...prev, b64]);
-                                props.setMediaPaths(prev => [...prev, b64]);
                                 if (!props.mainImage) props.setMainImage(b64);
                                 URL.revokeObjectURL(img.src);
                               };

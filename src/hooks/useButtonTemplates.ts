@@ -53,7 +53,7 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
         await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ templates: updated })
+          body: { templates: updated }
         });
       }
     } catch (error) {
@@ -74,7 +74,7 @@ export function useButtonTemplates(isStandalone: boolean, getCleanBaseUrl: () =>
         await universalFetch(`${cleanUrl}/api/posts/templates/buttons`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ templates: updated })
+          body: { templates: updated }
         });
       }
     } catch (error) {

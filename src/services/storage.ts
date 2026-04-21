@@ -82,7 +82,12 @@ export const storage = {
    * Загрузить медиа-файл как base64.
    */
   async loadMedia(path: string): Promise<string> {
-    if (!isNative || !path.includes('/')) return path;
+    if (!isNative) return path;
+    // ✅ Если это уже base64 или другой URL, возвращаем как есть
+    if (path.startsWith('data:') || path.startsWith('blob:')) return path;
+    // Если в пути нет слеша, это не путь к файлу
+    if (!path.includes('/')) return path;
+    
     try {
       const result = await Filesystem.readFile({
         path,
@@ -90,11 +95,11 @@ export const storage = {
       });
       
       const ext = path.split('.').pop()?.toLowerCase();
-      let mime = 'image/jpeg';
-      if (ext === 'png') mime = 'image/png';
-      else if (ext === 'gif') mime = 'image/gif';
-      else if (ext === 'mp4') mime = 'video/mp4';
-      else if (ext === 'mov') mime = 'video/quicktime';
+      const mimeMap: Record<string, string> = {
+        'mp4': 'video/mp4', 'mov': 'video/quicktime',
+        'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp'
+      };
+      const mime = mimeMap[ext || ''] || 'image/jpeg';
       
       const dataLength = (typeof result.data === 'string') ? result.data.length : 0;
       console.log(`[Storage] Loaded media from ${path}, size: ${dataLength}`);

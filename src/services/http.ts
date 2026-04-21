@@ -91,16 +91,10 @@ export async function universalFetch(url: string, options: any = {}) {
   async function executeFetch() {
     // ✅ На Android используем Capacitor HTTP напрямую для лучшей совместимости
     if (isNative()) {
-      let requestData: any = options.body;
-      
-      // ✅ Исправление сериализации для CapacitorHttp
-      if (requestData instanceof FormData || requestData instanceof Blob) {
-        // Оставляем как есть
-      } else if (typeof requestData === 'string') {
-        try { requestData = JSON.parse(requestData); } catch { /* оставляем строку */ }
-      } else {
-        // Оставляем объект как есть для CapacitorHttp
-      }
+      // ✅ Исправление сериализации для CapacitorHttp: data должен быть объектом
+      const requestData = (options.method?.toUpperCase() !== 'GET' && options.body !== undefined)
+        ? (typeof options.body === 'string' ? (() => { try { return JSON.parse(options.body); } catch { return options.body; } })() : options.body)
+        : undefined;
       
       try {
         console.log(`[HTTP Native] ${options.method || 'GET'} ${url}`);

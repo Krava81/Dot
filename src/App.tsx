@@ -17,6 +17,7 @@ import { universalFetch, setUseNativeHttp } from './services/http';
 import { errorTracker } from './utils/errorTracker';
 import { sanitizeForTelegram } from './utils/telegramHtml';
 import { mdToTelegramHtml, mdToTelegramMarkdown } from './utils/markdown';
+import { generateVideoThumbnail, estimateBase64Size } from './utils/media';
 import { APP_VERSION, LOG_LIMIT, RETRY_CONFIG } from './constants';
 import { useDrafts } from './hooks/useDrafts';
 import { useDebounce } from './hooks/useDebounce';
@@ -253,11 +254,10 @@ function AppContent() {
   const [isSavingToken, setIsSavingToken] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [isActionInProgress, setIsActionInProgress] = useState(false);
+  const [isSubmitActionInProgress, setIsSubmitActionInProgress] = useState(false);
   const [needsKey, setNeedsKey] = useState(false);
   const [lastSaved, setLastSaved] = useState({ text: '', images: [] });
 
-  const lastSavedRef = useRef({ text: '', images: [] as string[] });
   const [isTestingNet, setIsTestingNet] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
   const [isBotOnline, setIsBotOnline] = useState(false);
@@ -412,7 +412,7 @@ function AppContent() {
   }, [getCleanBaseUrl]);
 
   const syncLocalImages = useCallback(async (shouldSavePath = false, overridePath?: string) => {
-    setIsActionInProgress(true);
+    setIsSubmitActionInProgress(true);
     setLastError(null);
     
     try {
@@ -516,7 +516,7 @@ function AppContent() {
         setSubmitMsg({ type: 'error', text: `Ошибка синхронизации: ${err.message}` });
       }
     } finally {
-      setIsActionInProgress(false);
+      setIsSubmitActionInProgress(false);
     }
   }, [isStandalone, getCleanBaseUrl, filterRecentImages, universalFetch, imagePath, mainImage]);
 
@@ -741,20 +741,24 @@ function AppContent() {
     setIsProcessingAI(false);
   };
 
-  const toggleImageSelection = (imageUrl: string) => {
+  const toggleImageSelection = useCallback((imageUrl: string) => {
     setSelectedImages(prev => {
-      if (prev.includes(imageUrl)) return prev.filter(i => i !== imageUrl);
+      if (prev.includes(imageUrl)) {
+        setMediaPaths(mp => mp.filter(p => p !== imageUrl));
+        return prev.filter(i => i !== imageUrl);
+      }
       if (prev.length >= 9) { setLastError('Максимум 9 изображений'); return prev; }
+      setMediaPaths(mp => [...mp, imageUrl]);
       return [...prev, imageUrl];
     });
-  };
+  }, []);
 
   const saveDraft = useCallback(async (draftStatus: 'draft' | 'scheduled'): Promise<string | undefined> => {
     const currentText = aiProcessedText;
-    if (!currentText || isActionInProgress) { if (!currentText) setLastError('Введите текст поста'); return; }
+    if (!currentText || isSubmitActionInProgress) { if (!currentText) setLastError('Введите текст поста'); return; }
     if (draftStatus === 'scheduled' && !scheduleDateTime) { setLastError('Выберите дату публикации'); return; }
 
-    setIsActionInProgress(true);
+    setIsSubmitActionInProgress(true);
     const draftId = editingDraftId || Date.now().toString();
     const draft: DraftPost = {
       id: draftId, parsedContent: parsedContent || undefined, 
@@ -784,11 +788,11 @@ function AppContent() {
       loadScheduledPosts();
       return draftId;
     } catch (e: any) { setLastError(`Ошибка: ${e.message}`); return undefined; }
-    finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, aiProcessedText, editingDraftId, parsedContent, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, scheduleDateTime, drafts, isStandalone, getCleanBaseUrl, universalFetch, saveDraftHook, reloadDrafts]);
+    finally { setIsSubmitActionInProgress(false); }
+  }, [isSubmitActionInProgress, aiProcessedText, editingDraftId, parsedContent, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, scheduleDateTime, drafts, isStandalone, getCleanBaseUrl, universalFetch, saveDraftHook, reloadDrafts]);
 
   const handlePublish = useCallback(async () => {
-    if (isActionInProgress) return;
+    if (isSubmitActionInProgress) return;
     let currentText = aiProcessedText;
     if (!currentText) { setLastError('Введите текст поста'); return; }
 
@@ -801,7 +805,7 @@ function AppContent() {
       return;
     }
 
-    setIsActionInProgress(true);
+    setIsSubmitActionInProgress(true);
     addClientLog(`🚀 Публикация поста: ${currentText.substring(0, 30)}...`);
     try {
       const post: DraftPost = {
@@ -825,6 +829,19 @@ function AppContent() {
         addClientLog(`🎞️ Загрузка медиа: ${post.mediaPaths?.length || 0} фото, ${post.videoPath ? '1 видео' : 'нет видео'}`);
         const highResImages = await Promise.all((post.mediaPaths || []).map(p => storage.loadMedia(p)));
         const highResVideo = post.videoPath ? await storage.loadMedia(post.videoPath) : null;
+
+        // ✅ Проверка лимитов Telegram (10MB фото, 50MB видео для бота)
+        const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
+        const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
+
+        for (const img of highResImages) {
+          if (img.startsWith('data:') && estimateBase64Size(img) > MAX_PHOTO_SIZE) {
+            throw new Error(`Фото слишком большое для Telegram (макс 10MB)`);
+          }
+        }
+        if (highResVideo && highResVideo.startsWith('data:') && estimateBase64Size(highResVideo) > MAX_VIDEO_SIZE) {
+          throw new Error(`Видео слишком большое для Telegram (макс 50MB)`);
+        }
 
         // Standalone publishing
         if (highResImages.length === 0 && !highResVideo) {
@@ -862,12 +879,12 @@ function AppContent() {
           setIsConstructorOpen(false); resetConstructor(); loadDrafts(); loadPublishedPosts(); setIsPublishedOpen(true);
         } else { const err = await res.json(); setLastError(`Ошибка: ${err.error}`); }
       }
-    } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, aiProcessedText, htmlProcessed, editingDraftId, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData, savePublishedPost]);
+    } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsSubmitActionInProgress(false); }
+  }, [isSubmitActionInProgress, aiProcessedText, htmlProcessed, editingDraftId, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, postButtons, isStandalone, botToken, tempChatId, telegramClient, mdToTelegramHtml, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, loadAllStandaloneData, savePublishedPost]);
 
   const publishDraft = useCallback(async (draftId: string) => {
-    if (isActionInProgress) return;
-    setIsActionInProgress(true);
+    if (isSubmitActionInProgress) return;
+    setIsSubmitActionInProgress(true);
     try {
       let draft = drafts.find(d => d.id === draftId) || scheduledPosts.find(d => d.id === draftId);
       if (!draft) throw new Error("Черновик не найден");
@@ -887,6 +904,12 @@ function AppContent() {
         // LOAD HIGH RES MEDIA
         const highResImages = await Promise.all((postToPublish.mediaPaths || []).map(p => storage.loadMedia(p)));
         const highResVideo = postToPublish.videoPath ? await storage.loadMedia(postToPublish.videoPath) : null;
+
+        // ✅ Проверка лимитов
+        const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
+        const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
+        for (const img of highResImages) if (img.startsWith('data:') && estimateBase64Size(img) > MAX_PHOTO_SIZE) throw new Error("Фото слишком большое (макс 10MB)");
+        if (highResVideo && highResVideo.startsWith('data:') && estimateBase64Size(highResVideo) > MAX_VIDEO_SIZE) throw new Error("Видео слишком большое (макс 50MB)");
 
         if (highResImages.length === 0 && !highResVideo) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
@@ -926,8 +949,8 @@ function AppContent() {
           loadDrafts(); loadPublishedPosts(); setIsPublishedOpen(true); 
         } else { const err = await res.json(); setLastError(`Ошибка: ${err.error}`); }
       }
-    } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsActionInProgress(false); }
-  }, [isActionInProgress, drafts, scheduledPosts, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, savePublishedPost, deleteDraftHook]);
+    } catch (e: any) { setLastError(`Ошибка: ${e.message}`); } finally { setIsSubmitActionInProgress(false); }
+  }, [isSubmitActionInProgress, drafts, scheduledPosts, mdToTelegramHtml, isStandalone, botToken, tempChatId, telegramClient, loadAllStandaloneData, getCleanBaseUrl, universalFetch, loadDrafts, loadPublishedPosts, savePublishedPost, deleteDraftHook]);
 
   // ✅ LOG ONCE SCHEDULER START
   const hasLoggedScheduler = useRef(false);
@@ -1103,7 +1126,7 @@ function AppContent() {
   const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    setIsActionInProgress(true);
+    setIsSubmitActionInProgress(true);
     setSubmitMsg({ type: 'success', text: `Файлов: ${files.length}. Обработка...` });
     try {
       const newThumbnails: string[] = [];
@@ -1114,22 +1137,37 @@ function AppContent() {
         const fileId = `${Date.now()}_${Math.round(Math.random() * 1000)}`;
         const ext = file.name.split('.').pop() || 'tmp';
         const diskName = `${fileId}.${ext}`;
+        
         const base64 = await new Promise<string>((resolve) => {
           const reader = new FileReader();
           reader.onload = (ev) => resolve(ev.target?.result as string);
           reader.readAsDataURL(file);
         });
+
         if (file.type.startsWith('video/')) {
-           if (newVideoPath) continue; 
-           if (isStandalone) newVideoPath = await storage.saveMedia(`video_${diskName}`, base64);
-           newVideoThumb = "https://cdn-icons-png.flaticon.com/512/1179/1179069.png";
-           continue;
+          if (newVideoPath) continue; 
+          
+          // Генерируем превью из первого кадра
+          const thumbBase64 = await generateVideoThumbnail(base64);
+          newVideoThumb = thumbBase64 || "https://cdn-icons-png.flaticon.com/512/1179/1179069.png";
+          
+          if (isStandalone) {
+            newVideoPath = await storage.saveMedia(`video_${diskName}`, base64);
+          } else {
+            newVideoPath = base64; // web fallback
+          }
+          continue;
         }
+
         if (!file.type.startsWith('image/')) continue;
+        
         if (isStandalone) {
           const savedPath = await storage.saveMedia(`img_${diskName}`, base64);
           newPaths.push(savedPath);
+        } else {
+          newPaths.push(base64);
         }
+
         const thumbBase64 = await new Promise<string>((resolve) => {
           const img = new window.Image();
           img.onload = () => {
@@ -1156,7 +1194,7 @@ function AppContent() {
     } catch (e: any) {
       setLastError(`Ошибка загрузки: ${e.message}`);
     } finally {
-      setIsActionInProgress(false);
+      setIsSubmitActionInProgress(false);
       e.target.value = '';
     }
   };
@@ -1378,7 +1416,7 @@ function AppContent() {
     setMediaPaths,
     videoPath,
     setVideoPath,
-    isActionInProgress,
+    isActionInProgress: isSubmitActionInProgress,
     sensors: sensorsObj,
     handleDragEnd,
     toggleImageSelection,
@@ -1396,7 +1434,7 @@ function AppContent() {
     postButtons, originalText, isProcessingAI, processAI, showTemplates, 
     buttonTemplates, handleDeleteTemplate, handleSaveButtonTemplateWrapper, templateName, 
     imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
-    syncLocalImages, syncedImages, setMediaPaths, setVideoPath, isActionInProgress, sensorsObj, handleDragEnd, 
+    syncLocalImages, syncedImages, setMediaPaths, setVideoPath, isSubmitActionInProgress, sensorsObj, handleDragEnd, 
     toggleImageSelection, scheduleDateTime, saveDraft, handlePublish, 
     submitMsg, linkPresets, saveLinkPresets, SortableImage, handleEnlarge
   ]);

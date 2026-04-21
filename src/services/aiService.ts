@@ -27,10 +27,10 @@ export class AIService {
     logCallback: (msg: string) => void = () => {},
     signal?: AbortSignal
   ): Promise<{ success: true; result: string; provider: string } | { success: false; error: string; provider: string }> {
-    const providers = ["github", "openrouter", "deepseek"];
-    const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "github";
+    const providers = ["gemini", "github", "openrouter", "deepseek"];
+    const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "gemini";
     const ordered = [effective, ...providers.filter(p => p !== effective)];
-    let lastError = "Все AI провайдеры не сработали";
+    let lastError: string | null = null;
     let lastProvider = "unknown";
 
     for (let cycle = 1; cycle <= this.config.maxRetries; cycle++) {
@@ -70,7 +70,7 @@ export class AIService {
       }
     }
 
-    return { success: false, error: lastError, provider: lastProvider };
+    return { success: false, error: lastError || "Все AI провайдеры не сработали", provider: lastProvider };
   }
 
   private async callProvider(
@@ -86,6 +86,8 @@ export class AIService {
 ${text}`;
 
     switch (provider) {
+      case 'gemini':
+        return this.callGemini(apiKey, prompt, logCallback, signal);
       case 'github':
         return this.callGitHub(apiKey, prompt, logCallback, signal);
       case 'openrouter':
@@ -194,6 +196,45 @@ ${text}`;
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
     if (!content.trim()) throw new Error("DeepSeek returned empty response");
+    
+    return content;
+  }
+
+  private async callGemini(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
+    const modelId = "gemini-2.0-flash";
+    logCallback(`📡 Gemini (${modelId})...`);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
+
+    const response = await universalFetch(url, {
+      method: 'POST',
+      headers: { "Content-Type": "application/json" },
+      body: {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+      },
+      skipRetry: true,
+      timeout: 60000,
+      signal
+    });
+
+    const data = await response.json();
+    
+    if (data.promptFeedback?.blockReason) {
+      throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
+    }
+    
+    if (!data.candidates?.length) {
+      if (data.error?.message) throw new Error(data.error.message);
+      throw new Error("Gemini returned no candidates");
+    }
+
+    const candidate = data.candidates[0];
+    if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'RECITATION') {
+       throw new Error(`Gemini blocked: ${candidate.finishReason}`);
+    }
+
+    const content = candidate.content?.parts?.[0]?.text || "";
+    if (!content.trim()) throw new Error("Gemini returned empty response");
     
     return content;
   }
