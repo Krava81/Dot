@@ -185,7 +185,6 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                 <div className={`bg-neutral-800/30 rounded-2xl border border-neutral-800 overflow-hidden flex flex-col ${activeTab !== 'images' ? 'hidden xl:flex' : ''}`}>
                   <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800 bg-neutral-800/50">
                     <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Изображения ({props.selectedImages.length})</label>
-                    <button onClick={() => props.syncLocalImages(true)} className="text-blue-400 hover:text-blue-300"><RefreshCw size={14} className={props.isActionInProgress ? 'animate-spin' : ''} /></button>
                   </div>
                   <div className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">
                     <div className="space-y-4">
@@ -201,27 +200,6 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                           <video src={props.selectedVideo} controls className="w-full h-32 object-cover rounded-lg bg-black" />
                         </div>
                       )}
-
-                      <div className="bg-neutral-900/50 p-3 rounded-xl border border-neutral-800 space-y-2">
-                        <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
-                          <Folder size={12} className="text-blue-500" /> Путь к папке
-                        </label>
-                        <div className="flex gap-2">
-                          <button onClick={() => props.openFolderBrowser()} disabled={props.isBrowserLoading} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-blue-400 rounded-lg border border-neutral-700 transition-colors" title="Выбрать папку">
-                            {props.isBrowserLoading ? <Loader2 size={16} className="animate-spin" /> : <FolderOpen size={16} />}
-                          </button>
-                          <input 
-                            type="text" 
-                            value={props.imagePath} 
-                            onChange={e => props.setImagePath(e.target.value)} 
-                            placeholder="DCIM/Camera" 
-                            className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/50 font-mono text-white" 
-                          />
-                          <button onClick={props.saveImagePath} className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg border border-neutral-700 transition-colors" title="Сохранить путь">
-                            <Plus size={16} />
-                          </button>
-                        </div>
-                      </div>
 
                       <div className="grid grid-cols-4 gap-2">
                         <DndContext sensors={props.sensors} collisionDetection={closestCenter} onDragEnd={props.handleDragEnd}>
@@ -315,14 +293,14 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                       </div>
                     </div>
 
-                    {((props.parsedContent?.images?.length || 0) > 0 || (props.syncedImages?.length || 0) > 0) && (
+                    {((props.parsedContent?.images?.length || 0) > 0) && (
                       <div className="pt-4 border-t border-neutral-800">
                         <div className="flex items-center justify-between mb-2">
-                          <div className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Галерея ({(props.parsedContent?.images?.length || 0) + (props.syncedImages?.length || 0)})</div>
+                          <div className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest">Галерея ({props.parsedContent?.images?.length || 0})</div>
                           {props.isActionInProgress && <Loader2 size={12} className="animate-spin text-blue-500" />}
                         </div>
                         <div className="grid grid-cols-6 gap-1.5 max-h-[300px] overflow-y-auto pr-2">
-                          {[...(props.parsedContent?.images || []), ...(props.syncedImages || [])].map((img, idx) => {
+                          {(props.parsedContent?.images || []).map((img, idx) => {
                             const isSelected = props.selectedImages.includes(img);
                             return (
                               <div 

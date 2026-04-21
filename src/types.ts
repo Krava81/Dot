@@ -81,14 +81,6 @@ export interface PostConstructorProps {
   saveButtonTemplate: () => void;
   templateName: string;
   setTemplateName: (val: string) => void;
-  imagePath: string;
-  setImagePath: (val: string) => void;
-  openFolderBrowser: (path?: string) => void;
-  isBrowserLoading: boolean;
-  saveImagePath: () => void;
-  handleFolderSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  syncLocalImages: (shouldSavePath?: boolean, overridePath?: string) => void;
-  syncedImages: string[];
   mediaPaths: string[];
   setMediaPaths: React.Dispatch<React.SetStateAction<string[]>>;
   videoPath: string | null;

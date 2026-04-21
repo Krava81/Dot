@@ -6,8 +6,12 @@ export const sanitizeForTelegram = (html: string): string => {
   
   let s = html
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(ul|ol)[^>]*>/gi, "")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<\/li>/gi, "\n")
     .replace(/&nbsp;/gi, " ")
-    .replace(/<\/?(div|p|h[1-6])>/gi, "\n")
+    .replace(/<\/?(div|p)[^>]*>/gi, "\n")
+    .replace(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi, "\n<b>$1</b>\n")
     .replace(/\r\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n");
 

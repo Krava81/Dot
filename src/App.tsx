@@ -275,7 +275,6 @@ function AppContent() {
   const [isDiagnosticsRunning, setIsDiagnosticsRunning] = useState(false);
   const [botOffset, setBotOffset] = useState(0);
   const [filterRecentImages, setFilterRecentImages] = useState(true);
-  const [syncedImages, setSyncedImages] = useState<string[]>([]);
   const [submitMsg, setSubmitMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   // ─── Auto-clear submit messages ───────────────────────────────────────────
@@ -288,8 +287,6 @@ function AppContent() {
     }
   }, [submitMsg]);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [isBrowserLoading, setIsBrowserLoading] = useState(false);
-  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
 
   // Constructor state
   const [isConstructorOpen, setIsConstructorOpen] = useState(false);
@@ -395,7 +392,6 @@ function AppContent() {
       console.log('[Android] App resumed - refreshing data');
       loadDrafts();
       if (!isStandalone) refetchStatus();
-      syncLocalImages();
     }
   );
 
@@ -405,135 +401,9 @@ function AppContent() {
   const [isBotCollapsed, setIsBotCollapsed] = useState(true);
   const [isAiKeysCollapsed, setIsAiKeysCollapsed] = useState(true);
 
-  const { 
-    imagePath, setImagePath, isActionInProgress: isImageActionInProgress, 
-    browserPath, setBrowserPath, browserDirs, setBrowserDirs, browserParent, setBrowserParent,
-    saveImagePath: saveImagePathHook
-  } = useImageSync(isStandalone, getCleanBaseUrl);
-
-  const handleSaveImagePath = async () => {
-    await saveImagePathHook(imagePath);
-    setSubmitMsg({ type: 'success', text: 'Путь к изображениям сохранен' });
-  };
-
   const cleanBaseUrl = useMemo(() => {
     return getCleanBaseUrl();
   }, [getCleanBaseUrl]);
-
-  const syncLocalImages = useCallback(async (shouldSavePath = false, overridePath?: string) => {
-    setIsSubmitActionInProgress(true);
-    setLastError(null);
-    
-    try {
-      if (isStandalone) {
-        // Request permissions first
-        if (isNative()) {
-          const perm = await Filesystem.checkPermissions();
-          if (perm.publicStorage !== 'granted') {
-            const req = await Filesystem.requestPermissions();
-            if (req.publicStorage !== 'granted') {
-              throw new Error("Нет разрешения на доступ к хранилищу. Пожалуйста, разрешите доступ в настройках приложения.");
-            }
-          }
-        }
-
-        let pathToScan = overridePath || imagePath || 'Pictures';
-        
-        // Clean up path
-        if (pathToScan.startsWith('/storage/emulated/0/')) {
-          pathToScan = pathToScan.replace('/storage/emulated/0/', '');
-        } else if (pathToScan.startsWith('/')) {
-          pathToScan = pathToScan.substring(1);
-        }
-
-        try {
-          const result = await Filesystem.readdir({
-            path: pathToScan,
-            directory: Directory.ExternalStorage,
-          });
-          
-          const imgs = result.files
-            .filter(f => f.name.match(/\.(jpg|jpeg|png|gif|webp)$/i))
-            .map(f => ({
-              uri: Capacitor.convertFileSrc(f.uri),
-              name: f.name
-            }));
-            
-          if (imgs.length === 0) {
-            setLastError(`В папке "${pathToScan}" не найдено изображений. Проверьте путь.`);
-          } else {
-            const imgUris = imgs.map(i => i.uri).slice(-50); // limit gallery to 50
-            setSyncedImages(imgUris);
-            setSubmitMsg({ type: 'success', text: `Найдено ${imgs.length} изображений` });
-          }
-
-          if (shouldSavePath && pathToScan) {
-            await Preferences.set({ key: 'standalone_image_path', value: pathToScan });
-            setImagePath(pathToScan);
-          }
-        } catch (e: any) {
-          console.error('Filesystem readdir error:', e);
-          setLastError(`Ошибка доступа к "${pathToScan}": ${e.message}. Убедитесь, что путь указан относительно корня хранилища (например, DCIM/Camera).`);
-        }
-        
-        return;
-      }
-      
-      // 2️⃣ Server: синхронизируем с сервером
-      const cleanUrl = getCleanBaseUrl();
-      if (!cleanUrl) return;
-      
-      const pathToUse = overridePath || imagePath;
-      if (shouldSavePath && pathToUse) {
-        await universalFetch(`${cleanUrl}/api/config/image-path`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' },
-          body: { path: pathToUse } 
-        }).catch(() => {});
-      }
-  
-      const r = await universalFetch(`${cleanUrl}/api/images/sync?filterRecent=${filterRecentImages}`);
-      if (r.ok) {
-        const data = await r.json();
-        const rawImgs = Array.isArray(data.images) ? data.images : [];
-        const imgs = rawImgs
-          .map((url: unknown) => String(url ?? ''))
-          .filter(Boolean)
-          .map((url: string) => url.startsWith('http') ? url : `${cleanUrl}${url}`);
-        
-        setSyncedImages(imgs);
-        setSelectedImages(prev => {
-          const combined = [...new Set([...prev, ...imgs])];
-          return combined.slice(-50);
-        });
-        
-        if (!mainImage && imgs.length > 0) setMainImage(imgs[0]);
-        
-        setParsedContent(prev => {
-          const ex = prev?.images || [];
-          const combined = [...new Set([...ex, ...imgs])];
-          return prev ? { ...prev, images: combined } : { 
-            title: '', 
-            text: '', 
-            images: combined 
-          };
-        });
-      }
-    } catch (err: any) {
-      console.error('Failed to sync images:', err);
-      if (!isStandalone) {
-        setSubmitMsg({ type: 'error', text: `Ошибка синхронизации: ${err.message}` });
-      }
-    } finally {
-      setIsSubmitActionInProgress(false);
-    }
-  }, [isStandalone, getCleanBaseUrl, filterRecentImages, universalFetch, imagePath, mainImage]);
-
-  const saveImagePath = useCallback(async () => {
-    await syncLocalImages(true);
-  }, [syncLocalImages]);
-
-
 
   // ─── Logs ─────────────────────────────────────────────────────────────────
   const addClientLog = useCallback((msg: string) => {
@@ -760,9 +630,21 @@ function AppContent() {
 
   const toggleImageSelection = useCallback((imageUrl: string) => {
     setSelectedImages(prev => {
-      if (prev.includes(imageUrl)) {
-        setMediaPaths(mp => mp.filter(p => p !== imageUrl));
-        return prev.filter(i => i !== imageUrl);
+      const idx = prev.indexOf(imageUrl);
+      if (idx !== -1) {
+        setMediaPaths(mp => {
+          const newMp = [...mp];
+          // ensure we only remove if lengths match or are compatible.
+          // since it's a parallel array, just remove by index
+          if (idx < newMp.length) {
+            newMp.splice(idx, 1);
+          } else {
+             // fallback filter if they somehow desynced
+             return mp.filter(p => p !== imageUrl);
+          }
+          return newMp;
+        });
+        return prev.filter((_, i) => i !== idx);
       }
       if (prev.length >= 9) { setLastError('Максимум 9 изображений'); return prev; }
       setMediaPaths(mp => [...mp, imageUrl]);
@@ -1087,139 +969,6 @@ function AppContent() {
     } catch (e) { console.error(e); }
   };
 
-  const openFolderBrowser = async (startPath?: string) => {
-    setIsBrowserLoading(true);
-
-    if (isStandalone) {
-      if (isNative()) {
-        try {
-          const current = startPath || ""; // empty means ExternalStorage root
-          const result = await Filesystem.readdir({
-            path: current,
-            directory: Directory.ExternalStorage
-          });
-          
-          const dirs = result.files
-            .filter(f => f.type === 'directory' || !f.name.includes('.')) // fallback for early Capacitor versions
-            .sort((a,b) => a.name.localeCompare(b.name))
-            .map(f => ({
-              name: f.name,
-              path: current ? `${current}/${f.name}` : f.name
-            }));
-            
-          setBrowserPath(current || "/ (Корень хранилища)");
-          setBrowserDirs(dirs);
-          
-          let parent: string | null = null;
-          if (current) {
-            const lastSlash = current.lastIndexOf('/');
-            parent = lastSlash !== -1 ? current.substring(0, lastSlash) : "";
-          }
-          setBrowserParent(parent);
-          setShowFolderBrowser(true);
-        } catch(e: any) {
-          setLastError(`Ошибка обзора папок: ${e.message}`);
-        } finally {
-          setIsBrowserLoading(false);
-        }
-      } else {
-        setLastError("Обзор папок доступен только на устройстве Android.");
-        setIsBrowserLoading(false);
-      }
-      return;
-    }
-
-    const cleanUrl = getCleanBaseUrl();
-    if (!cleanUrl) { setIsBrowserLoading(false); return; }
-    try {
-      const url = `${cleanUrl}/api/utils/list-dirs${(startPath?.trim()) ? `?path=${encodeURIComponent(startPath)}` : ''}`;
-      const res = await universalFetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setBrowserPath(typeof data?.currentPath === 'string' ? data.currentPath : '');
-        setBrowserDirs(Array.isArray(data?.dirs) ? data.dirs : []);
-        setBrowserParent((typeof data?.parentPath === 'string' && data.parentPath !== data.currentPath) ? data.parentPath : null);
-        setShowFolderBrowser(true);
-      }
-    } catch (e: any) { setLastError(`Ошибка браузера: ${e.message}`); } finally { setIsBrowserLoading(false); }
-  };
-
-  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setIsSubmitActionInProgress(true);
-    setSubmitMsg({ type: 'success', text: `Файлов: ${files.length}. Обработка...` });
-    try {
-      const newThumbnails: string[] = [];
-      const newPaths: string[] = [];
-      let newVideoThumb: string | null = null;
-      let newVideoPath: string | null = null;
-      for (const file of Array.from(files) as File[]) {
-        const fileId = `${Date.now()}_${Math.round(Math.random() * 1000)}`;
-        const ext = file.name.split('.').pop() || 'tmp';
-        const diskName = `${fileId}.${ext}`;
-        
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => resolve(ev.target?.result as string);
-          reader.readAsDataURL(file);
-        });
-
-        if (file.type.startsWith('video/')) {
-          if (newVideoPath) continue; 
-          
-          // Генерируем превью из первого кадра
-          const thumbBase64 = await generateVideoThumbnail(base64);
-          newVideoThumb = thumbBase64 || "https://cdn-icons-png.flaticon.com/512/1179/1179069.png";
-          
-          if (isStandalone) {
-            newVideoPath = await storage.saveMedia(`video_${diskName}`, base64);
-          } else {
-            newVideoPath = base64; // web fallback
-          }
-          continue;
-        }
-
-        if (!file.type.startsWith('image/')) continue;
-        
-        if (isStandalone) {
-          const savedPath = await storage.saveMedia(`img_${diskName}`, base64);
-          newPaths.push(savedPath);
-        } else {
-          newPaths.push(base64);
-        }
-
-        const thumbBase64 = await new Promise<string>((resolve) => {
-          const img = new window.Image();
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const SIZE = 200;
-            const scroll = Math.min(img.width, img.height);
-            canvas.width = SIZE;
-            canvas.height = SIZE;
-            const ctx = canvas.getContext('2d');
-            const x = (img.width - scroll) / 2;
-            const y = (img.height - scroll) / 2;
-            ctx?.drawImage(img, x, y, scroll, scroll, 0, 0, SIZE, SIZE);
-            resolve(canvas.toDataURL('image/jpeg', 0.5));
-          };
-          img.src = base64;
-        });
-        newThumbnails.push(thumbBase64);
-      }
-      setSelectedImages(prev => [...prev, ...newThumbnails].slice(-10));
-      setMediaPaths(prev => [...prev, ...newPaths].slice(-10));
-      if (newVideoThumb) setSelectedVideo(newVideoThumb);
-      if (newVideoPath) setVideoPath(newVideoPath);
-      setSubmitMsg({ type: 'success', text: 'Медиа сохранено' });
-    } catch (e: any) {
-      setLastError(`Ошибка загрузки: ${e.message}`);
-    } finally {
-      setIsSubmitActionInProgress(false);
-      e.target.value = '';
-    }
-  };
-
   const saveChatIdPresets = async (newPresets: string[]) => {
     if (isStandalone) {
       await storage.setSetting('chat_id_presets', JSON.stringify(newPresets));
@@ -1425,14 +1174,6 @@ function AppContent() {
     saveButtonTemplate: handleSaveButtonTemplateWrapper,
     templateName,
     setTemplateName,
-    imagePath,
-    setImagePath,
-    openFolderBrowser,
-    isBrowserLoading,
-    saveImagePath: handleSaveImagePath,
-    handleFolderSelect,
-    syncLocalImages,
-    syncedImages,
     mediaPaths,
     setMediaPaths,
     videoPath,
@@ -1454,8 +1195,7 @@ function AppContent() {
     isConstructorOpen, parsedContent, aiProcessedText, selectedImages, selectedVideo, mediaPaths, videoPath, mainImage, 
     postButtons, originalText, isProcessingAI, processAI, showTemplates, 
     buttonTemplates, handleDeleteTemplate, handleSaveButtonTemplateWrapper, templateName, 
-    imagePath, isBrowserLoading, handleSaveImagePath, handleFolderSelect, 
-    syncLocalImages, syncedImages, setMediaPaths, setVideoPath, isSubmitActionInProgress, sensorsObj, handleDragEnd, 
+    setMediaPaths, setVideoPath, isSubmitActionInProgress, sensorsObj, handleDragEnd, 
     toggleImageSelection, scheduleDateTime, saveDraft, handlePublish, 
     submitMsg, linkPresets, saveLinkPresets, SortableImage, handleEnlarge
   ]);
@@ -1523,11 +1263,6 @@ function AppContent() {
               <Cpu size={12} className={isProcessingAI ? 'animate-pulse' : ''} />
               ИИ: {isProcessingAI ? 'Обработка' : 'Ожидание'}
             </span>
-            {syncedImages.length > 0 && (
-              <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/20">
-                🖼️ {syncedImages.length} фото
-              </span>
-            )}
           </div>
         </div>
       </header>
@@ -1835,42 +1570,6 @@ function AppContent() {
             <div className="flex-1 bg-black rounded-2xl p-6 font-mono text-xs overflow-y-auto border border-neutral-800">
               {logs.map((log, i) => <div key={i} className={`py-1 border-b border-neutral-900/50 ${log.includes('❌') ? 'text-red-400' : log.includes('⚠️') ? 'text-amber-400' : log.includes('✅') ? 'text-emerald-400' : 'text-neutral-400'}`}>{log}</div>)}
             </div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Folder Browser Modal ── */}
-      <AnimatePresence>
-        {showFolderBrowser && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
-              <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
-                <div><h3 className="text-lg font-bold flex items-center gap-2"><FolderOpen className="text-blue-500" size={20} /> Обзор папок</h3><p className="text-[10px] text-neutral-500 truncate mt-1">{browserPath}</p></div>
-                <button onClick={() => setShowFolderBrowser(false)} className="p-2 hover:bg-neutral-800 rounded-full"><X size={20} /></button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-1">
-                {browserParent && <button onClick={() => openFolderBrowser(browserParent)} className="w-full flex items-center gap-3 p-3 hover:bg-neutral-800 rounded-xl text-blue-400 text-sm font-bold"><RefreshCw size={16} className="rotate-180" /> .. (Назад)</button>}
-                {browserDirs.length === 0 && <p className="text-center py-8 text-neutral-600 text-sm">Папок не найдено</p>}
-                {browserDirs.map((dir, idx) => (
-                  <div key={idx} className="w-full flex items-center justify-between p-3 hover:bg-neutral-800 rounded-xl group">
-                    <div className="flex items-center gap-3 flex-1 cursor-pointer py-1" onClick={() => openFolderBrowser(dir.path)}><Folder className="text-amber-500" size={18} /><span className="text-sm text-neutral-300 group-hover:text-white">{dir.name}</span></div>
-                    <button onClick={() => { 
-                      setImagePath(dir.path); 
-                      setShowFolderBrowser(false); 
-                      syncLocalImages(true, dir.path);
-                    }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg">Выбрать</button>
-                  </div>
-                ))}
-              </div>
-              <div className="p-4 border-t border-neutral-800 flex justify-between gap-3">
-                <button onClick={() => { 
-                  setImagePath(browserPath); 
-                  setShowFolderBrowser(false); 
-                  syncLocalImages(true, browserPath);
-                }} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl">Выбрать текущую</button>
-                <button onClick={() => setShowFolderBrowser(false)} className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-bold rounded-xl">Отмена</button>
-              </div>
-            </motion.div>
           </div>
         )}
       </AnimatePresence>

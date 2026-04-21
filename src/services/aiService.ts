@@ -128,7 +128,13 @@ ${text}`;
   }
 
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
-    const models = ["google/gemini-2.0-flash-001", "google/gemini-flash-1.5", "anthropic/claude-3-haiku", "openai/gpt-3.5-turbo"];
+    const models = [
+      "nvidia/nemotron-3-super-120b-a12b:free", 
+      "google/gemini-2.0-flash-001", 
+      "google/gemini-flash-1.5", 
+      "anthropic/claude-3-haiku", 
+      "openai/gpt-3.5-turbo"
+    ];
     logCallback(`📡 OpenRouter start (primary: ${models[0]})...`);
     
     let lastError = "";
@@ -136,6 +142,17 @@ ${text}`;
       try {
         logCallback(`📡 OpenRouter trying model: ${modelId}...`);
         const url = "https://openrouter.ai/api/v1/chat/completions";
+        
+        const requestBody: any = {
+          model: modelId,
+          messages: [{ role: "user", content: prompt }]
+        };
+
+        // Enable reasoning for specific models as requested
+        if (modelId.includes('nemotron')) {
+          requestBody.reasoning = { enabled: true };
+        }
+
         const response = await universalFetch(url, {
           method: 'POST',
           headers: { 
@@ -144,10 +161,7 @@ ${text}`;
             "HTTP-Referer": "https://newsbot.manager",
             "X-Title": "TG Bot Manager"
           },
-          body: {
-            model: modelId,
-            messages: [{ role: "user", content: prompt }]
-          },
+          body: requestBody,
           skipRetry: true,
           timeout: 45000,
           signal
