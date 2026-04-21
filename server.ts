@@ -456,18 +456,19 @@ ${text.substring(0, 20000)}`;
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           const models = [
-            "google/gemini-2.0-flash-001"
+            "google/gemini-2.0-flash-001",
+            "google/gemini-flash-1.5",
+            "google/gemini-2.0-flash-exp:free"
           ];
           
           for (const modelId of models) {
-            addLog(`📡 OpenRouter (${modelId})...`);
+            addLog(`📡 OpenRouter trying: ${modelId}...`);
             try {
               const r = await axios.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 { 
                   model: modelId, 
-                  messages: [{ role: "user", content: prompt }],
-                  temperature: 0.1
+                  messages: [{ role: "user", content: prompt }]
                 },
                 { 
                   headers: { 
@@ -797,12 +798,7 @@ async function publishPostToTelegram(post: any, host: string = "") {
     if (mainImage) {
       const remainingImages = allImages.filter((img: string) => img !== mainImage);
       
-      // Algorithm: 
-      // 1. If text is short (<= 1024), use sendPhoto with caption.
-      // 2. If text is long (> 1024), use sendMessage with invisible link trick.
-      
       if (cleanText.length <= 1000) {
-        // Post 1: Real Photo + Caption
         const msg = await activeBot.telegram.sendPhoto(chatId, media(mainImage), {
           caption: cleanText,
           parse_mode: "HTML",
@@ -810,7 +806,6 @@ async function publishPostToTelegram(post: any, host: string = "") {
         });
         await applyReactions(msg.message_id);
       } else {
-        // Post 1: Text + Invisible Image Link
         let finalMsgText = cleanText;
         let imageUrl = mainImage;
         let invisibleLinkUsed = false;
@@ -820,7 +815,6 @@ async function publishPostToTelegram(post: any, host: string = "") {
         }
         
         if (imageUrl.startsWith('http')) {
-          addLog(`🔗 Using invisible link with image URL: ${imageUrl.substring(0, 50)}...`);
           finalMsgText = `<a href="${imageUrl}">&#8205;</a>` + cleanText;
           invisibleLinkUsed = true;
         }
@@ -834,12 +828,8 @@ async function publishPostToTelegram(post: any, host: string = "") {
           });
           await applyReactions(msg.message_id);
         } catch (error: any) {
-          // If Telegram can't fetch the invisible link, it throws an error like WEBPAGE_CURL_FAILED or WEBPAGE_MEDIA_EMPTY
           if (invisibleLinkUsed && (error.message?.includes('WEBPAGE') || error.message?.includes('failed to get HTTP'))) {
-            addLog(`⚠️ Invisible link failed. Falling back to sending photo and text separately...`);
-            // Send the main photo
             const msg1 = await activeBot.telegram.sendPhoto(chatId, media(mainImage));
-            // Send the text
             const textOnly = cleanText.length > 4096 ? balanceHtml(cleanText.slice(0, 4090) + "…") : balanceHtml(cleanText);
             const msg2 = await activeBot.telegram.sendMessage(chatId, textOnly, {
               parse_mode: "HTML",
@@ -847,20 +837,14 @@ async function publishPostToTelegram(post: any, host: string = "") {
               ...extra
             });
             await applyReactions(msg2.message_id);
-          } else {
-            throw error;
-          }
+          } else { throw error; }
         }
       }
 
-      // Post 2: Remaining Images
       if (remainingImages.length > 0) {
-        await sleep(1500);
-        const chunks = [];
+        await sleep(2000);
         for (let i = 0; i < remainingImages.length; i += 10) {
-          chunks.push(remainingImages.slice(i, i + 10));
-        }
-        for (const chunk of chunks) {
+          const chunk = remainingImages.slice(i, i + 10);
           await activeBot.telegram.sendMediaGroup(chatId, chunk.map((img: string) => ({
             type: "photo" as const, media: media(img)
           })));

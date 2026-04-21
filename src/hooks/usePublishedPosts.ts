@@ -35,12 +35,13 @@ export function usePublishedPosts(isStandalone: boolean, getCleanBaseUrl: () => 
   }, [loadPublishedPosts]);
 
   const deletePublishedPost = useCallback(async (id: string) => {
+    if (!id) return; // Prevent deleting everything if id is undefined
     try {
       console.log(`[usePublishedPosts] Deleting: ${id}`);
-      setPublishedPosts(prev => prev.filter(p => p.id !== id));
+      setPublishedPosts(prev => prev.filter(p => String(p.id) !== String(id)));
       if (isStandalone) {
-        const current = await storage.loadJson('published.json', []);
-        await storage.saveJson('published.json', current.filter((p: any) => p.id !== id));
+        const current = await storage.loadJson<any[]>('published.json', []);
+        await storage.saveJson('published.json', current.filter(p => p.id && String(p.id) !== String(id)));
       } else {
         const cleanUrl = getCleanBaseUrl();
         if (cleanUrl) await universalFetch(`${cleanUrl}/api/posts/published/${id}`, { method: 'DELETE' });

@@ -109,6 +109,15 @@ const SortableImage = ({ id, url, onSelect, onEnlarge, isMain, onSetMain }: any)
       >
         <X size={14} />
       </button>
+      {!isMain && (
+        <button 
+          className="absolute bottom-1 right-1 p-1 bg-black/60 hover:bg-blue-500 rounded text-white cursor-pointer shadow-md opacity-0 group-hover:opacity-100 transition-opacity" 
+          onClick={(e) => { e.stopPropagation(); onSetMain?.(url); }}
+          title="Сделать основным"
+        >
+          <Sparkles size={14} />
+        </button>
+      )}
       <div className="absolute top-1 left-1 p-1 touch-none pointer-events-auto z-[30]" {...attributes} {...listeners}>
         <div className="p-1 bg-black/60 rounded shadow cursor-grab active:cursor-grabbing">
           <GripVertical size={12} className="text-white" />
@@ -828,44 +837,46 @@ function AppContent() {
         }
 
         // ПОДГОТОВКА МЕДИА из путей на диске
-        addClientLog(`🎞️ Загрузка медиа: ${post.mediaPaths?.length || 0} фото, ${post.videoPath ? '1 видео' : 'нет видео'}`);
-        const highResImages = await Promise.all((post.mediaPaths || []).map(p => storage.loadMedia(p)));
-        const highResVideo = post.videoPath ? await storage.loadMedia(post.videoPath) : null;
-
-        // ✅ Проверка лимитов Telegram (10MB фото, 50MB видео для бота)
-        const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
-        const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
-
-        for (const img of highResImages) {
-          if (img.startsWith('data:') && estimateBase64Size(img) > MAX_PHOTO_SIZE) {
-            throw new Error(`Фото слишком большое для Telegram (макс 10MB)`);
+        addClientLog(`🎞️ Подготовка медиа: ${post.mediaPaths?.length || 0} фото, ${post.videoPath ? '1 видео' : 'нет видео'}`);
+        
+        // Split Logic: First message has 1 photo + text.
+        // We prioritize mainImage if chosen.
+        let photos = [...(post.mediaPaths || [])];
+        const video = post.videoPath;
+        
+        // Find index of mainImage in mediaPaths and move it to front
+        if (post.mainImage) {
+          const mainIdx = photos.indexOf(post.mainImage);
+          if (mainIdx > -1) {
+            photos.splice(mainIdx, 1);
+            photos.unshift(post.mainImage);
           }
-        }
-        if (highResVideo && highResVideo.startsWith('data:') && estimateBase64Size(highResVideo) > MAX_VIDEO_SIZE) {
-          throw new Error(`Видео слишком большое для Telegram (макс 50MB)`);
         }
 
         // Standalone publishing
-        if (highResImages.length === 0 && !highResVideo) {
+        if (photos.length === 0 && !video) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-        } else if (highResImages.length === 1 && !highResVideo) {
-          await telegramClient?.sendPhoto(tempChatId, highResImages[0], { ...extra, caption: htmlText });
-        } else if (highResImages.length === 0 && highResVideo) {
-          await telegramClient?.sendVideo(tempChatId, highResVideo, { ...extra, caption: htmlText });
-        } else {
-          const mediaItems: any[] = [];
-          if (highResVideo) {
-            mediaItems.push({ type: 'video', media: highResVideo, caption: htmlText, parse_mode: 'HTML' });
+        } else if (photos.length === 1 && !video) {
+          await telegramClient?.sendPhoto(tempChatId, photos[0], { ...extra, caption: htmlText });
+        } else if (photos.length === 0 && video) {
+          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+        } else if (photos.length > 1 && !video) {
+          // Разделяем отправку на текст+фото(1) и альбом(остальные)
+          const mainImg = photos[0];
+          const restImgs = photos.slice(1);
+          
+          await telegramClient?.sendPhoto(tempChatId, mainImg, { ...extra, caption: htmlText });
+          
+          if (restImgs.length > 0) {
+            const mediaItems = restImgs.map(img => ({ type: 'photo', media: img }));
+            await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
           }
-          highResImages.forEach((img, i) => {
-             mediaItems.push({
-               type: 'photo', media: img,
-               caption: !highResVideo && i === 0 ? htmlText : undefined,
-               parse_mode: !highResVideo && i === 0 ? 'HTML' : undefined
-             });
-          });
+        } else if (video && photos.length > 0) {
+          // И видео, и фото: Видео всегда первым с текстом
+          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+          
+          const mediaItems = photos.map(img => ({ type: 'photo', media: img }));
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
-          if (post.buttons?.length) await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
         }
         
         await savePublishedPost(post);
@@ -904,35 +915,37 @@ function AppContent() {
         }
 
         // LOAD HIGH RES MEDIA
-        const highResImages = await Promise.all((postToPublish.mediaPaths || []).map(p => storage.loadMedia(p)));
-        const highResVideo = postToPublish.videoPath ? await storage.loadMedia(postToPublish.videoPath) : null;
+        let photos = [...(postToPublish.mediaPaths || [])];
+        const video = postToPublish.videoPath;
 
-        // ✅ Проверка лимитов
-        const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
-        const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
-        for (const img of highResImages) if (img.startsWith('data:') && estimateBase64Size(img) > MAX_PHOTO_SIZE) throw new Error("Фото слишком большое (макс 10MB)");
-        if (highResVideo && highResVideo.startsWith('data:') && estimateBase64Size(highResVideo) > MAX_VIDEO_SIZE) throw new Error("Видео слишком большое (макс 50MB)");
-
-        if (highResImages.length === 0 && !highResVideo) {
-          await telegramClient?.sendMessage(tempChatId, htmlText, extra);
-        } else if (highResImages.length === 1 && !highResVideo) {
-          await telegramClient?.sendPhoto(tempChatId, highResImages[0], { ...extra, caption: htmlText });
-        } else if (highResImages.length === 0 && highResVideo) {
-          await telegramClient?.sendVideo(tempChatId, highResVideo, { ...extra, caption: htmlText });
-        } else {
-          const mediaItems: any[] = [];
-          if (highResVideo) {
-            mediaItems.push({ type: 'video', media: highResVideo, caption: htmlText, parse_mode: 'HTML' });
+        if (postToPublish.mainImage) {
+          const midx = photos.indexOf(postToPublish.mainImage);
+          if (midx > -1) {
+            photos.splice(midx, 1);
+            photos.unshift(postToPublish.mainImage);
           }
-          highResImages.forEach((img, i) => {
-            mediaItems.push({
-              type: 'photo', media: img,
-              caption: !highResVideo && i === 0 ? htmlText : undefined,
-              parse_mode: !highResVideo && i === 0 ? 'HTML' : undefined
-            });
-          });
+        }
+
+        if (photos.length === 0 && !video) {
+          await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+        } else if (photos.length === 1 && !video) {
+          await telegramClient?.sendPhoto(tempChatId, photos[0], { ...extra, caption: htmlText });
+        } else if (photos.length === 0 && video) {
+          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+        } else if (photos.length > 1 && !video) {
+          // Разделяем
+          const mainImg = photos[0];
+          const restImgs = photos.slice(1);
+          
+          await telegramClient?.sendPhoto(tempChatId, mainImg, { ...extra, caption: htmlText });
+          if (restImgs.length > 0) {
+            const mediaItems = restImgs.map(img => ({ type: 'photo', media: img }));
+            await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
+          }
+        } else if (video && photos.length > 0) {
+          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+          const mediaItems = photos.map(img => ({ type: 'photo', media: img }));
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
-          if (postToPublish.buttons?.length) await telegramClient?.sendMessage(tempChatId, "👇 Действия:", extra);
         }
 
         // Move to published

@@ -4,12 +4,38 @@ import { Edit2, X, Sparkles, ClipboardPaste, Loader2, Wand2, Plus, Trash2, Folde
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import MarkdownIt from 'markdown-it';
-import MdEditor from 'react-markdown-editor-lite';
+import MdEditor, { PluginComponent } from 'react-markdown-editor-lite';
 import 'react-markdown-editor-lite/lib/index.css';
 import { PostButton, ParsedContent, DraftPost, ButtonTemplate, PostConstructorProps } from '../types';
 import { generateVideoThumbnail } from '../utils/media';
 import { storage } from '../services/storage';
 import { Capacitor } from '@capacitor/core';
+
+class SpoilerPlugin extends PluginComponent {
+  static pluginName = 'spoiler';
+  static align = 'left';
+
+  handleClick = () => {
+    const mdEditor = this.editor;
+    if (mdEditor) {
+      mdEditor.insertText('||ТЕКСТ||');
+    }
+  };
+
+  render() {
+    return (
+      <span 
+        className="button button-type-spoiler" 
+        title="Спойлер" 
+        onClick={this.handleClick}
+        style={{ cursor: 'pointer', padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      >
+        <EyeOff size={14} />
+      </span>
+    );
+  }
+}
+MdEditor.use(SpoilerPlugin);
 
 const isNative = Capacitor.isNativePlatform();
 
@@ -115,55 +141,6 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                   <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800 bg-neutral-800/50">
                     <div className="flex items-center gap-3">
                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Редактор поста</label>
-                      <button 
-                        onClick={() => {
-                          const elList = document.querySelectorAll('textarea');
-                          let editor: HTMLTextAreaElement | null = null;
-                          for (let i = 0; i < elList.length; i++) {
-                            const el = elList[i] as HTMLTextAreaElement;
-                            if (el.className.includes('input') || el.closest('.rc-md-editor')) {
-                              editor = el;
-                              break;
-                            }
-                          }
-                          
-                          if (editor) {
-                            const start = editor.selectionStart || 0;
-                            const end = editor.selectionEnd || 0;
-                            const currentText = props.aiProcessedText;
-                            
-                            if (start !== end) {
-                              // Wrap selected text
-                              const before = currentText.substring(0, start);
-                              const selected = currentText.substring(start, end);
-                              const after = currentText.substring(end);
-                              props.setAiProcessedText(before + '||' + selected + '||' + after);
-                              
-                              setTimeout(() => {
-                                editor?.focus();
-                                editor?.setSelectionRange(start, start + selected.length + 4);
-                              }, 10);
-                            } else {
-                              // Insert placeholder
-                              const before = currentText.substring(0, start);
-                              const after = currentText.substring(start);
-                              const spoiler = '|| ТЕКСТ ||';
-                              props.setAiProcessedText(before + spoiler + after);
-                              
-                              setTimeout(() => {
-                                editor?.focus();
-                                editor?.setSelectionRange(start + 3, start + 8);
-                              }, 10);
-                            }
-                          } else {
-                            // Fallback if textarea not found
-                            props.setAiProcessedText(props.aiProcessedText + '\n|| ТЕКСТ ||');
-                          }
-                        }}
-                        className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1 px-2 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20"
-                      >
-                        <EyeOff size={12} /> Спойлер
-                      </button>
                     </div>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                       props.aiProcessedText.length > 4096 
@@ -184,7 +161,7 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                         view: { menu: true, md: true, html: true },
                         canView: { menu: true, md: true, html: true, fullScreen: false, hideMenu: false }
                       }}
-                      plugins={['font-bold', 'font-italic', 'clear', 'logger', 'mode-toggle']}
+                      plugins={['font-bold', 'font-italic', 'spoiler', 'clear', 'logger', 'mode-toggle']}
                     />
                   </div>
                 </div>

@@ -128,41 +128,47 @@ ${text}`;
   }
 
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
-    const modelId = "google/gemini-2.0-flash-001";
-    logCallback(`📡 OpenRouter (${modelId})...`);
-    const url = "https://openrouter.ai/api/v1/chat/completions";
-
-    const response = await universalFetch(url, {
-      method: 'POST',
-      headers: { 
-        "Authorization": `Bearer ${apiKey.trim()}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://newsbot.manager",
-        "X-Title": "TG Bot Manager"
-      },
-      body: {
-        model: modelId,
-        messages: [{ role: "user", content: prompt }]
-      },
-      skipRetry: true,
-      timeout: 120000,
-      signal
-    });
-
-    if (!response.ok) {
-      let errorMsg = `OpenRouter (${modelId}) error ${response.status}`;
+    const models = ["google/gemini-2.0-flash-001", "google/gemini-flash-1.5", "anthropic/claude-3-haiku", "openai/gpt-3.5-turbo"];
+    logCallback(`📡 OpenRouter start (primary: ${models[0]})...`);
+    
+    let lastError = "";
+    for (const modelId of models) {
       try {
+        logCallback(`📡 OpenRouter trying model: ${modelId}...`);
+        const url = "https://openrouter.ai/api/v1/chat/completions";
+        const response = await universalFetch(url, {
+          method: 'POST',
+          headers: { 
+            "Authorization": `Bearer ${apiKey.trim()}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://newsbot.manager",
+            "X-Title": "TG Bot Manager"
+          },
+          body: {
+            model: modelId,
+            messages: [{ role: "user", content: prompt }]
+          },
+          skipRetry: true,
+          timeout: 45000,
+          signal
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error?.message || `Status ${response.status}`);
+        }
+        
         const data = await response.json();
-        errorMsg = data.error?.message || errorMsg;
-      } catch {}
-      throw new Error(errorMsg);
+        const content = data.choices?.[0]?.message?.content || "";
+        if (content.trim()) return content;
+      } catch (err: any) {
+        lastError = err.message;
+        logCallback(`⚠️ Model ${modelId} failed: ${lastError}`);
+        if (signal?.aborted) throw err;
+      }
     }
     
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-    if (!content.trim()) throw new Error("OpenRouter returned empty response");
-    
-    return content;
+    throw new Error(`OpenRouter failed all models. Last error: ${lastError}`);
   }
 
   private async callDeepSeek(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
