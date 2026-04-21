@@ -701,8 +701,8 @@ function AppContent() {
 
     // Character limit check
     const limit = (selectedImages.length > 0 || !!selectedVideo) ? 1024 : 4096;
-    if (htmlText.length > limit) {
-      setLastError(`Лимит символов после обработки: ${htmlText.length} / ${limit}`);
+    if (htmlText.length > 4096) {
+      setLastError(`Лимит символов (4096) превышен: ${htmlText.length}`);
       return;
     }
 
@@ -747,15 +747,33 @@ function AppContent() {
         if (photos.length === 0 && !video) {
           await telegramClient?.sendMessage(tempChatId, htmlText, extra);
         } else if (photos.length === 1 && !video) {
-          await telegramClient?.sendPhoto(tempChatId, photos[0], { ...extra, caption: htmlText });
+          if (htmlText.length > 1024) {
+            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
+            await telegramClient?.sendPhoto(tempChatId, photos[0], extra);
+            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+          } else {
+            await telegramClient?.sendPhoto(tempChatId, photos[0], { ...extra, caption: htmlText });
+          }
         } else if (photos.length === 0 && video) {
-          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+          if (htmlText.length > 1024) {
+            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
+            await telegramClient?.sendVideo(tempChatId, video, extra);
+            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+          } else {
+            await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+          }
         } else if (photos.length > 1 && !video) {
           // Разделяем отправку на текст+фото(1) и альбом(остальные)
           const mainImg = photos[0];
           const restImgs = photos.slice(1);
           
-          await telegramClient?.sendPhoto(tempChatId, mainImg, { ...extra, caption: htmlText });
+          if (htmlText.length > 1024) {
+            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
+            await telegramClient?.sendPhoto(tempChatId, mainImg, extra);
+            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+          } else {
+            await telegramClient?.sendPhoto(tempChatId, mainImg, { ...extra, caption: htmlText });
+          }
           
           if (restImgs.length > 0) {
             const mediaItems = restImgs.map(img => ({ type: 'photo', media: img }));
@@ -763,7 +781,13 @@ function AppContent() {
           }
         } else if (video && photos.length > 0) {
           // И видео, и фото: Видео всегда первым с текстом
-          await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+          if (htmlText.length > 1024) {
+            addClientLog("⚠️ Текст слишком длинный для подписи (max 1024). Отправка отдельным сообщением.");
+            await telegramClient?.sendVideo(tempChatId, video, extra);
+            await telegramClient?.sendMessage(tempChatId, htmlText, extra);
+          } else {
+            await telegramClient?.sendVideo(tempChatId, video, { ...extra, caption: htmlText });
+          }
           
           const mediaItems = photos.map(img => ({ type: 'photo', media: img }));
           await telegramClient?.sendMediaGroup(tempChatId, mediaItems);
@@ -1539,17 +1563,43 @@ function AppContent() {
                     const key = aiKeys[provider];
                     if (!key) return;
                     setSubmitMsg({ type: 'success', text: 'Тест запущен...' });
+                    addClientLog(`🧪 Тест API ключа (${provider})...`);
                     if (isStandalone) {
                       try {
-                        const result = await aiServiceInstance.processText("Hello", { [provider]: key }, provider);
-                        if(result.success) setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
-                        else setLastError(result.error);
-                      } catch (e: any) { setLastError(e.message); }
+                        const result = await aiServiceInstance.processText("Hello World. Reply only with 'OK'.", { [provider]: key }, provider);
+                        if(result.success) {
+                          setSubmitMsg({ type: 'success', text: 'Тест успешен!' });
+                          addClientLog(`✅ API Тест (${provider}): ${result.result}`);
+                        } else {
+                          setLastError(result.error);
+                          addClientLog(`❌ API Тест (${provider}) ошибка: ${result.error}`);
+                        }
+                      } catch (e: any) { 
+                        setLastError(e.message); 
+                        addClientLog(`❌ API Тест (${provider}) сбой: ${e.message}`);
+                      }
                       return;
                     }
                     const cleanUrl = getCleanBaseUrl(tempBaseUrl || baseUrl);
                     if (!cleanUrl) return;
-                    try { const res = await universalFetch(`${cleanUrl}/api/test-ai`, { method: 'POST', body: { apiKey: key, provider } }); if (res.ok) setSubmitMsg({ type: 'success', text: 'Тест успешен!' }); else { const err = await res.json(); setLastError(err.error); } } catch (e: any) { setLastError(e.message); }
+                    try { 
+                      const res = await universalFetch(`${cleanUrl}/api/test-ai`, { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' },
+                        body: { apiKey: key, provider } 
+                      }); 
+                      if (res.ok) {
+                        setSubmitMsg({ type: 'success', text: 'Тест успешен!' }); 
+                        addClientLog(`✅ API Тест (Server ${provider}) выполнен успешно`);
+                      } else { 
+                        const err = await res.json(); 
+                        setLastError(err.error); 
+                        addClientLog(`❌ API Тест (Server ${provider}) ошибка: ${err.error}`);
+                      } 
+                    } catch (e: any) { 
+                      setLastError(e.message); 
+                      addClientLog(`❌ API Тест (Server ${provider}) сбой: ${e.message}`);
+                    }
                   }} className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg"><Activity size={14} /></button>
                 </div>
               </div>

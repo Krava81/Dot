@@ -90,7 +90,7 @@ let cachedImagePath               = "";
 let cachedChatIdPresets: string[] = ["", "", ""];
 
 interface ApiKeys {
-  gemini?: string; grok?: string; openrouter?: string;
+  gemini?: string; grok?: string; openrouter?: string; openrouter2?: string;
   deepseek?: string; preferredProvider?: string;
 }
 
@@ -314,7 +314,7 @@ function startBotHealthMonitor(token: string, botInstance: Telegraf) {
 
 // ---- AI Processing ----
 async function processWithAI(text: string, provider?: string, customApiKeys: any = {}): Promise<string> {
-  const providers = ["gemini", "github", "deepseek", "openrouter"];
+  const providers = ["gemini", "github", "deepseek", "openrouter", "openrouter2"];
   const saved     = getPersistentApiKeys();
   const effective = provider || saved.preferredProvider || "gemini";
   const ordered   = [effective, ...providers.filter(p => p !== effective)];
@@ -483,6 +483,40 @@ ${text.substring(0, 20000)}`;
               if (aiResult) break;
             } catch (err: any) {
               addLog(`⚠️ OpenRouter Model ${modelId} failed: ${err.message}`);
+            }
+          }
+        }
+        // ---- OpenRouter 2 ----
+        else if (cur === "openrouter2") {
+          const apiKey = keys.openrouter2 || process.env.OPENROUTER_API_KEY_2;
+          if (!apiKey) { lastErrors.push("OpenRouter 2: no key"); continue; }
+          const models = [
+            "openai/gpt-oss-120b:free",
+            "google/gemini-2.0-flash-001"
+          ];
+          
+          for (const modelId of models) {
+            addLog(`📡 OpenRouter 2 trying: ${modelId}...`);
+            try {
+              const r = await axios.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                { 
+                  model: modelId, 
+                  messages: [{ role: "user", content: prompt }]
+                },
+                { 
+                  headers: { 
+                    "Authorization": `Bearer ${apiKey.trim()}`,
+                    "HTTP-Referer": process.env.PUBLIC_DOMAIN || "https://newsbot.manager",
+                    "X-Title": "TG Bot Manager"
+                  }, 
+                  timeout: timeout 
+                }
+              );
+              aiResult = r.data.choices?.[0]?.message?.content || "";
+              if (aiResult) break;
+            } catch (err: any) {
+              addLog(`⚠️ OpenRouter 2 Model ${modelId} failed: ${err.message}`);
             }
           }
         }

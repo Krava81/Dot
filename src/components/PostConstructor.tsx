@@ -1,6 +1,7 @@
 import React, { useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Edit2, X, Sparkles, ClipboardPaste, Loader2, Wand2, Plus, Trash2, FolderOpen, Folder, Smartphone, RefreshCw, Clock, Send, CheckCircle2, AlertCircle, EyeOff, Image, Hash, Save } from 'lucide-react';
+import { Clipboard } from '@capacitor/clipboard';
+import { Edit2, X, Sparkles, ClipboardPaste, Loader2, Wand2, Plus, Trash2, FolderOpen, Folder, Smartphone, RefreshCw, Clock, Send, CheckCircle2, AlertCircle, EyeOff, Image, Hash, Save, Info } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import MarkdownIt from 'markdown-it';
@@ -23,13 +24,17 @@ class SpoilerPlugin extends PluginComponent {
       } else if (mdEditor.getSelection) {
         const selection = mdEditor.getSelection();
         if (selection && selection.text) {
-          // If insertText takes 3 args: text, replace, focus
-          (mdEditor as any).insertText(`||${selection.text}||`, true);
+          mdEditor.insertText(`||${selection.text}||`, true);
         } else {
           mdEditor.insertText('||ТЕКСТ||');
         }
       } else {
-        mdEditor.insertText('||ТЕКСТ||');
+        const selection = window.getSelection()?.toString();
+        if (selection) {
+          mdEditor.insertText(`||${selection}||`);
+        } else {
+          mdEditor.insertText('||ТЕКСТ||');
+        }
       }
     }
   };
@@ -140,7 +145,15 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-blue-400 flex items-center gap-2 uppercase tracking-wider"><Sparkles size={14} /> ИИ Обработка</h3>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => { navigator.clipboard.readText().then(text => props.setOriginalText(text)).catch(() => {}); }} className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1"><ClipboardPaste size={12} /> Вставить</button>
+                      <button onClick={async () => { 
+                        try {
+                          const { value } = await Clipboard.read();
+                          if (value) props.setOriginalText(value);
+                        } catch (e) {
+                          // Fallback to navigator
+                          navigator.clipboard.readText().then(text => props.setOriginalText(text)).catch(() => {});
+                        }
+                      }} className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase flex items-center gap-1"><ClipboardPaste size={12} /> Вставить</button>
                       <button onClick={() => props.setOriginalText('')} className="text-[10px] font-bold text-red-500 hover:text-red-400 uppercase flex items-center gap-1"><Trash2 size={12} /> Очистить</button>
                     </div>
                   </div>
@@ -156,13 +169,20 @@ export const PostConstructor: React.FC<PostConstructorProps> = (props) => {
                   <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800 bg-neutral-800/50">
                     <div className="flex items-center gap-3">
                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Редактор поста</label>
+                      {(props.selectedImages.length > 0 || props.selectedVideo) && props.aiProcessedText.length > 1024 && (
+                        <div className="flex items-center gap-1 text-[10px] text-amber-500 font-bold bg-amber-500/10 px-2 py-0.5 rounded animate-pulse">
+                          <Info size={10} /> Лимит 1024 для медиа
+                        </div>
+                      )}
                     </div>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                       props.aiProcessedText.length > 4096 
                       ? 'bg-red-500 text-white' 
-                      : 'bg-neutral-700 text-neutral-400'
+                      : (props.selectedImages.length > 0 || props.selectedVideo) && props.aiProcessedText.length > 1024
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-neutral-700 text-neutral-400'
                     }`}>
-                      {props.aiProcessedText.length} / 4096
+                      {props.aiProcessedText.length} / { (props.selectedImages.length > 0 || props.selectedVideo) ? 1024 : 4096 }
                     </span>
                   </div>
                   <div className="h-[400px] relative">
