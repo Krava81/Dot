@@ -30,11 +30,6 @@ export class AIService {
   ): Promise<{ success: true; result: string; provider: string } | { success: false; error: string; provider: string }> {
     let providers = ["github", "openrouter", "openrouter2", "deepseek"];
     
-    // Only OpenRouter 2 should function on mobile (standalone)
-    if (isStandalone) {
-      providers = providers.filter(p => p !== 'openrouter');
-    }
-
     const effective = preferredProvider && providers.includes(preferredProvider) ? preferredProvider : "github";
     const ordered = [effective, ...providers.filter(p => p !== effective)];
     let lastError: string | null = null;
@@ -97,7 +92,7 @@ ${text}`;
         return this.callGitHub(apiKey, prompt, logCallback, signal);
       case 'openrouter':
         return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
-          models: ["nvidia/nemotron-3-super-120b-a12b:free", "google/gemini-2.0-flash-001", "google/gemini-flash-1.5"]
+          models: ["nvidia/nemotron-3-super-120b-a12b:free"]
         });
       case 'openrouter2':
         return this.callOpenRouter(apiKey, prompt, logCallback, signal, {

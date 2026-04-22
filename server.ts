@@ -374,10 +374,7 @@ ${text.substring(0, 20000)}`;
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
           const models = [
-            "openai/gpt-oss-120b:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "google/gemini-2.0-flash-001",
-            "google/gemini-flash-1.5"
+            "nvidia/nemotron-3-super-120b-a12b:free"
           ];
           
           for (const modelId of models) {
