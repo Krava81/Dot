@@ -373,38 +373,65 @@ ${text.substring(0, 20000)}`;
         else if (cur === "openrouter") {
           const apiKey = keys.openrouter || process.env.OPENROUTER_API_KEY;
           if (!apiKey) { lastErrors.push("OpenRouter: no key"); continue; }
-          const models = [
-            "nvidia/nemotron-3-super-120b-a12b:free"
-          ];
+          const modelId = "nvidia/nemotron-3-super-120b-a12b:free";
           
-          for (const modelId of models) {
-            addLog(`📡 OpenRouter trying: ${modelId}...`);
-            const requestBody: any = { 
+          addLog(`📡 OpenRouter 1 (Reasoning) trying: ${modelId}...`);
+          try {
+            // First call
+            addLog(`📡 OpenRouter 1: First API call...`);
+            const requestBody1: any = { 
               model: modelId, 
-              messages: [{ role: "user", content: prompt }]
+              messages: [{ role: "user", content: prompt }],
+              reasoning: { enabled: true }
             };
-            if (modelId.includes('nemotron') || modelId.includes('gpt-oss')) {
-              requestBody.reasoning = { enabled: true };
-            }
 
-            try {
-              const r = await axios.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                requestBody,
+            const r1 = await axios.post(
+              "https://openrouter.ai/api/v1/chat/completions",
+              requestBody1,
+              { 
+                headers: { 
+                  "Authorization": `Bearer ${apiKey.trim()}`,
+                  "HTTP-Referer": process.env.PUBLIC_DOMAIN || "https://newsbot.manager",
+                  "X-Title": "TG Bot Manager"
+                }, 
+                timeout: timeout 
+              }
+            );
+            
+            const assistantMessage = r1.data.choices?.[0]?.message;
+            if (!assistantMessage) throw new Error("No message returned in Call 1");
+
+            // Second call
+            addLog(`📡 OpenRouter 1: Second API call (verifying)...`);
+            const requestBody2: any = {
+              model: modelId,
+              messages: [
+                { role: 'user', content: prompt },
                 { 
-                  headers: { 
-                    "Authorization": `Bearer ${apiKey.trim()}`,
-                    "HTTP-Referer": process.env.PUBLIC_DOMAIN || "https://newsbot.manager",
-                    "X-Title": "TG Bot Manager"
-                  }, 
-                  timeout: timeout 
-                }
-              );
-              aiResult = r.data.choices?.[0]?.message?.content || "";
-              if (aiResult) break;
-            } catch (err: any) {
-              addLog(`⚠️ OpenRouter Model ${modelId} failed: ${err.message}`);
-            }
+                  role: 'assistant', 
+                  content: assistantMessage.content,
+                  reasoning_details: assistantMessage.reasoning_details
+                },
+                { role: 'user', content: "Are you sure? Think carefully." }
+              ]
+            };
+
+            const r2 = await axios.post(
+              "https://openrouter.ai/api/v1/chat/completions",
+              requestBody2,
+              { 
+                headers: { 
+                  "Authorization": `Bearer ${apiKey.trim()}`,
+                  "HTTP-Referer": process.env.PUBLIC_DOMAIN || "https://newsbot.manager",
+                  "X-Title": "TG Bot Manager"
+                }, 
+                timeout: timeout 
+              }
+            );
+
+            aiResult = r2.data.choices?.[0]?.message?.content || "";
+          } catch (err: any) {
+            addLog(`⚠️ OpenRouter 1 Model ${modelId} failed: ${err.message}`);
           }
         }
         // ---- OpenRouter 2 ----

@@ -91,9 +91,7 @@ ${text}`;
       case 'github':
         return this.callGitHub(apiKey, prompt, logCallback, signal);
       case 'openrouter':
-        return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
-          models: ["nvidia/nemotron-3-super-120b-a12b:free"]
-        });
+        return this.callOpenRouterNemotron(apiKey, prompt, logCallback, signal);
       case 'openrouter2':
         return this.callOpenRouter(apiKey, prompt, logCallback, signal, {
           models: ["openai/gpt-oss-120b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemini-2.0-flash-001"]
@@ -131,6 +129,88 @@ ${text}`;
     if (!content.trim()) throw new Error("GitHub returned empty response");
     
     return content;
+  }
+
+  private async callOpenRouterNemotron(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
+    const modelId = 'nvidia/nemotron-3-super-120b-a12b:free';
+    logCallback(`📡 OpenRouter 1 (Reasoning): trying ${modelId}...`);
+    const url = "https://openrouter.ai/api/v1/chat/completions";
+    
+    try {
+      // First API call with reasoning
+      logCallback(`📡 OpenRouter 1: First API call...`);
+      const requestBody1: any = {
+        model: modelId,
+        messages: [{ role: 'user', content: prompt }],
+        reasoning: { enabled: true }
+      };
+
+      const response1 = await universalFetch(url, {
+        method: 'POST',
+        headers: { 
+          "Authorization": `Bearer ${apiKey.trim()}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://newsbot.manager",
+          "X-Title": "TG Bot Manager"
+        },
+        body: requestBody1,
+        skipRetry: true,
+        timeout: 45000,
+        signal
+      });
+
+      if (!response1.ok) {
+        const data = await response1.json().catch(() => ({}));
+        throw new Error(data.error?.message || `Status (Call 1) ${response1.status}`);
+      }
+      
+      const data1 = await response1.json();
+      const assistantMessage = data1.choices?.[0]?.message;
+      if (!assistantMessage) throw new Error("No message returned from model in Call 1");
+
+      // Second API call - continues reasoning
+      logCallback(`📡 OpenRouter 1: Second API call (verifying)...`);
+      const requestBody2: any = {
+        model: modelId,
+        messages: [
+          { role: 'user', content: prompt },
+          { 
+            role: 'assistant', 
+            content: assistantMessage.content,
+            reasoning_details: assistantMessage.reasoning_details
+          },
+          { role: 'user', content: "Are you sure? Think carefully." }
+        ]
+      };
+
+      const response2 = await universalFetch(url, {
+        method: 'POST',
+        headers: { 
+          "Authorization": `Bearer ${apiKey.trim()}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://newsbot.manager",
+          "X-Title": "TG Bot Manager"
+        },
+        body: requestBody2,
+        skipRetry: true,
+        timeout: 45000,
+        signal
+      });
+
+      if (!response2.ok) {
+        const data = await response2.json().catch(() => ({}));
+        throw new Error(data.error?.message || `Status (Call 2) ${response2.status}`);
+      }
+      
+      const data2 = await response2.json();
+      const finalContent = data2.choices?.[0]?.message?.content || "";
+      if (!finalContent.trim()) throw new Error("Empty response in Call 2");
+      return finalContent;
+    } catch (err: any) {
+      logCallback(`⚠️ Model ${modelId} failed: ${err.message}`);
+      if (signal?.aborted) throw err;
+      throw new Error(`OpenRouter 1 failed. Last error: ${err.message}`);
+    }
   }
 
   private async callOpenRouter(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal, options?: { models?: string[] }): Promise<string> {
