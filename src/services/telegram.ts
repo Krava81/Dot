@@ -142,10 +142,14 @@ export class TelegramAPI {
 
       try {
         console.log(`[Telegram] multipartCall ${method}, attempt ${attempt + 1}/${retries}`);
+        
+        const activeSignal = controller.signal;
+        if (signal) signal.addEventListener('abort', () => controller.abort());
+
         const response = await fetch(`${this.baseUrl}/${method}`, {
           method: 'POST',
           body: formData,
-          signal: signal ?? controller.signal,
+          signal: activeSignal,
         });
         clearTimeout(timeoutId);
 
@@ -180,11 +184,14 @@ export class TelegramAPI {
       try {
         console.log(`[Telegram] ${method}, attempt ${attempt + 1}`);
 
-        // If an external signal is provided, we should listen to it too.
-        // But AbortSignal.any is not broadly supported in older Android WebViews,
-        // so we just use the internal one for timeout. If external aborts before timeout, 
-        // fetch standard behavior applies or we handle manually.
-        const activeSignal = signal || controller.signal;
+        // We MUST enforce the timeout. If an external signal is also provided, we can't easily polyfill AbortSignal.any()
+        // for old Android webviews. So instead, if the timeout fires, we abort the internal controller AND we check it.
+        // We will just pass the internal controller's signal to fetch. If the external signal aborts, we catch it manually.
+        const activeSignal = controller.signal;
+
+        if (signal) {
+           signal.addEventListener('abort', () => controller.abort());
+        }
 
         const response = await fetch(`${this.baseUrl}/${method}`, {
           method: 'POST',

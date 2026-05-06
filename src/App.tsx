@@ -614,13 +614,9 @@ function AppContent() {
       if (idx !== -1) {
         setMediaPaths(mp => {
           const newMp = [...mp];
-          if (idx < newMp.length && newMp.length === prev.length) {
+          if (idx < newMp.length) {
             newMp.splice(idx, 1);
-          } else if (idx < newMp.length) {
-             console.warn('mediaPaths out of sync: forcing splice anyway.');
-             newMp.splice(idx, 1);
-          }
-           else {
+          } else {
              return mp.filter(p => p !== imageUrl);
           }
           return newMp;
@@ -690,6 +686,7 @@ function AppContent() {
         id: editingDraftId || Date.now().toString(), text: currentText, 
         selectedImages, selectedVideo: selectedVideo || undefined,
         mediaPaths, videoPath: videoPath || undefined,
+        parsedContent: parsedContent || undefined,
         buttons: postButtons.map(b => ({ ...b, url: b.url.startsWith('http') ? b.url : 'https://' + b.url })),
         status: 'published', createdAt: Date.now(), updatedAt: Date.now()
       };
