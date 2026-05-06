@@ -320,6 +320,7 @@ async function processWithAI(text: string, provider?: string, customApiKeys: any
    - Заголовок в начале. Разделяй текст на логические абзацы.
    - Используй ТОЛЬКО разрешенные Telegram HTML теги: <b>жирный</b>, <i>курсив</i>, <u>подчеркнутый</u>, <s>зачеркнутый</s>, <a>ссылка</a>, <code>код</code>.
    - СТРОГО ЗАПРЕЩЕНО использовать теги <h1>, <h2>, <h3>, <p>, <br> и любые другие HTML-теги, не указанные выше. Заголовки выделяй просто жирным шрифтом <b>Заголовок</b>.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <hr> или тег <hr />. Никогда не добавляй их в ответ.
 4. ХЭШТЕГИ: Добавь тематические теги в конце.
 
 Текст для перевода:
@@ -351,8 +352,7 @@ ${text.substring(0, 20000)}`;
                 {
                   model: modelName,
                   messages: [{ role: "user", content: prompt }],
-                  temperature: 0.1,
-                  max_tokens: 4000
+                  temperature: 0.1
                 },
                 {
                   headers: { "Authorization": `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
@@ -450,9 +450,6 @@ ${text.substring(0, 20000)}`;
               model: modelId, 
               messages: [{ role: "user", content: prompt }]
             };
-            if (modelId.includes('nemotron') || modelId.includes('gpt-oss')) {
-              requestBody.reasoning = { enabled: true };
-            }
 
             try {
               const r = await axios.post(

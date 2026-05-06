@@ -104,31 +104,49 @@ ${text}`;
   }
 
   private async callGitHub(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
-    logCallback(`📡 GitHub Models (gpt-4o)...`);
-    const url = "https://models.inference.ai.azure.com/chat/completions";
-    const response = await universalFetch(url, {
-      method: 'POST',
-      headers: { "Authorization": `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
-      body: { model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4000 },
-      skipRetry: true,
-      timeout: 120000,
-      signal
-    });
-
-    if (!response.ok) {
-      let errorMsg = `GitHub AI error ${response.status}`;
+    const models = [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "Llama-3.3-70B-Instruct",
+      "Meta-Llama-3.1-405B-Instruct",
+      "AI21-Jamba-1.5-Large"
+    ];
+    logCallback(`📡 GitHub Models start (primary: ${models[0]})...`);
+    
+    let lastError = "";
+    for (const modelId of models) {
       try {
+        logCallback(`📡 GitHub trying model: ${modelId}...`);
+        const url = "https://models.inference.ai.azure.com/chat/completions";
+        const response = await universalFetch(url, {
+          method: 'POST',
+          headers: { "Authorization": `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
+          body: { model: modelId, messages: [{ role: "user", content: prompt }], temperature: 0.1 },
+          skipRetry: true,
+          timeout: 45000,
+          signal
+        });
+
+        if (!response.ok) {
+          let errorMsg = `GitHub AI error ${response.status}`;
+          try {
+            const data = await response.json();
+            errorMsg = data.error?.message || errorMsg;
+          } catch {}
+          throw new Error(errorMsg);
+        }
+        
         const data = await response.json();
-        errorMsg = data.error?.message || errorMsg;
-      } catch {}
-      throw new Error(errorMsg);
+        const content = data.choices?.[0]?.message?.content || "";
+        if (content.trim()) return content;
+      } catch (err: any) {
+        lastError = err.message;
+        logCallback(`⚠️ GitHub Model ${modelId} failed: ${lastError}`);
+        if (signal?.aborted) throw err;
+      }
     }
     
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-    if (!content.trim()) throw new Error("GitHub returned empty response");
-    
-    return content;
+    throw new Error(`GitHub failed all models. Last error: ${lastError}`);
   }
 
   private async callOpenRouterNemotron(apiKey: string, prompt: string, logCallback: (msg: string) => void, signal?: AbortSignal): Promise<string> {
@@ -233,11 +251,6 @@ ${text}`;
           model: modelId,
           messages: [{ role: "user", content: prompt }]
         };
-
-        // Enable reasoning for specific models as requested
-        if (modelId.includes('nemotron') || modelId.includes('gpt-oss')) {
-          requestBody.reasoning = { enabled: true };
-        }
 
         const response = await universalFetch(url, {
           method: 'POST',

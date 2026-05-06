@@ -550,11 +550,16 @@ function AppContent() {
       setSelectedImages(items => { 
         const oi = items.indexOf(active.id as string); 
         const ni = items.indexOf(over.id as string); 
+        // Only run sorting if we have found valid elements
+        if (oi === -1 || ni === -1) return items;
+
         setMediaPaths(paths => {
            if (paths.length === items.length) {
               return arrayMove(paths, oi, ni);
+           } else {
+              console.warn('[DragEnd] SelectedImages and MediaPaths length mismatch. Canceling media ordering to preserve indices.', paths.length, items.length);
+              return paths;
            }
-           return paths;
         });
         return arrayMove(items, oi, ni); 
       });
@@ -609,9 +614,13 @@ function AppContent() {
       if (idx !== -1) {
         setMediaPaths(mp => {
           const newMp = [...mp];
-          if (idx < newMp.length) {
+          if (idx < newMp.length && newMp.length === prev.length) {
             newMp.splice(idx, 1);
-          } else {
+          } else if (idx < newMp.length) {
+             console.warn('mediaPaths out of sync: forcing splice anyway.');
+             newMp.splice(idx, 1);
+          }
+           else {
              return mp.filter(p => p !== imageUrl);
           }
           return newMp;

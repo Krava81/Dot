@@ -83,7 +83,12 @@ export class TelegramAPI {
       // 4. Try native streaming fetch via WebView 
       // This is memory-safe because it doesn't load the file as a JS string
       console.log(`[toBlob] Attempting fetch stream: ${fetchUrl.substring(0, 100)}...`);
-      const res = await fetch(fetchUrl);
+      const streamController = new AbortController();
+      const streamTimeoutId = setTimeout(() => streamController.abort(), 10000); // 10 seconds max for reading local file
+
+      const res = await fetch(fetchUrl, { signal: streamController.signal });
+      clearTimeout(streamTimeoutId);
+      
       if (res.ok) {
         return await res.blob();
       }
@@ -169,23 +174,36 @@ export class TelegramAPI {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < retries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30 sec default timeout for standard API calls
+
       try {
         console.log(`[Telegram] ${method}, attempt ${attempt + 1}`);
+
+        // If an external signal is provided, we should listen to it too.
+        // But AbortSignal.any is not broadly supported in older Android WebViews,
+        // so we just use the internal one for timeout. If external aborts before timeout, 
+        // fetch standard behavior applies or we handle manually.
+        const activeSignal = signal || controller.signal;
+
         const response = await fetch(`${this.baseUrl}/${method}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal,
+          signal: activeSignal,
         });
+
+        clearTimeout(timeoutId);
 
         const data: { ok: boolean; result?: unknown; description?: string } = await response.json();
         if (!data.ok) throw new Error(data.description ?? `Telegram error ${response.status}`);
         return data.result;
       } catch (err: unknown) {
+        clearTimeout(timeoutId);
         const e = err instanceof Error ? err : new Error(String(err));
         lastError = e;
         errorTracker.track(e, `Telegram.call.${method}.attempt${attempt + 1}`);
-        if (e.name === 'AbortError') throw e;
+        if (e.name === 'AbortError' && signal?.aborted) throw e;
         if (attempt < retries - 1) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
       }
     }
